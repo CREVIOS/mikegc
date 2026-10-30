@@ -48,8 +48,10 @@ request shows its details as text.
 
 A **Request** panel holds the description and the documents, and an
 **Activity** panel holds the timeline. Notes and every change appear together
-in one **Activity** timeline, oldest first, with a grey **Add a note** field at
-its end.
+in one **Activity** timeline, oldest first, each marked on the rail with the
+avatar of the person who made it (an automatic change, such as unassigning
+someone who left, gets a neutral mark), and a grey **Add a note** field at its
+end.
 
 Statuses are **New**, **In progress**, **Waiting on requester**, **Resolved**
 and **Cancelled** (stored as `submitted`, `in_review`, `needs_information`,

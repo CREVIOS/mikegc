@@ -38,7 +38,6 @@ import {
   TableEmptyState,
 } from "@/app/components/shared/TablePrimitive";
 import { EmptyState } from "@/app/components/ui/empty-state";
-import { UserAvatar } from "@/app/components/ui/user-avatar";
 import { IntakeSkeuoIcon } from "@/app/components/shared/AppSidebarSkeuoIcons";
 import { RowActions } from "@/app/components/shared/RowActions";
 import { GlassCardUI } from "@/shared/ui/GlassCardUI";
@@ -51,6 +50,7 @@ import {
   useIntakeDraftWarning,
   useIntakeOperation,
 } from "./useIntakeOperation";
+import { IntakeActorAvatar } from "./IntakeActorAvatar";
 import { IntakeDocuments, useIntakeDocumentUpload } from "./IntakeDocuments";
 import { IntakeReasonModal } from "./IntakeReasonModal";
 import {
@@ -600,12 +600,7 @@ export function Detail({
                   {timeline.map((entry) =>
                     "event" in entry ? (
                       <li key={entry.key} className="relative flex gap-3">
-                        <span
-                          aria-hidden="true"
-                          className="flex h-6 w-6 shrink-0 items-center justify-center"
-                        >
-                          <span className="h-2 w-2 rounded-full bg-gray-300" />
-                        </span>
+                        <IntakeActorAvatar name={entry.event.actor_name} />
                         <div className="min-w-0 pt-0.5">
                           <p className="text-sm text-gray-700">
                             {describeEvent(entry.event)}
@@ -620,12 +615,7 @@ export function Detail({
                       </li>
                     ) : (
                       <li key={entry.key} className="relative flex gap-3">
-                        <span className="flex h-6 w-6 shrink-0 items-center justify-center">
-                          <UserAvatar
-                            size="sm"
-                            name={entry.message.author_name}
-                          />
-                        </span>
+                        <IntakeActorAvatar name={entry.message.author_name} />
                         <div className="min-w-0 flex-1 space-y-1.5">
                           <p className="flex flex-wrap items-baseline gap-x-2 pt-0.5 text-xs text-gray-500">
                             <span className="text-sm font-medium text-gray-900">
