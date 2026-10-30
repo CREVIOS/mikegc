@@ -15,10 +15,34 @@ import {
   formatUnsupportedDocumentWarning,
   partitionSupportedDocumentFiles,
 } from "@/app/lib/documentUploadValidation";
-import { DocumentPill } from "@/app/components/shared/DocumentPill";
+import { FileTypeIcon } from "@/app/components/shared/FileTypeIcon";
+import { LIQUID_GLASS_MODAL_ROW_HOVER_CLASS } from "@/app/components/ui/liquid-surface";
 import { DocumentSidePanel } from "@/app/components/shared/DocumentSidePanel";
 
 const noop = () => {};
+
+/**
+ * The file directory's columns. Narrow cards keep the name and size; the
+ * date and who added the file join as the card widens.
+ */
+const DOCUMENT_GRID_CLASS =
+  "grid grid-cols-[14px_minmax(0,1fr)_64px] items-center gap-2 @[30rem]:grid-cols-[14px_minmax(0,1fr)_84px_64px] @[40rem]:grid-cols-[14px_minmax(0,1fr)_minmax(0,8rem)_84px_64px]";
+const ADDED_BY_CELL_CLASS = "hidden truncate @[40rem]:block";
+const ADDED_CELL_CLASS = "hidden truncate @[30rem]:block";
+
+function formatSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatAdded(iso: string) {
+  return new Date(iso).toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
 
 /**
  * Uploads files to a request. The upload worker links each document to the
@@ -64,9 +88,9 @@ export function useIntakeDocumentUpload(
 }
 
 /**
- * A request's documents in a grey field like the playbook run's: click it to
- * add files, or drop them anywhere on the page. Every member of the
- * organization can open them in the document viewer and add more.
+ * A request's documents as rows like the file directory's, above a grey field
+ * that adds more; files can also be dropped anywhere on the page. Every member
+ * of the organization can open them in the document viewer and add more.
  */
 export function IntakeDocuments({
   documents,
@@ -107,12 +131,13 @@ export function IntakeDocuments({
   const spinner = (
     <Loader2
       aria-hidden="true"
-      className="h-2.5 w-2.5 animate-spin motion-reduce:animate-none"
+      className="h-3 w-3 animate-spin motion-reduce:animate-none"
     />
   );
+  const rows = documents.length + uploading.length;
 
   return (
-    <section aria-labelledby={heading}>
+    <section aria-labelledby={heading} className="@container">
       <h2 id={heading} className="mb-2 text-sm font-medium text-gray-900">
         Documents
       </h2>
@@ -129,58 +154,123 @@ export function IntakeDocuments({
           event.target.value = "";
         }}
       />
-      <div aria-busy={busy} className="rounded-xl bg-gray-100 p-4">
-        {documents.length || busy ? (
-          <>
-            {busy ? (
-              <p className="mb-3 text-xs text-gray-500" aria-live="polite">
-                {uploading.length === 1
-                  ? "Uploading 1 document…"
-                  : `Uploading ${uploading.length} documents…`}
-              </p>
-            ) : (
-              <button
-                type="button"
-                onClick={() => input.current?.click()}
-                className="mb-3 block rounded-md text-left text-xs text-gray-500 transition-colors hover:text-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
-              >
-                Drop more documents here, or click to add more.
-              </button>
-            )}
-            <ul className="flex flex-wrap gap-1.5">
-              {documents.map((document) => (
-                <li key={document.document_id} className="min-w-0">
-                  <DocumentPill
-                    filename={document.filename}
-                    fileType={document.file_type}
-                    icon={document.status === "ready" ? undefined : spinner}
-                    status={
-                      document.status === "ready"
-                        ? undefined
-                        : document.status === "error"
+      {rows > 0 && (
+        <div className="mb-3 text-xs">
+          <div
+            aria-hidden="true"
+            className={`${DOCUMENT_GRID_CLASS} px-2 pb-1 pt-0.5 text-[11px] font-medium text-gray-400`}
+          >
+            <span className="col-span-2">Name</span>
+            <span className={ADDED_BY_CELL_CLASS}>Added by</span>
+            <span className={ADDED_CELL_CLASS}>Added</span>
+            <span className="text-right">Size</span>
+          </div>
+          <ul>
+            {documents.map((document) => {
+              const ready = document.status === "ready";
+              const cells = (
+                <>
+                  <FileTypeIcon fileType={document.file_type} />
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="min-w-0 truncate text-gray-700">
+                      {document.filename}
+                    </span>
+                    {!ready && (
+                      <span
+                        className={`inline-flex shrink-0 items-center gap-1 ${document.status === "error" ? "text-red-600" : "text-gray-400"}`}
+                      >
+                        {document.status === "error" ? null : spinner}
+                        {document.status === "error"
                           ? "Couldn't process"
-                          : "Processing"
-                    }
-                    tone={document.status === "error" ? "error" : "default"}
-                    onOpen={
-                      document.status === "ready"
-                        ? () => void open(document.document_id)
-                        : undefined
-                    }
-                  />
+                          : "Processing"}
+                      </span>
+                    )}
+                  </span>
+                  <span className={`${ADDED_BY_CELL_CLASS} text-gray-400`}>
+                    {document.added_by_name}
+                  </span>
+                  <span className={`${ADDED_CELL_CLASS} text-gray-400`}>
+                    {formatAdded(document.created_at)}
+                  </span>
+                  <span className="truncate text-right text-gray-400">
+                    {document.size_bytes == null
+                      ? "--"
+                      : formatSize(document.size_bytes)}
+                  </span>
+                </>
+              );
+              return (
+                <li key={document.document_id}>
+                  {ready ? (
+                    <button
+                      type="button"
+                      aria-label={`Open ${document.filename}`}
+                      title={document.filename}
+                      onClick={() => void open(document.document_id)}
+                      className={`w-full rounded-md ${DOCUMENT_GRID_CLASS} px-2 py-2 text-left transition-all ${LIQUID_GLASS_MODAL_ROW_HOVER_CLASS} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40`}
+                    >
+                      {cells}
+                    </button>
+                  ) : (
+                    <div
+                      title={document.filename}
+                      className={`${DOCUMENT_GRID_CLASS} px-2 py-2`}
+                    >
+                      {cells}
+                    </div>
+                  )}
                 </li>
-              ))}
-              {uploading.map((file, index) => (
-                <li key={`${file.name}:${index}`} className="min-w-0">
-                  <DocumentPill
-                    filename={file.name}
-                    icon={spinner}
-                    status="Uploading"
-                  />
-                </li>
-              ))}
-            </ul>
-          </>
+              );
+            })}
+            {uploading.map((file, index) => (
+              <li
+                key={`${file.name}:${index}`}
+                title={file.name}
+                className={`${DOCUMENT_GRID_CLASS} px-2 py-2`}
+              >
+                <FileTypeIcon fileType={file.name} />
+                <span className="flex min-w-0 items-center gap-2">
+                  <span className="min-w-0 truncate text-gray-700">
+                    {file.name}
+                  </span>
+                  <span className="inline-flex shrink-0 items-center gap-1 text-gray-400">
+                    {spinner}
+                    Uploading
+                  </span>
+                </span>
+                <span className={`${ADDED_BY_CELL_CLASS} text-gray-400`}>
+                  --
+                </span>
+                <span className={`${ADDED_CELL_CLASS} text-gray-400`}>--</span>
+                <span className="truncate text-right text-gray-400">
+                  {formatSize(file.size)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <div
+        aria-busy={busy}
+        className={`rounded-xl bg-gray-100 ${rows ? "p-2" : "p-4"}`}
+      >
+        {busy ? (
+          <p
+            className="py-1.5 text-center text-xs text-gray-500"
+            aria-live="polite"
+          >
+            {uploading.length === 1
+              ? "Uploading 1 document…"
+              : `Uploading ${uploading.length} documents…`}
+          </p>
+        ) : rows ? (
+          <button
+            type="button"
+            onClick={() => input.current?.click()}
+            className="w-full rounded-lg py-1.5 text-center text-xs text-gray-500 transition-colors hover:text-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+          >
+            Drop more documents here, or click to add more.
+          </button>
         ) : (
           <button
             type="button"

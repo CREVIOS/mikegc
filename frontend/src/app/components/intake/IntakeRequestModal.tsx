@@ -7,11 +7,7 @@ import type {
   IntakeReceipt,
 } from "@mike/contracts";
 import { useWorkspace } from "@/app/contexts/WorkspaceContext";
-import {
-  editIntakeRequest,
-  submitIntakeRequest,
-  uploadIntakeDocuments,
-} from "@/app/lib/mikeApi";
+import { submitIntakeRequest, uploadIntakeDocuments } from "@/app/lib/mikeApi";
 import { notifyPartialFailure } from "@/app/lib/userFacingError";
 import { discardIntakeDraft } from "@/app/lib/intakeMemory";
 import { Modal } from "@/app/components/modals/Modal";
@@ -37,76 +33,54 @@ const CATEGORY_OPTIONS = (["general", "nda"] as const).map((value) => ({
 }));
 const EMAIL = /^[^@\s]+@[^@\s]+$/;
 
-type Props = {
+/**
+ * Records a request for a named business requester. The draft lives in intake
+ * memory, so it survives navigation, and an uncertain save is replayed with
+ * the same IDs until its outcome is known. Details are edited afterwards on
+ * the request page.
+ */
+export function IntakeRequestModal({
+  orgId,
+  onClose,
+  onSaved,
+}: {
   orgId: string;
   onClose: () => void;
-} & (
-  | {
-      mode: "create";
-      onSaved: (requestId: string) => void;
-    }
-  | {
-      mode: "edit";
-      requestId: string;
-      version: number;
-      initial: IntakeDetails;
-      onSaved: () => void;
-    }
-);
-
-/**
- * Records a request for a named business requester, or edits one. The draft
- * lives in intake memory, so it survives navigation, and an uncertain save is
- * replayed with the same IDs until its outcome is known.
- */
-export function IntakeRequestModal(props: Props) {
-  const { orgId, onClose } = props;
+  onSaved: (requestId: string) => void;
+}) {
   const { accountId } = useWorkspace();
-  const editing = props.mode === "edit";
-  const memory = useIntakeMemory(
-    orgId,
-    editing ? `edit:${props.requestId}:${props.version}` : "new-request",
-  );
-  const initial = editing ? props.initial : null;
+  const memory = useIntakeMemory(orgId, "new-request");
   const [category, setCategory] = useIntakeDraft<IntakeCategory>(
     memory,
     "category",
-    initial?.category ?? "general",
+    "general",
   );
-  const [subject, setSubject] = useIntakeDraft(
-    memory,
-    "subject",
-    initial?.subject ?? "",
-  );
+  const [subject, setSubject] = useIntakeDraft(memory, "subject", "");
   const [description, setDescription] = useIntakeDraft(
     memory,
     "description",
-    initial?.description ?? "",
+    "",
   );
   const [requesterName, setRequesterName] = useIntakeDraft(
     memory,
     "requesterName",
-    initial?.requester_name ?? "",
+    "",
   );
   const [requesterEmail, setRequesterEmail] = useIntakeDraft(
     memory,
     "requesterEmail",
-    initial?.requester_email ?? "",
+    "",
   );
   const [requesterTeam, setRequesterTeam] = useIntakeDraft(
     memory,
     "requesterTeam",
-    initial?.requester_team ?? "",
+    "",
   );
-  const [date, setDate] = useIntakeDraft(
-    memory,
-    "date",
-    initial?.requested_by_date ?? "",
-  );
+  const [date, setDate] = useIntakeDraft(memory, "date", "");
   const [timezone, setTimezone] = useIntakeDraft(
     memory,
     "timezone",
-    () => initial?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+    () => Intl.DateTimeFormat().resolvedOptions().timeZone,
   );
   const [assignToMe, setAssignToMe] = useIntakeDraft(
     memory,
@@ -149,20 +123,14 @@ export function IntakeRequestModal(props: Props) {
   }
   const operation = useIntakeOperation(
     (receipt: IntakeReceipt) => {
-      if (props.mode === "edit") {
-        discardIntakeDraft(memory);
-        props.onSaved();
-        return;
-      }
       const requestId = receipt.request_id;
       if (!requestId) return;
       const pending = files;
       if (!pending.length) {
         discardIntakeDraft(memory);
-        props.onSaved(requestId);
+        onSaved(requestId);
         return;
       }
-      const onSaved = props.onSaved;
       void uploadDocuments(requestId, pending).then(() => {
         // Someone who left mid-upload is not pulled back to the request.
         // Read before discarding: the draft also holds the open dialog.
@@ -226,20 +194,6 @@ export function IntakeRequestModal(props: Props) {
       requested_by_date: date || null,
       timezone: date ? timezone.trim() : null,
     };
-    if (props.mode === "edit") {
-      const body = {
-        ...details,
-        command_id: crypto.randomUUID(),
-        expected_version: props.version,
-      };
-      void operation.execute(async () => {
-        const receipt = await editIntakeRequest(orgId, props.requestId, body);
-        if (receipt.request_id !== props.requestId)
-          throw new Error("Mismatched intake receipt");
-        return receipt;
-      }, "save the request details");
-      return;
-    }
     const body = {
       ...details,
       id: crypto.randomUUID(),
@@ -254,17 +208,13 @@ export function IntakeRequestModal(props: Props) {
     }, "record the request");
   }
 
-  const savingLabel = uploading
-    ? "Uploading documents…"
-    : editing
-      ? "Saving…"
-      : "Recording…";
+  const savingLabel = uploading ? "Uploading documents…" : "Recording…";
   return (
     <>
       <Modal
         open
         onClose={close}
-        breadcrumbs={["Intake", editing ? "Edit details" : "New request"]}
+        breadcrumbs={["Intake", "New request"]}
         footerStatus={
           operation.uncertain ? (
             <span role="status">Checking whether it was saved.</span>
@@ -280,14 +230,11 @@ export function IntakeRequestModal(props: Props) {
             : undefined
         }
         primaryAction={{
-          label: operation.busy || uploading
-            ? savingLabel
-            : editing
-              ? "Save details"
-              : "Record request",
-          icon: operation.busy || uploading ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : undefined,
+          label: operation.busy || uploading ? savingLabel : "Record request",
+          icon:
+            operation.busy || uploading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : undefined,
           onClick: submit,
           disabled: !complete || locked,
         }}
@@ -316,22 +263,20 @@ export function IntakeRequestModal(props: Props) {
               disabled={locked}
             />
           </div>
-          {!editing && (
-            <div>
-              <FieldLabel as="p" id={ids.documents}>
-                Documents (optional)
-              </FieldLabel>
-              <IntakeDocumentDropZone
-                files={files}
-                labelledBy={ids.documents}
-                disabled={locked}
-                onAdd={(added) => change(setFiles)([...files, ...added])}
-                onRemove={(index) =>
-                  change(setFiles)(files.filter((_, i) => i !== index))
-                }
-              />
-            </div>
-          )}
+          <div>
+            <FieldLabel as="p" id={ids.documents}>
+              Documents (optional)
+            </FieldLabel>
+            <IntakeDocumentDropZone
+              files={files}
+              labelledBy={ids.documents}
+              disabled={locked}
+              onAdd={(added) => change(setFiles)([...files, ...added])}
+              onRemove={(index) =>
+                change(setFiles)(files.filter((_, i) => i !== index))
+              }
+            />
+          </div>
           <div>
             <FieldLabel htmlFor={ids.subject}>Subject</FieldLabel>
             <FormTextInput
@@ -460,24 +405,20 @@ export function IntakeRequestModal(props: Props) {
               </div>
             )}
           </div>
-          {!editing && (
-            <label
-              htmlFor={ids.assign}
-              className="flex w-fit cursor-pointer items-center gap-2 text-sm text-gray-700"
-            >
-              <input
-                id={ids.assign}
-                type="checkbox"
-                className={TABLE_CHECKBOX_CLASS}
-                checked={assignToMe}
-                disabled={locked}
-                onChange={(event) =>
-                  change(setAssignToMe)(event.target.checked)
-                }
-              />
-              Assign to me
-            </label>
-          )}
+          <label
+            htmlFor={ids.assign}
+            className="flex w-fit cursor-pointer items-center gap-2 text-sm text-gray-700"
+          >
+            <input
+              id={ids.assign}
+              type="checkbox"
+              className={TABLE_CHECKBOX_CLASS}
+              checked={assignToMe}
+              disabled={locked}
+              onChange={(event) => change(setAssignToMe)(event.target.checked)}
+            />
+            Assign to me
+          </label>
           <p className="text-xs text-gray-500">
             A target date helps the team plan. It is not a legal deadline.
             Everyone in your organization can see this request. Your draft is

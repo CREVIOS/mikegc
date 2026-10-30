@@ -69,8 +69,10 @@ vi.mock("@/app/components/shared/PageHeader", () => ({
   PageHeader: ({
     children,
     actions = [],
+    breadcrumbs = [],
   }: {
     children?: ReactNode;
+    breadcrumbs?: { label?: ReactNode }[];
     actions?: (
       | false
       | null
@@ -86,6 +88,8 @@ vi.mock("@/app/components/shared/PageHeader", () => ({
     )[];
   }) => (
     <header>
+      {/* The current page's title, which may be an editable input. */}
+      {breadcrumbs.length > 1 && breadcrumbs[breadcrumbs.length - 1].label}
       {children}
       {actions.map((action, index) =>
         !action || action.type === "search" ? null : action.type === "custom" ? (
@@ -816,7 +820,9 @@ describe("contract review documents", () => {
       <Detail orgId="org-a" requestId="request-a" accountId="account-a" />,
     );
     const documents = await screen.findByRole("region", { name: "Documents" });
-    expect(within(documents).getByTitle("Schedule.pdf · Processing")).toBeInTheDocument();
+    expect(within(documents).getByTitle("Schedule.pdf")).toHaveTextContent(
+      "Processing",
+    );
     expect(
       within(documents).queryByRole("button", { name: "Open Schedule.pdf" }),
     ).not.toBeInTheDocument();
@@ -995,28 +1001,39 @@ describe("request detail", () => {
     ).toBeInTheDocument();
     expect(screen.getByText(/^Automatically ·/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Reopen" })).toBeInTheDocument();
+    // A closed request's details and title can be read but not changed.
+    const details = screen.getByRole("complementary", { name: "Details" });
+    expect(within(details).queryByRole("textbox")).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Edit details" }),
+      screen.queryByRole("textbox", { name: "Subject" }),
     ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Edit request" }),
+    ).not.toBeInTheDocument();
+    expect(details).toHaveTextContent("Jane Business");
   });
 
   it("keeps less common actions in one menu behind a single primary action", async () => {
     const user = userEvent.setup();
     render(detail());
-    const summary = await screen.findByRole("region", { name: "Request summary" });
-    expect(within(summary).getByText("In progress")).toBeInTheDocument();
-    expect(within(summary).getByText("Jane Business")).toBeInTheDocument();
-    expect(within(summary).getByText("jane@business.test")).toBeInTheDocument();
-    // The page header shows the subject once; the summary only names the page
-    // for assistive technology.
+    const details = await screen.findByRole("complementary", { name: "Details" });
+    expect(within(details).getByText("In progress")).toBeInTheDocument();
+    expect(within(details).getByLabelText("Requester")).toHaveValue(
+      "Jane Business",
+    );
+    expect(within(details).getByLabelText("Requester email")).toHaveValue(
+      "jane@business.test",
+    );
+    // The page header shows the subject once, as an editable title; the
+    // heading only names the page for assistive technology.
     expect(
-      within(summary).getByRole("heading", { level: 1, name: "Confidential request A" }),
+      screen.getByRole("heading", { level: 1, name: "Confidential request A" }),
     ).toHaveClass("sr-only");
     expect(
-      within(summary)
+      within(details)
         .getAllByRole("button")
         .map((button) => button.getAttribute("aria-label")),
-    ).toEqual(["Assigned lawyer: Lawyer B"]);
+    ).toEqual(["Assigned lawyer: Lawyer B", "Type: Legal question"]);
     const header = screen.getByRole("banner");
     expect(
       within(header)
@@ -1026,12 +1043,7 @@ describe("request detail", () => {
     await user.click(within(header).getByRole("button", { name: "More actions" }));
     expect(
       screen.getAllByRole("menuitem").map((item) => item.textContent),
-    ).toEqual([
-      "Mark waiting on requester",
-      "Edit details",
-      "Copy link",
-      "Cancel request",
-    ]);
+    ).toEqual(["Mark waiting on requester", "Copy link", "Cancel request"]);
     await user.click(
       screen.getByRole("menuitem", { name: "Mark waiting on requester" }),
     );
@@ -1141,17 +1153,12 @@ describe("request detail", () => {
     ).toBeInTheDocument();
   });
 
-  it("edits details at the loaded version", async () => {
+  it("saves a detail field at the loaded version when it is left", async () => {
     mocks.edit.mockResolvedValue(receipt);
-    const user = userEvent.setup();
     render(detail());
-    await user.click(await screen.findByRole("button", { name: "More actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Edit details" }));
-    expect(screen.getByLabelText("Requester")).toHaveValue("Jane Business");
-    fireEvent.change(screen.getByLabelText("Requester"), {
-      target: { value: "Sam Business" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Save details" }));
+    const name = await screen.findByLabelText("Requester");
+    fireEvent.change(name, { target: { value: " Sam Business " } });
+    fireEvent.blur(name);
     await waitFor(() => expect(mocks.edit).toHaveBeenCalledTimes(1));
     expect(mocks.edit.mock.calls[0]).toEqual([
       "org-a",
@@ -1164,6 +1171,118 @@ describe("request detail", () => {
       }),
     ]);
     await waitFor(() => expect(mocks.request).toHaveBeenCalledTimes(2));
+  });
+
+  it("does not save an unchanged or invalid field, and Escape puts it back", async () => {
+    render(detail());
+    const email = await screen.findByLabelText("Requester email");
+    fireEvent.blur(email);
+    fireEvent.change(email, { target: { value: "not an email" } });
+    fireEvent.keyDown(email, { key: "Enter" });
+    expect(
+      screen.getByText("Enter an email address like name@company.com."),
+    ).toBeInTheDocument();
+    expect(email).toHaveAttribute("aria-invalid", "true");
+    fireEvent.keyDown(email, { key: "Escape" });
+    expect(email).toHaveValue("jane@business.test");
+    expect(mocks.edit).not.toHaveBeenCalled();
+  });
+
+  it("waits for a saving change before sending the next field's edit", async () => {
+    const first = deferred<typeof receipt>();
+    mocks.edit
+      .mockReturnValueOnce(first.promise)
+      .mockResolvedValueOnce({ ...receipt, applied_version: 3 });
+    render(detail());
+    const name = await screen.findByLabelText("Requester");
+    fireEvent.change(name, { target: { value: "Sam Business" } });
+    fireEvent.blur(name);
+    const team = screen.getByLabelText("Team");
+    fireEvent.change(team, { target: { value: "Legal Ops" } });
+    fireEvent.blur(team);
+    expect(mocks.edit).toHaveBeenCalledTimes(1);
+    mocks.request.mockResolvedValue(
+      request({ version: 2, requester_name: "Sam Business" }),
+    );
+    await act(async () => first.resolve(receipt));
+    await waitFor(() => expect(mocks.edit).toHaveBeenCalledTimes(2));
+    // The queued edit carries the saved name and the refreshed version.
+    expect(mocks.edit.mock.calls[1][2]).toEqual(
+      expect.objectContaining({
+        expected_version: 2,
+        requester_name: "Sam Business",
+        requester_team: "Legal Ops",
+      }),
+    );
+  });
+
+  it("changes the type from its menu", async () => {
+    mocks.edit.mockResolvedValue(receipt);
+    const user = userEvent.setup();
+    render(detail());
+    await user.click(
+      await screen.findByRole("button", { name: "Type: Legal question" }),
+    );
+    await user.click(
+      screen.getByRole("menuitemradio", { name: "Contract review" }),
+    );
+    await waitFor(() =>
+      expect(mocks.edit).toHaveBeenCalledWith(
+        "org-a",
+        "request-a",
+        expect.objectContaining({ category: "nda", expected_version: 1 }),
+      ),
+    );
+  });
+
+  it("renames the request from the page title", async () => {
+    mocks.edit.mockResolvedValue(receipt);
+    render(detail());
+    const title = await screen.findByRole("textbox", { name: "Subject" });
+    expect(title).toHaveValue("Confidential request A");
+    fireEvent.change(title, { target: { value: "   " } });
+    fireEvent.blur(title);
+    // A request always has a subject.
+    expect(title).toHaveValue("Confidential request A");
+    fireEvent.change(title, { target: { value: "Renamed request" } });
+    fireEvent.keyDown(title, { key: "Enter" });
+    fireEvent.blur(title);
+    await waitFor(() =>
+      expect(mocks.edit).toHaveBeenCalledWith(
+        "org-a",
+        "request-a",
+        expect.objectContaining({ subject: "Renamed request" }),
+      ),
+    );
+  });
+
+  it("edits the description in place and keeps it open until saved", async () => {
+    mocks.edit.mockResolvedValue(receipt);
+    const user = userEvent.setup();
+    render(detail());
+    await user.click(await screen.findByRole("button", { name: "Edit request" }));
+    const editor = screen.getByRole("textbox", { name: "Request" });
+    expect(editor).toHaveValue("Request description");
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    await user.clear(editor);
+    await user.type(editor, "A clearer description");
+    mocks.request.mockResolvedValue(
+      request({ version: 2, description: "A clearer description" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(mocks.edit).toHaveBeenCalledWith(
+        "org-a",
+        "request-a",
+        expect.objectContaining({ description: "A clearer description" }),
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("textbox", { name: "Request" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(screen.getByText("A clearer description")).toBeInTheDocument();
   });
 
   it("refreshes in place when the window regains focus", async () => {

@@ -28,16 +28,28 @@ off. Personal workspaces do not have an intake queue.
    reason, and reopen it. The resolution or cancellation reason is pinned to
    the request.
 
-The request page is one centred column of panels. The page header shows the
-subject once, with one primary action (**Resolve** while the request is open,
-**Reopen** once it is closed) and a **More actions** menu for marking waiting,
-resuming, editing details, copying a link and cancelling. A **Details** panel
-lays out the requester, status, assigned lawyer, type, target date and who
-recorded the request; the assigned lawyer is a menu that saves as soon as a
-person is chosen (with **Assign to me** first). A **Request** panel holds the
-description and the documents, and an **Activity** panel holds the timeline. Notes and every change appear together in one
-**Activity** timeline, oldest first, with a grey **Add a note** field at its
-end.
+The request page centres the request beside a **Details** sidebar. The page
+header shows the subject once, as the page title, with one primary action
+(**Resolve** while the request is open, **Reopen** once it is closed) and a
+**More actions** menu for marking waiting, resuming, copying a link and
+cancelling. On wide screens the sidebar stays in place while the page scrolls;
+on narrow screens it comes first. It shows the status, the assigned lawyer, the
+type, the requester's name, email and team, the target date with its timezone,
+and who recorded the request.
+
+Details are edited in place; there is no edit dialog. While a request is open,
+each sidebar field saves when it is left or Enter is pressed (Escape puts the
+saved value back), the type and assigned lawyer save as soon as they are chosen
+from their menus, the title saves the same way as a field, and the description
+has **Edit** with **Save** and **Cancel**. Every edit sends the request's whole
+details at its loaded version, so an edit made while another change is saving
+waits for the refreshed request before it is sent. A resolved or cancelled
+request shows its details as text.
+
+A **Request** panel holds the description and the documents, and an
+**Activity** panel holds the timeline. Notes and every change appear together
+in one **Activity** timeline, oldest first, with a grey **Add a note** field at
+its end.
 
 Statuses are **New**, **In progress**, **Waiting on requester**, **Resolved**
 and **Cancelled** (stored as `submitted`, `in_review`, `needs_information`,
@@ -53,10 +65,10 @@ Every request can carry documents, whether it is a **Contract review**
 form shows a drop zone: drag files onto it or click it to browse. PDF, Word, Excel and PowerPoint files are accepted. The
 files upload after the request is saved. If an upload fails, the request is
 still saved and a notice says which documents to add again from the request.
-On the request page, **Documents** is the same grey field as the playbook
-run's: the files appear as chips that open in the document viewer, and clicking
-the field browses for more. Files dropped anywhere on the page are added to the
-request.
+On the request page, **Documents** lists the files in rows like the file
+directory's (name, who added it, when and size); a ready file opens in the
+document viewer. Below the list, a grey field like the playbook run's browses
+for more, and files dropped anywhere on the page are added to the request.
 
 Attachments are documents of library kind `intake_attachment`, owned by the
 request's organization and linked to the request in `intake_request_documents`.

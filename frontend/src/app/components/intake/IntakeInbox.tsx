@@ -259,11 +259,7 @@ export function Inbox({
   }
 
   const filtered =
-    !!debouncedSearch ||
-    !!state ||
-    !!category ||
-    view === "mine" ||
-    !!assignee;
+    !!debouncedSearch || !!state || !!category || view === "mine" || !!assignee;
   const failure = error;
   const hrefFor = (request: IntakeRequestSummary) =>
     `/intake/${request.id}?org=${orgId}`;
@@ -674,7 +670,6 @@ export function Inbox({
       )}
       {creating && (
         <IntakeRequestModal
-          mode="create"
           orgId={orgId}
           onClose={() => setCreating(false)}
           onSaved={(id) => router.push(`/intake/${id}?org=${orgId}`)}

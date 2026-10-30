@@ -219,7 +219,7 @@ test("Legal records a business request, works it and resolves it exactly once", 
     await lawyerB.reload();
     // The details panel holds the facts and the assignee; the page header
     // holds the one primary action and the More actions menu.
-    const summaryB = lawyerB.getByRole("region", { name: "Request summary" });
+    const summaryB = lawyerB.getByRole("complementary", { name: "Details" });
     await summaryB
       .getByRole("button", { name: "Assigned lawyer: Intake Lawyer A" })
       .click();
@@ -297,7 +297,7 @@ test("Legal records a business request, works it and resolves it exactly once", 
     }
 
     // Closed requests can be reopened, and cancelling records a reason.
-    const summaryA = lawyerA.getByRole("region", { name: "Request summary" });
+    const summaryA = lawyerA.getByRole("complementary", { name: "Details" });
     await lawyerA.getByRole("button", { name: "Reopen" }).click();
     await expect(summaryA.getByText("In progress", { exact: true })).toBeVisible();
     await lawyerA.getByRole("button", { name: "More actions" }).click();

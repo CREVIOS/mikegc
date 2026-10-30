@@ -7,12 +7,13 @@ import {
   type ReactNode,
 } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronDown } from "lucide-react";
 import { useIntakeMemory, useIntakeDraft } from "./useIntakeMemory";
 import type {
   IntakeAction,
   IntakeCommand,
+  IntakeDetails,
   IntakeDocument,
+  IntakeEdit,
   IntakeEvent,
   IntakeMember,
   IntakeMessage,
@@ -22,6 +23,7 @@ import { useWorkspace } from "@/app/contexts/WorkspaceContext";
 import { useItemWorkspace } from "@/app/hooks/useItemWorkspace";
 import {
   commandIntakeRequest,
+  editIntakeRequest,
   getIntakeDocuments,
   getIntakeEvents,
   getIntakeMembers,
@@ -35,19 +37,13 @@ import {
   SkeletonLine,
   TableEmptyState,
 } from "@/app/components/shared/TablePrimitive";
-import { SETTINGS_CONTROL_CLASS } from "@/app/components/settings/SettingsTextInput";
 import { EmptyState } from "@/app/components/ui/empty-state";
 import { UserAvatar } from "@/app/components/ui/user-avatar";
 import { IntakeSkeuoIcon } from "@/app/components/shared/AppSidebarSkeuoIcons";
 import { RowActions } from "@/app/components/shared/RowActions";
 import { GlassCardUI } from "@/shared/ui/GlassCardUI";
-import {
-  Dropdown,
-  DropdownContent,
-  DropdownItem,
-  DropdownSeparator,
-  DropdownTrigger,
-} from "@/shared/ui/dropdown";
+import { LIQUID_GLASS_FLAT_CLASS } from "@/app/components/ui/liquid-surface";
+import { DropdownItem, DropdownSeparator } from "@/shared/ui/dropdown";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { TextSlabUI } from "@/shared/ui/TextSlabUI";
 import {
@@ -57,21 +53,16 @@ import {
 } from "./useIntakeOperation";
 import { IntakeDocuments, useIntakeDocumentUpload } from "./IntakeDocuments";
 import { IntakeReasonModal } from "./IntakeReasonModal";
-import { IntakeRequestModal } from "./IntakeRequestModal";
 import {
-  INTAKE_CATEGORY_LABELS,
-  INTAKE_MESSAGE_LABELS,
-  INTAKE_STATE_LABELS,
-  formatIntakeDate,
-  formatIntakeDateTime,
-  intakeMemberName,
-  isIntakeOverdue,
-} from "./intakeLabels";
+  INTAKE_TEXTAREA_CLASS,
+  IntakeDescription,
+  IntakeDetailsPanel,
+  IntakeSubjectInput,
+} from "./IntakeDetailsPanel";
+import { INTAKE_MESSAGE_LABELS, formatIntakeDateTime } from "./intakeLabels";
 
 /** Every section on the request page is introduced the same way. */
 const SECTION_HEADING = "text-sm font-medium text-gray-900";
-/** Grey and flat like the playbook fields; grows with its text where supported. */
-const NOTE_FIELD_CLASS = `${SETTINGS_CONTROL_CLASS} block max-h-[28rem] min-h-[4.75rem] resize-y py-2 leading-relaxed [field-sizing:content]`;
 /** Quiet refreshes when the window regains focus are at most this frequent. */
 const FOCUS_REFRESH_MS = 30_000;
 
@@ -148,7 +139,6 @@ export function Detail({
     "consumes",
     null,
   );
-  const [editing, setEditing] = useState(false);
   const epoch = useRef(0);
   const refresh = useCallback(async () => {
     const generation = ++epoch.current;
@@ -198,8 +188,15 @@ export function Detail({
     window.addEventListener("focus", focus);
     return () => window.removeEventListener("focus", focus);
   }, [refresh]);
+  // Detail edits replace every field at the request's version, so one made
+  // while another change is saving waits for the refreshed request.
+  const queuedDetails = useRef<Partial<IntakeDetails> | null>(null);
+  const savedVersion = useRef(0);
+  // Remounting the sidebar after a rejected change drops unsaved field text.
+  const [detailsEpoch, setDetailsEpoch] = useState(0);
   const operation = useIntakeOperation(
-    () => {
+    (receipt) => {
+      savedVersion.current = receipt.applied_version;
       if (consumes === "note") setNote("");
       if (consumes === "reason") {
         setReason("");
@@ -215,6 +212,8 @@ export function Detail({
           : 0;
       // Hide what this account may no longer read until the reload decides.
       // Other failures refresh in place, keeping any open dialog and draft.
+      queuedDetails.current = null;
+      setDetailsEpoch((epoch) => epoch + 1);
       if ([401, 403, 404].includes(status)) {
         setRequest(null);
         setMessages([]);
@@ -254,6 +253,44 @@ export function Detail({
       return receipt;
     }, label);
   }
+  function sendDetails(patch: Partial<IntakeDetails>) {
+    if (!request) return;
+    const input: IntakeEdit = {
+      category: request.category,
+      subject: request.subject,
+      description: request.description,
+      requester_name: request.requester_name,
+      requester_email: request.requester_email,
+      requester_team: request.requester_team,
+      requested_by_date: request.requested_by_date,
+      timezone: request.timezone,
+      ...patch,
+      command_id: crypto.randomUUID(),
+      expected_version: request.version,
+    };
+    setConsumes(null);
+    void operation.execute(async () => {
+      const receipt = await editIntakeRequest(orgId, requestId, input);
+      if (receipt.request_id !== requestId)
+        throw new Error("Mismatched intake receipt");
+      return receipt;
+    }, "save the details");
+  }
+  function saveDetails(patch: Partial<IntakeDetails>) {
+    if (!request) return;
+    if (operation.locked || request.version < savedVersion.current) {
+      queuedDetails.current = { ...queuedDetails.current, ...patch };
+      return;
+    }
+    sendDetails(patch);
+  }
+  useEffect(() => {
+    const queued = queuedDetails.current;
+    if (!queued || !request || operation.locked) return;
+    if (request.version < savedVersion.current) return;
+    queuedDetails.current = null;
+    sendDetails(queued);
+  });
   const caps = request?.capabilities;
   const upload = useIntakeDocumentUpload(
     orgId,
@@ -287,11 +324,23 @@ export function Detail({
   ].sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
   const assign = (assigneeId: string | null) =>
     command("assignment", "assign the request", { assignee_id: assigneeId });
-  const others = members.filter(
-    (m) => m.user_id !== accountId && m.user_id !== request?.assignee_id,
+  // An unresolved save stays retryable even while the request is hidden.
+  const recheck = operation.uncertain && !closing && (
+    <div className="flex flex-wrap items-center gap-3" role="status">
+      <span className="text-sm text-gray-500">
+        Checking whether it was saved. Your text is kept here.
+      </span>
+      <PillButtonUI
+        tone="white"
+        size="sm"
+        disabled={operation.busy}
+        onClick={() => void operation.execute()}
+      >
+        Check again
+      </PillButtonUI>
+    </div>
   );
-  const hasMenu =
-    !!caps && (caps.wait || caps.resume || caps.edit || caps.cancel);
+  const hasMenu = !!caps && (caps.wait || caps.resume || caps.cancel);
   return (
     <div className="flex h-full min-h-0 flex-col">
       <PageHeader
@@ -352,16 +401,6 @@ export function Detail({
                                 Resume
                               </DropdownItem>
                             )}
-                            {caps.edit && (
-                              <DropdownItem
-                                onSelect={() => {
-                                  close();
-                                  setEditing(true);
-                                }}
-                              >
-                                Edit details
-                              </DropdownItem>
-                            )}
                             <DropdownItem
                               onSelect={() => {
                                 close();
@@ -407,14 +446,24 @@ export function Detail({
             title: "Back to Intake",
           },
           {
-            label: request?.subject,
+            label:
+              request && caps?.edit ? (
+                <IntakeSubjectInput
+                  key={detailsEpoch}
+                  value={request.subject}
+                  onSave={(subject) => saveDetails({ subject })}
+                />
+              ) : (
+                request?.subject
+              ),
+            title: request?.subject,
             loading: !request && !error,
             cursor: "text",
           },
         ]}
       />
       <div
-        className="relative min-h-0 flex-1 overflow-y-auto"
+        className="@container relative flex min-h-0 flex-1 flex-col"
         onDragEnter={(event) => {
           if (!request || !event.dataTransfer.types.includes("Files")) return;
           event.preventDefault();
@@ -446,8 +495,8 @@ export function Detail({
             Drop documents to add them to this request
           </div>
         )}
-        <div className="mx-auto w-full max-w-3xl px-3 pb-8 md:px-6.5 [overflow-wrap:anywhere]">
-          {error ? (
+        {error ? (
+          <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-8 md:px-6.5">
             <TableEmptyState>
               <EmptyState
                 tone="error"
@@ -464,305 +513,188 @@ export function Detail({
                 }
               />
             </TableEmptyState>
-          ) : !request || !caps ? (
-            <DetailSkeleton />
-          ) : (
-            <div className="space-y-5 pt-2">
+            {recheck}
+          </div>
+        ) : !request || !caps ? (
+          <DetailSkeleton>{recheck}</DetailSkeleton>
+        ) : (
+          <DetailColumns
+            details={
+              <IntakeDetailsPanel
+                key={detailsEpoch}
+                request={request}
+                members={members}
+                accountId={accountId}
+                locked={operation.locked}
+                onSave={saveDetails}
+                onAssign={assign}
+              />
+            }
+          >
+            {/* The page header shows the subject; this names the page for assistive technology. */}
+            <h1 className="sr-only">{request.subject}</h1>
+            {pinned && (
               <GlassCardUI>
-                <section aria-label="Request summary">
-                  {/* The page header shows the subject; this names the page for assistive technology. */}
-                  <h1 className="sr-only">{request.subject}</h1>
-                  <dl className="grid grid-cols-2 gap-x-6 gap-y-4 p-5 lg:grid-cols-3">
-                    <Fact
-                      label="Requester"
-                      className="col-span-2 sm:col-span-1"
+                <section
+                  aria-labelledby="intake-outcome"
+                  className="space-y-3 p-5"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h2 id="intake-outcome" className={SECTION_HEADING}>
+                      {request.state === "resolved"
+                        ? "Resolution"
+                        : "Cancellation reason"}
+                    </h2>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        navigator.clipboard.writeText(pinned.body).then(
+                          () => notifySuccess("Copied"),
+                          (e) => notifyError(e, { action: "copy the text" }),
+                        )
+                      }
+                      className="rounded-md text-xs text-gray-500 transition-colors hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
                     >
-                      <span className="block font-medium">
-                        {request.requester_name}
-                      </span>
-                      {request.requester_team && (
-                        <span className="block text-xs text-gray-500">
-                          {request.requester_team}
-                        </span>
-                      )}
-                      {request.requester_email && (
-                        <span className="block text-xs text-gray-500">
-                          {request.requester_email}
-                        </span>
-                      )}
-                    </Fact>
-                    <Fact label="Status">
-                      {INTAKE_STATE_LABELS[request.state]}
-                    </Fact>
-                    <Fact label="Assigned lawyer">
-                      {caps.assign ? (
-                        <Dropdown>
-                          <DropdownTrigger asChild>
-                            <button
-                              type="button"
-                              disabled={operation.locked}
-                              aria-label={`Assigned lawyer: ${request.assignee_name ?? "Unassigned"}`}
-                              className="inline-flex max-w-full items-center gap-1 rounded-md text-left transition-colors hover:text-gray-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:cursor-not-allowed"
-                            >
-                              <span
-                                className={
-                                  request.assignee_name
-                                    ? undefined
-                                    : "text-gray-400"
-                                }
-                              >
-                                {request.assignee_name ?? "Unassigned"}
-                              </span>
-                              <ChevronDown
-                                aria-hidden="true"
-                                className="h-3 w-3 shrink-0 text-gray-400"
-                              />
-                            </button>
-                          </DropdownTrigger>
-                          <DropdownContent align="start" className="w-56">
-                            {request.assignee_id !== accountId && (
-                              <DropdownItem onSelect={() => assign(accountId)}>
-                                Assign to me
-                              </DropdownItem>
-                            )}
-                            {request.assignee_id && (
-                              <DropdownItem onSelect={() => assign(null)}>
-                                Unassign
-                              </DropdownItem>
-                            )}
-                            {others.length > 0 && <DropdownSeparator />}
-                            {others.map((m) => (
-                              <DropdownItem
-                                key={m.user_id}
-                                onSelect={() => assign(m.user_id)}
-                              >
-                                {intakeMemberName(m)}
-                              </DropdownItem>
-                            ))}
-                          </DropdownContent>
-                        </Dropdown>
-                      ) : (
-                        (request.assignee_name ?? (
-                          <span className="text-gray-400">Unassigned</span>
-                        ))
-                      )}
-                    </Fact>
-                    <Fact label="Type">
-                      {INTAKE_CATEGORY_LABELS[request.category]}
-                    </Fact>
-                    <Fact label="Target date">
-                      {request.requested_by_date ? (
-                        <>
-                          <span
-                            className={`block ${isIntakeOverdue(request) ? "text-red-600" : ""}`}
-                          >
-                            {formatIntakeDate(request.requested_by_date)}
-                            {isIntakeOverdue(request) && " · overdue"}
-                          </span>
-                          <span className="block text-xs text-gray-500">
-                            {request.timezone ? `${request.timezone} · ` : ""}
-                            not a legal deadline
-                          </span>
-                        </>
-                      ) : (
-                        <span className="text-gray-400">None</span>
-                      )}
-                    </Fact>
-                    <Fact label="Recorded">
-                      <span className="block">{request.created_by_name}</span>
-                      <span className="block text-xs text-gray-500">
-                        {formatIntakeDateTime(request.created_at)}
-                      </span>
-                    </Fact>
-                  </dl>
+                      Copy
+                    </button>
+                  </div>
+                  <TextSlabUI className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700">
+                    {pinned.body}
+                  </TextSlabUI>
+                  <p className="text-xs text-gray-500">
+                    {pinned.author_name} ·{" "}
+                    {formatIntakeDateTime(pinned.created_at)}
+                  </p>
                 </section>
               </GlassCardUI>
+            )}
 
-              {pinned && (
-                <GlassCardUI>
-                  <section
-                    aria-labelledby="intake-outcome"
-                    className="space-y-3 p-5"
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <h2 id="intake-outcome" className={SECTION_HEADING}>
-                        {request.state === "resolved"
-                          ? "Resolution"
-                          : "Cancellation reason"}
-                      </h2>
-                      <button
-                        type="button"
+            <GlassCardUI>
+              <div className="divide-y divide-gray-100">
+                <IntakeDescription
+                  value={request.description}
+                  editable={caps.edit}
+                  locked={operation.locked}
+                  onSave={(description) => saveDetails({ description })}
+                />
+                <div className="p-5">
+                  <IntakeDocuments
+                    documents={documents}
+                    uploading={upload.uploading}
+                    warning={upload.warning}
+                    onAdd={(files) => void upload.add(files)}
+                  />
+                </div>
+              </div>
+            </GlassCardUI>
+
+            <GlassCardUI>
+              <section aria-labelledby="intake-activity">
+                <h2
+                  id="intake-activity"
+                  className={`${SECTION_HEADING} px-5 pt-5`}
+                >
+                  Activity
+                </h2>
+                <ol className="relative space-y-4 p-5 pt-3 before:absolute before:bottom-7 before:left-[31px] before:top-6 before:w-px before:bg-gray-200">
+                  {timeline.map((entry) =>
+                    "event" in entry ? (
+                      <li key={entry.key} className="relative flex gap-3">
+                        <span
+                          aria-hidden="true"
+                          className="flex h-6 w-6 shrink-0 items-center justify-center"
+                        >
+                          <span className="h-2 w-2 rounded-full bg-gray-300" />
+                        </span>
+                        <div className="min-w-0 pt-0.5">
+                          <p className="text-sm text-gray-700">
+                            {describeEvent(entry.event)}
+                          </p>
+                          <p className="text-xs text-gray-500">
+                            {entry.event.actor_name ?? "Automatically"} ·{" "}
+                            <time dateTime={entry.at}>
+                              {formatIntakeDateTime(entry.at)}
+                            </time>
+                          </p>
+                        </div>
+                      </li>
+                    ) : (
+                      <li key={entry.key} className="relative flex gap-3">
+                        <span className="flex h-6 w-6 shrink-0 items-center justify-center">
+                          <UserAvatar
+                            size="sm"
+                            name={entry.message.author_name}
+                          />
+                        </span>
+                        <div className="min-w-0 flex-1 space-y-1.5">
+                          <p className="flex flex-wrap items-baseline gap-x-2 pt-0.5 text-xs text-gray-500">
+                            <span className="text-sm font-medium text-gray-900">
+                              {entry.message.author_name}
+                            </span>
+                            <span>
+                              {INTAKE_MESSAGE_LABELS[entry.message.kind]}
+                            </span>
+                            <time dateTime={entry.at}>
+                              {formatIntakeDateTime(entry.at)}
+                            </time>
+                          </p>
+                          <TextSlabUI className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700">
+                            {entry.message.body}
+                          </TextSlabUI>
+                        </div>
+                      </li>
+                    ),
+                  )}
+                </ol>
+                {caps.note && (
+                  <div className="border-t border-gray-100 p-5">
+                    <label
+                      htmlFor="intake-note"
+                      className="mb-2 block text-sm font-medium text-gray-700"
+                    >
+                      Add a note
+                    </label>
+                    <textarea
+                      id="intake-note"
+                      rows={3}
+                      className={INTAKE_TEXTAREA_CLASS}
+                      maxLength={20000}
+                      placeholder="What happened, what the requester said, what was sent"
+                      aria-describedby="intake-note-help"
+                      value={note}
+                      disabled={operation.locked}
+                      onChange={(e) => setNote(e.target.value)}
+                    />
+                    <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                      <p
+                        id="intake-note-help"
+                        className="text-xs text-gray-500"
+                      >
+                        Visible to everyone in your organization.
+                      </p>
+                      <PillButtonUI
+                        tone="black"
+                        size="sm"
+                        disabled={!note.trim() || operation.locked}
                         onClick={() =>
-                          navigator.clipboard.writeText(pinned.body).then(
-                            () => notifySuccess("Copied"),
-                            (e) => notifyError(e, { action: "copy the text" }),
+                          command(
+                            "notes",
+                            "add the note",
+                            { body: note },
+                            "note",
                           )
                         }
-                        className="rounded-md text-xs text-gray-500 transition-colors hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
                       >
-                        Copy
-                      </button>
+                        Add note
+                      </PillButtonUI>
                     </div>
-                    <TextSlabUI className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700">
-                      {pinned.body}
-                    </TextSlabUI>
-                    <p className="text-xs text-gray-500">
-                      {pinned.author_name} ·{" "}
-                      {formatIntakeDateTime(pinned.created_at)}
-                    </p>
-                  </section>
-                </GlassCardUI>
-              )}
-
-              <GlassCardUI>
-                <div className="divide-y divide-gray-100">
-                  <section
-                    aria-labelledby="intake-request"
-                    className="space-y-2 p-5"
-                  >
-                    <h2 id="intake-request" className={SECTION_HEADING}>
-                      Request
-                    </h2>
-                    <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700">
-                      {request.description}
-                    </p>
-                  </section>
-                  <div className="p-5">
-                    <IntakeDocuments
-                      documents={documents}
-                      uploading={upload.uploading}
-                      warning={upload.warning}
-                      onAdd={(files) => void upload.add(files)}
-                    />
                   </div>
-                </div>
-              </GlassCardUI>
-
-              <GlassCardUI>
-                <section aria-labelledby="intake-activity">
-                  <h2
-                    id="intake-activity"
-                    className={`${SECTION_HEADING} px-5 pt-5`}
-                  >
-                    Activity
-                  </h2>
-                  <ol className="relative space-y-4 p-5 pt-3 before:absolute before:bottom-7 before:left-[31px] before:top-6 before:w-px before:bg-gray-200">
-                    {timeline.map((entry) =>
-                      "event" in entry ? (
-                        <li key={entry.key} className="relative flex gap-3">
-                          <span
-                            aria-hidden="true"
-                            className="flex h-6 w-6 shrink-0 items-center justify-center"
-                          >
-                            <span className="h-2 w-2 rounded-full bg-gray-300" />
-                          </span>
-                          <div className="min-w-0 pt-0.5">
-                            <p className="text-sm text-gray-700">
-                              {describeEvent(entry.event)}
-                            </p>
-                            <p className="text-xs text-gray-500">
-                              {entry.event.actor_name ?? "Automatically"} ·{" "}
-                              <time dateTime={entry.at}>
-                                {formatIntakeDateTime(entry.at)}
-                              </time>
-                            </p>
-                          </div>
-                        </li>
-                      ) : (
-                        <li key={entry.key} className="relative flex gap-3">
-                          <span className="flex h-6 w-6 shrink-0 items-center justify-center">
-                            <UserAvatar
-                              size="sm"
-                              name={entry.message.author_name}
-                            />
-                          </span>
-                          <div className="min-w-0 flex-1 space-y-1.5">
-                            <p className="flex flex-wrap items-baseline gap-x-2 pt-0.5 text-xs text-gray-500">
-                              <span className="text-sm font-medium text-gray-900">
-                                {entry.message.author_name}
-                              </span>
-                              <span>
-                                {INTAKE_MESSAGE_LABELS[entry.message.kind]}
-                              </span>
-                              <time dateTime={entry.at}>
-                                {formatIntakeDateTime(entry.at)}
-                              </time>
-                            </p>
-                            <TextSlabUI className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700">
-                              {entry.message.body}
-                            </TextSlabUI>
-                          </div>
-                        </li>
-                      ),
-                    )}
-                  </ol>
-                  {caps.note && (
-                    <div className="border-t border-gray-100 p-5">
-                      <label
-                        htmlFor="intake-note"
-                        className="mb-2 block text-sm font-medium text-gray-700"
-                      >
-                        Add a note
-                      </label>
-                      <textarea
-                        id="intake-note"
-                        rows={3}
-                        className={NOTE_FIELD_CLASS}
-                        maxLength={20000}
-                        placeholder="What happened, what the requester said, what was sent"
-                        aria-describedby="intake-note-help"
-                        value={note}
-                        disabled={operation.locked}
-                        onChange={(e) => setNote(e.target.value)}
-                      />
-                      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                        <p
-                          id="intake-note-help"
-                          className="text-xs text-gray-500"
-                        >
-                          Visible to everyone in your organization.
-                        </p>
-                        <PillButtonUI
-                          tone="black"
-                          size="sm"
-                          disabled={!note.trim() || operation.locked}
-                          onClick={() =>
-                            command(
-                              "notes",
-                              "add the note",
-                              { body: note },
-                              "note",
-                            )
-                          }
-                        >
-                          Add note
-                        </PillButtonUI>
-                      </div>
-                    </div>
-                  )}
-                </section>
-              </GlassCardUI>
-            </div>
-          )}
-          {operation.uncertain && !closing && (
-            <div
-              className="mt-4 flex flex-wrap items-center gap-3"
-              role="status"
-            >
-              <span className="text-sm text-gray-500">
-                Checking whether it was saved. Your text is kept here.
-              </span>
-              <PillButtonUI
-                tone="white"
-                size="sm"
-                disabled={operation.busy}
-                onClick={() => void operation.execute()}
-              >
-                Check again
-              </PillButtonUI>
-            </div>
-          )}
-        </div>
+                )}
+              </section>
+            </GlassCardUI>
+            {recheck}
+          </DetailColumns>
+        )}
       </div>
       {closing && request && (
         <IntakeReasonModal
@@ -810,20 +742,6 @@ export function Detail({
           onClose={() => setClosing(null)}
         />
       )}
-      {editing && request && (
-        <IntakeRequestModal
-          mode="edit"
-          orgId={orgId}
-          requestId={request.id}
-          version={request.version}
-          initial={request}
-          onClose={() => setEditing(false)}
-          onSaved={() => {
-            setEditing(false);
-            void refresh();
-          }}
-        />
-      )}
     </div>
   );
 }
@@ -867,46 +785,64 @@ function describeEvent(e: IntakeEvent): string {
   }
 }
 
-/** One labelled fact in the request summary. */
-function Fact({
-  label,
-  className = "",
+/**
+ * The request and its details, centred together. Details come first on narrow
+ * screens; on wide ones they sit on the right and stay in place while the
+ * page scrolls, scrolling on their own only when taller than the window.
+ */
+function DetailColumns({
+  details,
   children,
 }: {
-  label: string;
-  className?: string;
+  details: ReactNode;
   children: ReactNode;
 }) {
   return (
-    <div className={`min-w-0 space-y-1 ${className}`}>
-      <dt className="text-xs font-medium text-gray-500">{label}</dt>
-      <dd className="text-sm text-gray-900 [overflow-wrap:anywhere]">
-        {children}
-      </dd>
+    <div className="min-h-0 flex-1 overflow-y-auto [overflow-wrap:anywhere]">
+      <div className="mx-auto grid w-full max-w-[68rem] gap-5 px-3 pb-8 pt-2 md:px-6.5 @[52rem]:grid-cols-[minmax(0,1fr)_18rem] @[52rem]:items-start">
+        {/* The panel is the flat glass surface itself, so scrolling its
+            content never clips the surface's shadow. */}
+        <div
+          className={`min-w-0 rounded-xl ${LIQUID_GLASS_FLAT_CLASS} @[52rem]:sticky @[52rem]:top-2 @[52rem]:col-start-2 @[52rem]:row-start-1 @[52rem]:max-h-[calc(100dvh-8rem)] @[52rem]:overflow-y-auto`}
+        >
+          {details}
+        </div>
+        <div className="min-w-0 space-y-5 @[52rem]:col-start-1 @[52rem]:row-start-1">
+          {children}
+        </div>
+      </div>
     </div>
   );
 }
 
-/** Matches the loaded page: details, request with documents, activity. */
-function DetailSkeleton() {
+/** Matches the loaded page: details beside the request and its activity. */
+function DetailSkeleton({ children }: { children?: ReactNode }) {
   return (
-    <>
+    <DetailColumns
+      details={
+        <div className="space-y-4 p-5" aria-hidden="true">
+          <SkeletonLine className="w-16" />
+          {[
+            "w-28",
+            "h-9 w-full",
+            "h-9 w-full",
+            "h-9 w-full",
+            "h-9 w-full",
+            "h-9 w-full",
+            "w-28",
+          ].map((width, index) => (
+            <div key={index} className="space-y-2">
+              <SkeletonLine className="w-20" />
+              <SkeletonLine className={`${width} rounded-lg`} />
+            </div>
+          ))}
+        </div>
+      }
+    >
       <span role="status" className="sr-only">
         Loading request…
       </span>
-      <div className="space-y-5 pt-2" aria-hidden="true">
-        <GlassCardUI>
-          <div className="grid grid-cols-2 gap-x-6 gap-y-4 p-5 lg:grid-cols-3">
-            {["w-28", "w-20", "w-24", "w-24", "w-20", "w-28"].map(
-              (width, index) => (
-                <div key={index} className="space-y-2">
-                  <SkeletonLine className="w-16" />
-                  <SkeletonLine className={width} />
-                </div>
-              ),
-            )}
-          </div>
-        </GlassCardUI>
+      <div className="space-y-5" aria-hidden="true">
         <GlassCardUI>
           <div className="space-y-2 p-5">
             <SkeletonLine className="w-16" />
@@ -926,10 +862,11 @@ function DetailSkeleton() {
           </div>
           <div className="space-y-2 border-t border-gray-100 p-5">
             <SkeletonLine className="w-20" />
-            <SkeletonLine className="h-[4.75rem] w-full rounded-lg" />
+            <SkeletonLine className="h-32 w-full rounded-lg" />
           </div>
         </GlassCardUI>
       </div>
-    </>
+      {children}
+    </DetailColumns>
   );
 }
