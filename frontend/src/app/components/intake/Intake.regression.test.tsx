@@ -993,13 +993,15 @@ describe("request detail", () => {
     render(detail());
     const outcome = await screen.findByRole("region", { name: "Resolution" });
     expect(outcome).toHaveTextContent("Approved as drafted.");
-    expect(
-      screen.getByText("Recorded and assigned to Lawyer B"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("Unassigned because Lawyer B left the organization"),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/^Automatically ·/)).toBeInTheDocument();
+    // Each entry reads as who did what; an automatic change has no person.
+    const activity = screen.getByRole("region", { name: "Activity" });
+    expect(activity).toHaveTextContent(
+      "Lawyer A recorded this and assigned it to Lawyer B ·",
+    );
+    expect(activity).toHaveTextContent(
+      "Automatically unassigned Lawyer B because they left the organization ·",
+    );
+    expect(activity).toHaveTextContent("Lawyer A recorded the resolution ·");
     expect(screen.getByRole("button", { name: "Reopen" })).toBeInTheDocument();
     // A closed request's details and title can be read but not changed.
     const details = screen.getByRole("complementary", { name: "Details" });
@@ -1068,10 +1070,12 @@ describe("request detail", () => {
     render(detail());
     const activity = await screen.findByRole("region", { name: "Activity" });
     const entries = within(activity).getAllByRole("listitem");
+    // A note's text sits below its line.
+    expect(entries[1].textContent).toMatch(/added a note · .*Called the supplier$/);
     expect(entries.map((entry) => entry.textContent)).toEqual([
-      expect.stringContaining("Recorded"),
-      expect.stringContaining("Called the supplier"),
-      expect.stringContaining("Marked waiting on requester"),
+      expect.stringContaining("Lawyer A recorded this"),
+      expect.stringContaining("Lawyer A added a note"),
+      expect.stringContaining("Lawyer A marked this waiting on the requester"),
     ]);
   });
 

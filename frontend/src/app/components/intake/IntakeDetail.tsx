@@ -59,7 +59,8 @@ import {
   IntakeDetailsPanel,
   IntakeSubjectInput,
 } from "./IntakeDetailsPanel";
-import { INTAKE_MESSAGE_LABELS, formatIntakeDateTime } from "./intakeLabels";
+import { formatIntakeDateTime } from "./intakeLabels";
+import { describeIntakeEvent, describeIntakeMessage } from "./intakeActivity";
 
 /** Every section on the request page is introduced the same way. */
 const SECTION_HEADING = "text-sm font-medium text-gray-900";
@@ -598,42 +599,32 @@ export function Detail({
                 </h2>
                 <ol className="relative space-y-4 p-5 pt-3 before:absolute before:bottom-7 before:left-[31px] before:top-6 before:w-px before:bg-gray-200">
                   {timeline.map((entry) => {
-                    // Every entry is a dot on the line; who made it and when
-                    // sit in its bottom line.
-                    const actor =
+                    const line =
                       "event" in entry
-                        ? entry.event.actor_name
-                        : entry.message.author_name;
+                        ? describeIntakeEvent(entry.event)
+                        : describeIntakeMessage(entry.message);
                     return (
                       <li key={entry.key} className="relative flex gap-3">
-                        {/* A note's dot drops to its first line, below the box's padding. */}
-                        <span
-                          aria-hidden="true"
-                          className={`flex h-6 w-6 shrink-0 items-center justify-center ${"message" in entry ? "mt-2.5" : ""}`}
-                        >
-                          <span className="h-2 w-2 rounded-full bg-gray-300" />
-                        </span>
-                        <div className="min-w-0 flex-1 space-y-1.5 pt-0.5">
-                          {"event" in entry ? (
-                            <p className="text-sm text-gray-700">
-                              {describeEvent(entry.event)}
-                            </p>
-                          ) : (
-                            <TextSlabUI className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700">
-                              {entry.message.body}
-                            </TextSlabUI>
-                          )}
-                          <p className="flex items-center gap-1.5 text-xs text-gray-500">
-                            <IntakeActorAvatar name={actor} />
-                            <span>
-                              {actor ?? "Automatically"} ·{" "}
-                              {"message" in entry &&
-                                `${INTAKE_MESSAGE_LABELS[entry.message.kind]} · `}
-                              <time dateTime={entry.at}>
-                                {formatIntakeDateTime(entry.at)}
-                              </time>
-                            </span>
+                        <IntakeActorAvatar name={line.actor} />
+                        <div className="min-w-0 flex-1 space-y-1.5">
+                          <p className="pt-0.5 text-xs leading-5 text-gray-500">
+                            {line.actor && (
+                              <>
+                                <span className="font-medium text-gray-900">
+                                  {line.actor}
+                                </span>{" "}
+                              </>
+                            )}
+                            {line.action} ·{" "}
+                            <time dateTime={entry.at}>
+                              {formatIntakeDateTime(entry.at)}
+                            </time>
                           </p>
+                          {"message" in entry && (
+                            <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700">
+                              {entry.message.body}
+                            </p>
+                          )}
                         </div>
                       </li>
                     );
@@ -737,45 +728,6 @@ export function Detail({
       )}
     </div>
   );
-}
-
-/** One line of history; automatic changes name who left rather than an actor. */
-function describeEvent(e: IntakeEvent): string {
-  switch (e.kind) {
-    case "submitted":
-      return e.assignee_name
-        ? `Recorded and assigned to ${e.assignee_name}`
-        : "Recorded";
-    case "assign":
-      return e.assignee_name ? `Assigned to ${e.assignee_name}` : "Unassigned";
-    case "wait":
-      return "Marked waiting on requester";
-    case "resume":
-      return "Resumed";
-    case "resolve":
-      return "Resolved";
-    case "cancel":
-      return "Cancelled";
-    case "reopen":
-      return "Reopened";
-    case "edited":
-      return "Details edited";
-    case "document_added":
-      return "Document added";
-    case "assignee_left":
-      return `Unassigned because ${e.assignee_name ?? "the assigned lawyer"} left the organization`;
-    // Events recorded before intake became an internal tracker.
-    case "ask":
-      return "Asked for information";
-    case "reply":
-      return "Requester replied";
-    case "publish":
-      return "Answered and resolved";
-    case "reviewer_removed":
-      return "Unassigned when the lawyer left the Legal team";
-    default:
-      return e.kind.replaceAll("_", " ");
-  }
 }
 
 /**

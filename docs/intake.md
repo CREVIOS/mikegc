@@ -49,9 +49,12 @@ request shows its details as text.
 A **Request** panel holds the description and the documents, and an
 **Activity** panel holds the timeline. Notes and every change appear together
 in one **Activity** timeline, oldest first, and a grey **Add a note** field
-sits at its end. Every entry is the same dot on the timeline's line; its
-bottom line shows who made it, with their avatar, and when (an automatic
-change, such as unassigning someone who left, gets a neutral mark).
+sits at its end. Each entry puts the avatar of the person who made it on the
+timeline's line and reads as one small line of who did what and when, such as
+"Sam Colleague marked this waiting on the requester · 30 Oct 2026, 19:05". A
+note, resolution or cancellation reason shows its text below that line. An
+automatic change, such as unassigning someone who left, gets a neutral mark
+and reads "Automatically unassigned …".
 
 Statuses are **New**, **In progress**, **Waiting on requester**, **Resolved**
 and **Cancelled** (stored as `submitted`, `in_review`, `needs_information`,
