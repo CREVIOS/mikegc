@@ -597,44 +597,47 @@ export function Detail({
                   Activity
                 </h2>
                 <ol className="relative space-y-4 p-5 pt-3 before:absolute before:bottom-7 before:left-[31px] before:top-6 before:w-px before:bg-gray-200">
-                  {timeline.map((entry) =>
-                    "event" in entry ? (
+                  {timeline.map((entry) => {
+                    // Every entry is a dot on the line; who made it and when
+                    // sit in its bottom line.
+                    const actor =
+                      "event" in entry
+                        ? entry.event.actor_name
+                        : entry.message.author_name;
+                    return (
                       <li key={entry.key} className="relative flex gap-3">
-                        <IntakeActorAvatar name={entry.event.actor_name} />
-                        <div className="min-w-0 pt-0.5">
-                          <p className="text-sm text-gray-700">
-                            {describeEvent(entry.event)}
-                          </p>
-                          <p className="text-xs text-gray-500">
-                            {entry.event.actor_name ?? "Automatically"} ·{" "}
-                            <time dateTime={entry.at}>
-                              {formatIntakeDateTime(entry.at)}
-                            </time>
-                          </p>
-                        </div>
-                      </li>
-                    ) : (
-                      <li key={entry.key} className="relative flex gap-3">
-                        <IntakeActorAvatar name={entry.message.author_name} />
-                        <div className="min-w-0 flex-1 space-y-1.5">
-                          <p className="flex flex-wrap items-baseline gap-x-2 pt-0.5 text-xs text-gray-500">
-                            <span className="text-sm font-medium text-gray-900">
-                              {entry.message.author_name}
-                            </span>
+                        {/* A note's dot drops to its first line, below the box's padding. */}
+                        <span
+                          aria-hidden="true"
+                          className={`flex h-6 w-6 shrink-0 items-center justify-center ${"message" in entry ? "mt-2.5" : ""}`}
+                        >
+                          <span className="h-2 w-2 rounded-full bg-gray-300" />
+                        </span>
+                        <div className="min-w-0 flex-1 space-y-1.5 pt-0.5">
+                          {"event" in entry ? (
+                            <p className="text-sm text-gray-700">
+                              {describeEvent(entry.event)}
+                            </p>
+                          ) : (
+                            <TextSlabUI className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700">
+                              {entry.message.body}
+                            </TextSlabUI>
+                          )}
+                          <p className="flex items-center gap-1.5 text-xs text-gray-500">
+                            <IntakeActorAvatar name={actor} />
                             <span>
-                              {INTAKE_MESSAGE_LABELS[entry.message.kind]}
+                              {actor ?? "Automatically"} ·{" "}
+                              {"message" in entry &&
+                                `${INTAKE_MESSAGE_LABELS[entry.message.kind]} · `}
+                              <time dateTime={entry.at}>
+                                {formatIntakeDateTime(entry.at)}
+                              </time>
                             </span>
-                            <time dateTime={entry.at}>
-                              {formatIntakeDateTime(entry.at)}
-                            </time>
                           </p>
-                          <TextSlabUI className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700">
-                            {entry.message.body}
-                          </TextSlabUI>
                         </div>
                       </li>
-                    ),
-                  )}
+                    );
+                  })}
                 </ol>
                 {caps.note && (
                   <div className="border-t border-gray-100 p-5">
