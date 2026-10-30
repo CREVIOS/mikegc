@@ -938,7 +938,7 @@ describe("request detail", () => {
     const user = userEvent.setup();
     const editor = await screen.findByLabelText("Add a note");
     fireEvent.change(editor, { target: { value: "Unsent note" } });
-    await user.click(screen.getByRole("button", { name: "Assigned to Lawyer B" }));
+    await user.click(screen.getByRole("button", { name: "Assigned lawyer: Lawyer B" }));
     // The current assignee is not offered again; the signed-in member comes first.
     expect(
       screen.getAllByRole("menuitem").map((item) => item.textContent),
@@ -1015,8 +1015,8 @@ describe("request detail", () => {
     expect(
       within(summary)
         .getAllByRole("button")
-        .map((button) => button.textContent),
-    ).toEqual(["Assigned to Lawyer B"]);
+        .map((button) => button.getAttribute("aria-label")),
+    ).toEqual(["Assigned lawyer: Lawyer B"]);
     const header = screen.getByRole("banner");
     expect(
       within(header)

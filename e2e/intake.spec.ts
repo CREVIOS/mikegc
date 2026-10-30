@@ -217,11 +217,11 @@ test("Legal records a business request, works it and resolves it exactly once", 
       .click();
     expect((await opened).status()).toBe(200);
     await lawyerB.reload();
-    // The summary holds the facts and the assignee; the page header holds the
-    // one primary action and the More actions menu.
+    // The details panel holds the facts and the assignee; the page header
+    // holds the one primary action and the More actions menu.
     const summaryB = lawyerB.getByRole("region", { name: "Request summary" });
     await summaryB
-      .getByRole("button", { name: "Assigned to Intake Lawyer A" })
+      .getByRole("button", { name: "Assigned lawyer: Intake Lawyer A" })
       .click();
     await lawyerB.getByRole("menuitem", { name: "Assign to me" }).click();
     await expect(

@@ -1,5 +1,11 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { useRouter } from "next/navigation";
 import { ChevronDown } from "lucide-react";
 import { useIntakeMemory, useIntakeDraft } from "./useIntakeMemory";
@@ -34,6 +40,7 @@ import { EmptyState } from "@/app/components/ui/empty-state";
 import { UserAvatar } from "@/app/components/ui/user-avatar";
 import { IntakeSkeuoIcon } from "@/app/components/shared/AppSidebarSkeuoIcons";
 import { RowActions } from "@/app/components/shared/RowActions";
+import { GlassCardUI } from "@/shared/ui/GlassCardUI";
 import {
   Dropdown,
   DropdownContent,
@@ -61,6 +68,8 @@ import {
   isIntakeOverdue,
 } from "./intakeLabels";
 
+/** Every section on the request page is introduced the same way. */
+const SECTION_HEADING = "text-sm font-medium text-gray-900";
 /** Quiet refreshes when the window regains focus are at most this frequent. */
 const FOCUS_REFRESH_MS = 30_000;
 
@@ -456,218 +465,273 @@ export function Detail({
           ) : !request || !caps ? (
             <DetailSkeleton />
           ) : (
-            <div className="space-y-6 pt-2">
-              <section aria-label="Request summary" className="space-y-2">
-                {/* The page header shows the subject; this names the page for assistive technology. */}
-                <h1 className="sr-only">{request.subject}</h1>
-                <ul className="flex flex-wrap gap-x-1.5 gap-y-0.5 text-sm text-gray-600 [&>li:not(:last-child)]:after:ml-1.5 [&>li:not(:last-child)]:after:text-gray-400 [&>li:not(:last-child)]:after:content-['·']">
-                  <li className="font-medium text-gray-900">
-                    {request.requester_name}
-                  </li>
-                  {request.requester_team && <li>{request.requester_team}</li>}
-                  {request.requester_email && (
-                    <li>{request.requester_email}</li>
-                  )}
-                  <li>{INTAKE_CATEGORY_LABELS[request.category]}</li>
-                  {request.requested_by_date && (
-                    <li
-                      title={
-                        request.timezone
-                          ? `${request.timezone} · not a legal deadline`
-                          : "Not a legal deadline"
-                      }
-                      className={
-                        isIntakeOverdue(request) ? "text-red-600" : undefined
-                      }
+            <div className="space-y-5 pt-2">
+              <GlassCardUI>
+                <section aria-label="Request summary">
+                  {/* The page header shows the subject; this names the page for assistive technology. */}
+                  <h1 className="sr-only">{request.subject}</h1>
+                  <dl className="grid grid-cols-2 gap-x-6 gap-y-4 p-5 lg:grid-cols-3">
+                    <Fact
+                      label="Requester"
+                      className="col-span-2 sm:col-span-1"
                     >
-                      Due {formatIntakeDate(request.requested_by_date)}
-                      {isIntakeOverdue(request) && ", overdue"}
-                    </li>
-                  )}
-                </ul>
-                <div className="flex flex-wrap items-center gap-x-1.5 text-sm text-gray-600">
-                  <span className="font-medium text-gray-900">
-                    {INTAKE_STATE_LABELS[request.state]}
-                  </span>
-                  <span aria-hidden="true" className="text-gray-400">
-                    ·
-                  </span>
-                  {caps.assign ? (
-                    <Dropdown>
-                      <DropdownTrigger asChild>
-                        <button
-                          type="button"
-                          disabled={operation.locked}
-                          className="inline-flex items-center gap-1 rounded-md text-gray-600 transition-colors hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:cursor-not-allowed"
-                        >
-                          {request.assignee_name
-                            ? `Assigned to ${request.assignee_name}`
-                            : "Unassigned"}
-                          <ChevronDown aria-hidden="true" className="h-3 w-3" />
-                        </button>
-                      </DropdownTrigger>
-                      <DropdownContent align="start" className="w-56">
-                        {request.assignee_id !== accountId && (
-                          <DropdownItem onSelect={() => assign(accountId)}>
-                            Assign to me
-                          </DropdownItem>
-                        )}
-                        {request.assignee_id && (
-                          <DropdownItem onSelect={() => assign(null)}>
-                            Unassign
-                          </DropdownItem>
-                        )}
-                        {others.length > 0 && <DropdownSeparator />}
-                        {others.map((m) => (
-                          <DropdownItem
-                            key={m.user_id}
-                            onSelect={() => assign(m.user_id)}
+                      <span className="block font-medium">
+                        {request.requester_name}
+                      </span>
+                      {request.requester_team && (
+                        <span className="block text-xs text-gray-500">
+                          {request.requester_team}
+                        </span>
+                      )}
+                      {request.requester_email && (
+                        <span className="block text-xs text-gray-500">
+                          {request.requester_email}
+                        </span>
+                      )}
+                    </Fact>
+                    <Fact label="Status">
+                      {INTAKE_STATE_LABELS[request.state]}
+                    </Fact>
+                    <Fact label="Assigned lawyer">
+                      {caps.assign ? (
+                        <Dropdown>
+                          <DropdownTrigger asChild>
+                            <button
+                              type="button"
+                              disabled={operation.locked}
+                              aria-label={`Assigned lawyer: ${request.assignee_name ?? "Unassigned"}`}
+                              className="inline-flex max-w-full items-center gap-1 rounded-md text-left transition-colors hover:text-gray-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:cursor-not-allowed"
+                            >
+                              <span
+                                className={
+                                  request.assignee_name
+                                    ? undefined
+                                    : "text-gray-400"
+                                }
+                              >
+                                {request.assignee_name ?? "Unassigned"}
+                              </span>
+                              <ChevronDown
+                                aria-hidden="true"
+                                className="h-3 w-3 shrink-0 text-gray-400"
+                              />
+                            </button>
+                          </DropdownTrigger>
+                          <DropdownContent align="start" className="w-56">
+                            {request.assignee_id !== accountId && (
+                              <DropdownItem onSelect={() => assign(accountId)}>
+                                Assign to me
+                              </DropdownItem>
+                            )}
+                            {request.assignee_id && (
+                              <DropdownItem onSelect={() => assign(null)}>
+                                Unassign
+                              </DropdownItem>
+                            )}
+                            {others.length > 0 && <DropdownSeparator />}
+                            {others.map((m) => (
+                              <DropdownItem
+                                key={m.user_id}
+                                onSelect={() => assign(m.user_id)}
+                              >
+                                {intakeMemberName(m)}
+                              </DropdownItem>
+                            ))}
+                          </DropdownContent>
+                        </Dropdown>
+                      ) : (
+                        (request.assignee_name ?? (
+                          <span className="text-gray-400">Unassigned</span>
+                        ))
+                      )}
+                    </Fact>
+                    <Fact label="Type">
+                      {INTAKE_CATEGORY_LABELS[request.category]}
+                    </Fact>
+                    <Fact label="Target date">
+                      {request.requested_by_date ? (
+                        <>
+                          <span
+                            className={`block ${isIntakeOverdue(request) ? "text-red-600" : ""}`}
                           >
-                            {intakeMemberName(m)}
-                          </DropdownItem>
-                        ))}
-                      </DropdownContent>
-                    </Dropdown>
-                  ) : (
-                    <span>
-                      {request.assignee_name
-                        ? `Assigned to ${request.assignee_name}`
-                        : "Unassigned"}
-                    </span>
-                  )}
-                </div>
-              </section>
+                            {formatIntakeDate(request.requested_by_date)}
+                            {isIntakeOverdue(request) && " · overdue"}
+                          </span>
+                          <span className="block text-xs text-gray-500">
+                            {request.timezone ? `${request.timezone} · ` : ""}
+                            not a legal deadline
+                          </span>
+                        </>
+                      ) : (
+                        <span className="text-gray-400">None</span>
+                      )}
+                    </Fact>
+                    <Fact label="Recorded">
+                      <span className="block">{request.created_by_name}</span>
+                      <span className="block text-xs text-gray-500">
+                        {formatIntakeDateTime(request.created_at)}
+                      </span>
+                    </Fact>
+                  </dl>
+                </section>
+              </GlassCardUI>
 
               {pinned && (
-                <section aria-labelledby="intake-outcome" className="space-y-2">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <h2
-                      id="intake-outcome"
-                      className="text-sm font-medium text-gray-900"
-                    >
-                      {request.state === "resolved"
-                        ? "Resolution"
-                        : "Cancellation reason"}
-                    </h2>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        navigator.clipboard.writeText(pinned.body).then(
-                          () => notifySuccess("Copied"),
-                          (e) => notifyError(e, { action: "copy the text" }),
-                        )
-                      }
-                      className="rounded-md text-xs text-gray-500 transition-colors hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
-                    >
-                      Copy
-                    </button>
-                  </div>
-                  <TextSlabUI className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700">
-                    {pinned.body}
-                  </TextSlabUI>
-                  <p className="text-xs text-gray-500">
-                    {pinned.author_name} ·{" "}
-                    {formatIntakeDateTime(pinned.created_at)}
-                  </p>
-                </section>
-              )}
-
-              <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700">
-                {request.description}
-              </p>
-
-              <IntakeDocuments
-                documents={documents}
-                uploading={upload.uploading}
-                warning={upload.warning}
-                onAdd={(files) => void upload.add(files)}
-              />
-
-              <section aria-labelledby="intake-activity" className="space-y-3">
-                <h2
-                  id="intake-activity"
-                  className="text-sm font-medium text-gray-900"
-                >
-                  Activity
-                </h2>
-                <ol className="space-y-3">
-                  {timeline.map((entry) =>
-                    "event" in entry ? (
-                      <li
-                        key={entry.key}
-                        className="flex flex-wrap gap-x-1.5 text-xs text-gray-500"
-                      >
-                        <span className="text-gray-700">
-                          {describeEvent(entry.event)}
-                        </span>
-                        <span>
-                          {entry.event.actor_name ?? "Automatically"} ·{" "}
-                          <time dateTime={entry.at}>
-                            {formatIntakeDateTime(entry.at)}
-                          </time>
-                        </span>
-                      </li>
-                    ) : (
-                      <li key={entry.key} className="space-y-1">
-                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-500">
-                          <UserAvatar
-                            size="sm"
-                            name={entry.message.author_name}
-                          />
-                          <span className="font-medium text-gray-700">
-                            {entry.message.author_name}
-                          </span>
-                          <span>
-                            {INTAKE_MESSAGE_LABELS[entry.message.kind]}
-                          </span>
-                          <time dateTime={entry.at}>
-                            {formatIntakeDateTime(entry.at)}
-                          </time>
-                        </div>
-                        <p className="whitespace-pre-wrap pl-7 text-sm leading-relaxed text-gray-700">
-                          {entry.message.body}
-                        </p>
-                      </li>
-                    ),
-                  )}
-                </ol>
-                {caps.note && (
-                  <div className="space-y-2 pt-1">
-                    <label htmlFor="intake-note" className="sr-only">
-                      Add a note
-                    </label>
-                    <ModalTextarea
-                      id="intake-note"
-                      className="min-h-20"
-                      maxLength={20000}
-                      placeholder="Add a note: what happened, what the requester said, what was sent"
-                      value={note}
-                      disabled={operation.locked}
-                      onChange={(e) => setNote(e.target.value)}
-                    />
+                <GlassCardUI>
+                  <section
+                    aria-labelledby="intake-outcome"
+                    className="space-y-3 p-5"
+                  >
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="text-xs text-gray-500">
-                        Visible to everyone in your organization.
-                      </p>
-                      <PillButtonUI
-                        tone="black"
-                        size="sm"
-                        disabled={!note.trim() || operation.locked}
+                      <h2 id="intake-outcome" className={SECTION_HEADING}>
+                        {request.state === "resolved"
+                          ? "Resolution"
+                          : "Cancellation reason"}
+                      </h2>
+                      <button
+                        type="button"
                         onClick={() =>
-                          command(
-                            "notes",
-                            "add the note",
-                            { body: note },
-                            "note",
+                          navigator.clipboard.writeText(pinned.body).then(
+                            () => notifySuccess("Copied"),
+                            (e) => notifyError(e, { action: "copy the text" }),
                           )
                         }
+                        className="rounded-md text-xs text-gray-500 transition-colors hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
                       >
-                        Add note
-                      </PillButtonUI>
+                        Copy
+                      </button>
                     </div>
+                    <TextSlabUI className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700">
+                      {pinned.body}
+                    </TextSlabUI>
+                    <p className="text-xs text-gray-500">
+                      {pinned.author_name} ·{" "}
+                      {formatIntakeDateTime(pinned.created_at)}
+                    </p>
+                  </section>
+                </GlassCardUI>
+              )}
+
+              <GlassCardUI>
+                <div className="divide-y divide-gray-100">
+                  <section
+                    aria-labelledby="intake-request"
+                    className="space-y-2 p-5"
+                  >
+                    <h2 id="intake-request" className={SECTION_HEADING}>
+                      Request
+                    </h2>
+                    <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700">
+                      {request.description}
+                    </p>
+                  </section>
+                  <div className="p-5">
+                    <IntakeDocuments
+                      documents={documents}
+                      uploading={upload.uploading}
+                      warning={upload.warning}
+                      onAdd={(files) => void upload.add(files)}
+                    />
                   </div>
-                )}
-              </section>
+                </div>
+              </GlassCardUI>
+
+              <GlassCardUI>
+                <section aria-labelledby="intake-activity">
+                  <h2
+                    id="intake-activity"
+                    className={`${SECTION_HEADING} px-5 pt-5`}
+                  >
+                    Activity
+                  </h2>
+                  <ol className="relative space-y-4 p-5 pt-3 before:absolute before:bottom-7 before:left-[31px] before:top-6 before:w-px before:bg-gray-200">
+                    {timeline.map((entry) =>
+                      "event" in entry ? (
+                        <li key={entry.key} className="relative flex gap-3">
+                          <span
+                            aria-hidden="true"
+                            className="flex h-6 w-6 shrink-0 items-center justify-center"
+                          >
+                            <span className="h-2 w-2 rounded-full bg-gray-300" />
+                          </span>
+                          <div className="min-w-0 pt-0.5">
+                            <p className="text-sm text-gray-700">
+                              {describeEvent(entry.event)}
+                            </p>
+                            <p className="text-xs text-gray-500">
+                              {entry.event.actor_name ?? "Automatically"} ·{" "}
+                              <time dateTime={entry.at}>
+                                {formatIntakeDateTime(entry.at)}
+                              </time>
+                            </p>
+                          </div>
+                        </li>
+                      ) : (
+                        <li key={entry.key} className="relative flex gap-3">
+                          <span className="flex h-6 w-6 shrink-0 items-center justify-center">
+                            <UserAvatar
+                              size="sm"
+                              name={entry.message.author_name}
+                            />
+                          </span>
+                          <div className="min-w-0 flex-1 space-y-1.5">
+                            <p className="flex flex-wrap items-baseline gap-x-2 pt-0.5 text-xs text-gray-500">
+                              <span className="text-sm font-medium text-gray-900">
+                                {entry.message.author_name}
+                              </span>
+                              <span>
+                                {INTAKE_MESSAGE_LABELS[entry.message.kind]}
+                              </span>
+                              <time dateTime={entry.at}>
+                                {formatIntakeDateTime(entry.at)}
+                              </time>
+                            </p>
+                            <TextSlabUI className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700">
+                              {entry.message.body}
+                            </TextSlabUI>
+                          </div>
+                        </li>
+                      ),
+                    )}
+                  </ol>
+                  {caps.note && (
+                    <div className="space-y-2 border-t border-gray-100 p-4">
+                      <label htmlFor="intake-note" className="sr-only">
+                        Add a note
+                      </label>
+                      <ModalTextarea
+                        id="intake-note"
+                        className="min-h-20"
+                        maxLength={20000}
+                        placeholder="Add a note: what happened, what the requester said, what was sent"
+                        value={note}
+                        disabled={operation.locked}
+                        onChange={(e) => setNote(e.target.value)}
+                      />
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-xs text-gray-500">
+                          Visible to everyone in your organization.
+                        </p>
+                        <PillButtonUI
+                          tone="black"
+                          size="sm"
+                          disabled={!note.trim() || operation.locked}
+                          onClick={() =>
+                            command(
+                              "notes",
+                              "add the note",
+                              { body: note },
+                              "note",
+                            )
+                          }
+                        >
+                          Add note
+                        </PillButtonUI>
+                      </div>
+                    </div>
+                  )}
+                </section>
+              </GlassCardUI>
             </div>
           )}
           {operation.uncertain && !closing && (
@@ -793,36 +857,65 @@ function describeEvent(e: IntakeEvent): string {
   }
 }
 
-/** Matches the loaded page: header, facts, description, documents, activity. */
+/** One labelled fact in the request summary. */
+function Fact({
+  label,
+  className = "",
+  children,
+}: {
+  label: string;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className={`min-w-0 space-y-1 ${className}`}>
+      <dt className="text-xs font-medium text-gray-500">{label}</dt>
+      <dd className="text-sm text-gray-900 [overflow-wrap:anywhere]">
+        {children}
+      </dd>
+    </div>
+  );
+}
+
+/** Matches the loaded page: details, request with documents, activity. */
 function DetailSkeleton() {
   return (
     <>
       <span role="status" className="sr-only">
         Loading request…
       </span>
-      <div className="space-y-6 pt-2" aria-hidden="true">
-        <div className="space-y-2">
-          <div className="flex items-start justify-between gap-3">
-            <SkeletonLine className="h-6 w-72" />
-            <SkeletonLine className="h-7 w-20" />
+      <div className="space-y-5 pt-2" aria-hidden="true">
+        <GlassCardUI>
+          <div className="grid grid-cols-2 gap-x-6 gap-y-4 p-5 lg:grid-cols-3">
+            {["w-28", "w-20", "w-24", "w-24", "w-20", "w-28"].map(
+              (width, index) => (
+                <div key={index} className="space-y-2">
+                  <SkeletonLine className="w-16" />
+                  <SkeletonLine className={width} />
+                </div>
+              ),
+            )}
           </div>
-          <SkeletonLine className="w-80" />
-          <SkeletonLine className="w-48" />
-        </div>
-        <div className="space-y-2">
-          <SkeletonLine className="w-full" />
-          <SkeletonLine className="w-5/6" />
-        </div>
-        <div className="flex gap-1.5">
-          <SkeletonLine className="w-20" />
-          <SkeletonLine className="h-5 w-32" />
-        </div>
-        <div className="space-y-3">
-          <SkeletonLine className="w-16" />
-          <SkeletonLine className="w-64" />
-          <SkeletonLine className="w-3/4" />
-          <SkeletonLine className="h-20 w-full" />
-        </div>
+        </GlassCardUI>
+        <GlassCardUI>
+          <div className="space-y-2 p-5">
+            <SkeletonLine className="w-16" />
+            <SkeletonLine className="w-full" />
+            <SkeletonLine className="w-5/6" />
+          </div>
+          <div className="flex gap-1.5 border-t border-gray-100 p-5">
+            <SkeletonLine className="w-20" />
+            <SkeletonLine className="h-5 w-32" />
+          </div>
+        </GlassCardUI>
+        <GlassCardUI>
+          <div className="space-y-4 p-5">
+            <SkeletonLine className="w-16" />
+            <SkeletonLine className="w-64" />
+            <SkeletonLine className="w-3/4" />
+            <SkeletonLine className="h-12 w-full" />
+          </div>
+        </GlassCardUI>
       </div>
     </>
   );

@@ -110,40 +110,11 @@ export function IntakeDocuments({
   );
 
   return (
-    <section aria-labelledby={heading} className="space-y-1.5">
-      <div className="flex flex-wrap items-center gap-1.5">
-        <h2 id={heading} className="mr-1 text-sm font-medium text-gray-900">
+    <section aria-labelledby={heading} className="space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <h2 id={heading} className="text-sm font-medium text-gray-900">
           Documents
         </h2>
-        {documents.map((document) => (
-          <DocumentPill
-            key={document.document_id}
-            filename={document.filename}
-            fileType={document.file_type}
-            icon={document.status === "ready" ? undefined : spinner}
-            status={
-              document.status === "ready"
-                ? undefined
-                : document.status === "error"
-                  ? "Couldn't process"
-                  : "Processing"
-            }
-            tone={document.status === "error" ? "error" : "default"}
-            onOpen={
-              document.status === "ready"
-                ? () => void open(document.document_id)
-                : undefined
-            }
-          />
-        ))}
-        {uploading.map((file, index) => (
-          <DocumentPill
-            key={`${file.name}:${index}`}
-            filename={file.name}
-            icon={spinner}
-            status="Uploading"
-          />
-        ))}
         <button
           type="button"
           onClick={() => input.current?.click()}
@@ -167,6 +138,39 @@ export function IntakeDocuments({
           }}
         />
       </div>
+      {(documents.length > 0 || uploading.length > 0) && (
+        <div className="flex flex-wrap gap-1.5">
+          {documents.map((document) => (
+            <DocumentPill
+              key={document.document_id}
+              filename={document.filename}
+              fileType={document.file_type}
+              icon={document.status === "ready" ? undefined : spinner}
+              status={
+                document.status === "ready"
+                  ? undefined
+                  : document.status === "error"
+                    ? "Couldn't process"
+                    : "Processing"
+              }
+              tone={document.status === "error" ? "error" : "default"}
+              onOpen={
+                document.status === "ready"
+                  ? () => void open(document.document_id)
+                  : undefined
+              }
+            />
+          ))}
+          {uploading.map((file, index) => (
+            <DocumentPill
+              key={`${file.name}:${index}`}
+              filename={file.name}
+              icon={spinner}
+              status="Uploading"
+            />
+          ))}
+        </div>
+      )}
       {!documents.length && !uploading.length && (
         <p className="text-xs text-gray-500">
           None yet. Drop files anywhere on this page, or choose Add.

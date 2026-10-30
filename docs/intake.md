@@ -28,12 +28,14 @@ off. Personal workspaces do not have an intake queue.
    reason, and reopen it. The resolution or cancellation reason is pinned to
    the request.
 
-The request page is one centred column. The page header shows the subject
-once, with one primary action (**Resolve** while the request is open,
+The request page is one centred column of panels. The page header shows the
+subject once, with one primary action (**Resolve** while the request is open,
 **Reopen** once it is closed) and a **More actions** menu for marking waiting,
-resuming, editing details, copying a link and cancelling. Below it sit the
-requester and the request's facts, the status, and an assignee menu that saves
-as soon as a person is chosen (with **Assign to me** first). Notes and every change appear together in one
+resuming, editing details, copying a link and cancelling. A **Details** panel
+lays out the requester, status, assigned lawyer, type, target date and who
+recorded the request; the assigned lawyer is a menu that saves as soon as a
+person is chosen (with **Assign to me** first). A **Request** panel holds the
+description and the documents, and an **Activity** panel holds the timeline. Notes and every change appear together in one
 **Activity** timeline, oldest first, with the note box at its end.
 
 Statuses are **New**, **In progress**, **Waiting on requester**, **Resolved**
@@ -50,7 +52,7 @@ Every request can carry documents, whether it is a **Contract review**
 form shows a drop zone: drag files onto it or click it to browse. PDF, Word, Excel and PowerPoint files are accepted. The
 files upload after the request is saved. If an upload fails, the request is
 still saved and a notice says which documents to add again from the request.
-On the request page, **Documents** is a row of file chips that open in the
+On the request page, **Documents** lists the files as chips that open in the
 document viewer, with **Add** to browse for more. Files dropped anywhere on the
 page are added to the request.
 
