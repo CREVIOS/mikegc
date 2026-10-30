@@ -36,7 +36,8 @@ lays out the requester, status, assigned lawyer, type, target date and who
 recorded the request; the assigned lawyer is a menu that saves as soon as a
 person is chosen (with **Assign to me** first). A **Request** panel holds the
 description and the documents, and an **Activity** panel holds the timeline. Notes and every change appear together in one
-**Activity** timeline, oldest first, with the note box at its end.
+**Activity** timeline, oldest first, with a grey **Add a note** field at its
+end.
 
 Statuses are **New**, **In progress**, **Waiting on requester**, **Resolved**
 and **Cancelled** (stored as `submitted`, `in_review`, `needs_information`,
@@ -52,9 +53,10 @@ Every request can carry documents, whether it is a **Contract review**
 form shows a drop zone: drag files onto it or click it to browse. PDF, Word, Excel and PowerPoint files are accepted. The
 files upload after the request is saved. If an upload fails, the request is
 still saved and a notice says which documents to add again from the request.
-On the request page, **Documents** lists the files as chips that open in the
-document viewer, with **Add** to browse for more. Files dropped anywhere on the
-page are added to the request.
+On the request page, **Documents** is the same grey field as the playbook
+run's: the files appear as chips that open in the document viewer, and clicking
+the field browses for more. Files dropped anywhere on the page are added to the
+request.
 
 Attachments are documents of library kind `intake_attachment`, owned by the
 request's organization and linked to the request in `intake_request_documents`.

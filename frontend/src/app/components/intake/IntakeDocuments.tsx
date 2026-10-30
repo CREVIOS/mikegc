@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useRef, useState } from "react";
-import { Loader2, Plus } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import type { IntakeDocument } from "@mike/contracts";
 import type { Document } from "@/app/components/shared/types";
 import {
@@ -64,7 +64,8 @@ export function useIntakeDocumentUpload(
 }
 
 /**
- * A request's documents as one row of file chips. Every member of the
+ * A request's documents in a grey field like the playbook run's: click it to
+ * add files, or drop them anywhere on the page. Every member of the
  * organization can open them in the document viewer and add more.
  */
 export function IntakeDocuments({
@@ -81,6 +82,7 @@ export function IntakeDocuments({
   const heading = useId();
   const input = useRef<HTMLInputElement>(null);
   const [viewing, setViewing] = useState<Document | null>(null);
+  const busy = uploading.length > 0;
 
   async function open(documentId: string) {
     try {
@@ -110,77 +112,91 @@ export function IntakeDocuments({
   );
 
   return (
-    <section aria-labelledby={heading} className="space-y-2">
-      <div className="flex items-center justify-between gap-2">
-        <h2 id={heading} className="text-sm font-medium text-gray-900">
-          Documents
-        </h2>
-        <button
-          type="button"
-          onClick={() => input.current?.click()}
-          disabled={uploading.length > 0}
-          className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-gray-500 transition-colors hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          <Plus aria-hidden="true" className="h-3 w-3" />
-          Add
-        </button>
-        <input
-          ref={input}
-          type="file"
-          multiple
-          hidden
-          accept={SUPPORTED_DOCUMENT_ACCEPT}
-          aria-hidden="true"
-          tabIndex={-1}
-          onChange={(event) => {
-            onAdd(Array.from(event.target.files ?? []));
-            event.target.value = "";
-          }}
-        />
+    <section aria-labelledby={heading}>
+      <h2 id={heading} className="mb-2 text-sm font-medium text-gray-900">
+        Documents
+      </h2>
+      <input
+        ref={input}
+        type="file"
+        multiple
+        hidden
+        accept={SUPPORTED_DOCUMENT_ACCEPT}
+        aria-hidden="true"
+        tabIndex={-1}
+        onChange={(event) => {
+          onAdd(Array.from(event.target.files ?? []));
+          event.target.value = "";
+        }}
+      />
+      <div aria-busy={busy} className="rounded-xl bg-gray-100 p-4">
+        {documents.length || busy ? (
+          <>
+            {busy ? (
+              <p className="mb-3 text-xs text-gray-500" aria-live="polite">
+                {uploading.length === 1
+                  ? "Uploading 1 document…"
+                  : `Uploading ${uploading.length} documents…`}
+              </p>
+            ) : (
+              <button
+                type="button"
+                onClick={() => input.current?.click()}
+                className="mb-3 block rounded-md text-left text-xs text-gray-500 transition-colors hover:text-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+              >
+                Drop more documents here, or click to add more.
+              </button>
+            )}
+            <ul className="flex flex-wrap gap-1.5">
+              {documents.map((document) => (
+                <li key={document.document_id} className="min-w-0">
+                  <DocumentPill
+                    filename={document.filename}
+                    fileType={document.file_type}
+                    icon={document.status === "ready" ? undefined : spinner}
+                    status={
+                      document.status === "ready"
+                        ? undefined
+                        : document.status === "error"
+                          ? "Couldn't process"
+                          : "Processing"
+                    }
+                    tone={document.status === "error" ? "error" : "default"}
+                    onOpen={
+                      document.status === "ready"
+                        ? () => void open(document.document_id)
+                        : undefined
+                    }
+                  />
+                </li>
+              ))}
+              {uploading.map((file, index) => (
+                <li key={`${file.name}:${index}`} className="min-w-0">
+                  <DocumentPill
+                    filename={file.name}
+                    icon={spinner}
+                    status="Uploading"
+                  />
+                </li>
+              ))}
+            </ul>
+          </>
+        ) : (
+          <button
+            type="button"
+            onClick={() => input.current?.click()}
+            className="w-full rounded-lg py-4 text-center text-sm text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+          >
+            Drag and drop documents here, or click to browse. PDF, Word, Excel
+            and PowerPoint files are supported.
+          </button>
+        )}
+        {warning && (
+          <p role="alert" className="mt-2 text-xs text-red-600">
+            {warning}
+          </p>
+        )}
       </div>
-      {(documents.length > 0 || uploading.length > 0) && (
-        <div className="flex flex-wrap gap-1.5">
-          {documents.map((document) => (
-            <DocumentPill
-              key={document.document_id}
-              filename={document.filename}
-              fileType={document.file_type}
-              icon={document.status === "ready" ? undefined : spinner}
-              status={
-                document.status === "ready"
-                  ? undefined
-                  : document.status === "error"
-                    ? "Couldn't process"
-                    : "Processing"
-              }
-              tone={document.status === "error" ? "error" : "default"}
-              onOpen={
-                document.status === "ready"
-                  ? () => void open(document.document_id)
-                  : undefined
-              }
-            />
-          ))}
-          {uploading.map((file, index) => (
-            <DocumentPill
-              key={`${file.name}:${index}`}
-              filename={file.name}
-              icon={spinner}
-              status="Uploading"
-            />
-          ))}
-        </div>
-      )}
-      {!documents.length && !uploading.length && (
-        <p className="text-xs text-gray-500">
-          None yet. Drop files anywhere on this page, or choose Add.
-        </p>
-      )}
-      {warning && (
-        <p role="alert" className="text-xs text-red-600">
-          {warning}
-        </p>
-      )}
       <DocumentSidePanel
         doc={viewing}
         readOnly

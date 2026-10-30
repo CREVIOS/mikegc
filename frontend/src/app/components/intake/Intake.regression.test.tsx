@@ -1081,6 +1081,66 @@ describe("request detail", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("asks for documents in the field and says what is uploading", async () => {
+    let finish = () => {};
+    mocks.upload.mockImplementation(
+      (_org, _request, files: { file: File }[]) =>
+        new Promise((resolve) => {
+          finish = () =>
+            resolve(
+              files.map(({ file }) => ({
+                clientId: file.name,
+                filename: file.name,
+                status: "completed",
+                result: null,
+                errorCode: null,
+              })),
+            );
+        }),
+    );
+    const browse = vi
+      .spyOn(HTMLInputElement.prototype, "click")
+      .mockImplementation(() => {});
+    render(detail());
+    const documents = await screen.findByRole("region", { name: "Documents" });
+    fireEvent.click(
+      within(documents).getByRole("button", {
+        name: /^Drag and drop documents here, or click to browse\./,
+      }),
+    );
+    expect(browse).toHaveBeenCalledTimes(1);
+    fireEvent.change(
+      documents.querySelector<HTMLInputElement>('input[type="file"]')!,
+      { target: { files: [contractFile()] } },
+    );
+    expect(
+      await within(documents).findByText("Uploading 1 document…"),
+    ).toBeInTheDocument();
+    expect(
+      within(documents).queryByRole("button", { name: /click to/ }),
+    ).not.toBeInTheDocument();
+    mocks.documents.mockResolvedValue([
+      {
+        document_id: "doc-a",
+        filename: "Supplier NDA.docx",
+        file_type: "docx",
+        size_bytes: 8,
+        status: "ready",
+        added_by_name: "Lawyer A",
+        created_at: "2026-10-27T10:00:00Z",
+      },
+    ]);
+    finish();
+    expect(
+      await within(documents).findByRole("button", {
+        name: "Drop more documents here, or click to add more.",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      within(documents).getByRole("button", { name: "Open Supplier NDA.docx" }),
+    ).toBeInTheDocument();
+  });
+
   it("edits details at the loaded version", async () => {
     mocks.edit.mockResolvedValue(receipt);
     const user = userEvent.setup();

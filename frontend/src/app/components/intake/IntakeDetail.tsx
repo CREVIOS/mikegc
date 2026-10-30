@@ -35,7 +35,7 @@ import {
   SkeletonLine,
   TableEmptyState,
 } from "@/app/components/shared/TablePrimitive";
-import { ModalTextarea } from "@/app/components/modals/ModalTextarea";
+import { SETTINGS_CONTROL_CLASS } from "@/app/components/settings/SettingsTextInput";
 import { EmptyState } from "@/app/components/ui/empty-state";
 import { UserAvatar } from "@/app/components/ui/user-avatar";
 import { IntakeSkeuoIcon } from "@/app/components/shared/AppSidebarSkeuoIcons";
@@ -70,6 +70,8 @@ import {
 
 /** Every section on the request page is introduced the same way. */
 const SECTION_HEADING = "text-sm font-medium text-gray-900";
+/** Grey and flat like the playbook fields; grows with its text where supported. */
+const NOTE_FIELD_CLASS = `${SETTINGS_CONTROL_CLASS} block max-h-[28rem] min-h-[4.75rem] resize-y py-2 leading-relaxed [field-sizing:content]`;
 /** Quiet refreshes when the window regains focus are at most this frequent. */
 const FOCUS_REFRESH_MS = 30_000;
 
@@ -695,21 +697,29 @@ export function Detail({
                     )}
                   </ol>
                   {caps.note && (
-                    <div className="space-y-2 border-t border-gray-100 p-4">
-                      <label htmlFor="intake-note" className="sr-only">
+                    <div className="border-t border-gray-100 p-5">
+                      <label
+                        htmlFor="intake-note"
+                        className="mb-2 block text-sm font-medium text-gray-700"
+                      >
                         Add a note
                       </label>
-                      <ModalTextarea
+                      <textarea
                         id="intake-note"
-                        className="min-h-20"
+                        rows={3}
+                        className={NOTE_FIELD_CLASS}
                         maxLength={20000}
-                        placeholder="Add a note: what happened, what the requester said, what was sent"
+                        placeholder="What happened, what the requester said, what was sent"
+                        aria-describedby="intake-note-help"
                         value={note}
                         disabled={operation.locked}
                         onChange={(e) => setNote(e.target.value)}
                       />
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <p className="text-xs text-gray-500">
+                      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                        <p
+                          id="intake-note-help"
+                          className="text-xs text-gray-500"
+                        >
                           Visible to everyone in your organization.
                         </p>
                         <PillButtonUI
@@ -903,9 +913,9 @@ function DetailSkeleton() {
             <SkeletonLine className="w-full" />
             <SkeletonLine className="w-5/6" />
           </div>
-          <div className="flex gap-1.5 border-t border-gray-100 p-5">
+          <div className="space-y-2 border-t border-gray-100 p-5">
             <SkeletonLine className="w-20" />
-            <SkeletonLine className="h-5 w-32" />
+            <SkeletonLine className="h-[5.25rem] w-full rounded-xl" />
           </div>
         </GlassCardUI>
         <GlassCardUI>
@@ -913,7 +923,10 @@ function DetailSkeleton() {
             <SkeletonLine className="w-16" />
             <SkeletonLine className="w-64" />
             <SkeletonLine className="w-3/4" />
-            <SkeletonLine className="h-12 w-full" />
+          </div>
+          <div className="space-y-2 border-t border-gray-100 p-5">
+            <SkeletonLine className="w-20" />
+            <SkeletonLine className="h-[4.75rem] w-full rounded-lg" />
           </div>
         </GlassCardUI>
       </div>
