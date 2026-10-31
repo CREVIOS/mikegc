@@ -4524,12 +4524,10 @@ export function getIntakeMembers(orgId: string) {
 }
 export type IntakeListQuery = {
     state?: string;
-    /** "nda" (contract review) or "general" (legal question). */
-    category?: string;
     /** "unassigned", "me" or a member's user ID. */
     assignee?: string;
     search?: string;
-    sort?: "updated" | "target";
+    sort?: "updated" | "updated_asc" | "target";
     cursor?: string;
 };
 /** Fetch one keyset page of the queue; pass the previous page's cursor for the next. */
@@ -4572,11 +4570,19 @@ export function uploadIntakeDocuments(
     orgId: string,
     requestId: string,
     files: UploadSessionInput[],
-    options?: UploadRequestOptions<Document>,
+    options?: UploadRequestOptions<Document> & {
+        /** The uploader's note the documents are added with. */
+        messageId?: string;
+    },
 ): Promise<UploadOutcome<Document>[]> {
     return uploadFilesWithSession<Document>({
         purpose: "document_create",
-        destination: { scope: "intake", org_id: orgId, request_id: requestId },
+        destination: {
+            scope: "intake",
+            org_id: orgId,
+            request_id: requestId,
+            ...(options?.messageId ? { message_id: options.messageId } : {}),
+        },
         files,
         onProgress: options?.onProgress,
         signal: options?.signal,

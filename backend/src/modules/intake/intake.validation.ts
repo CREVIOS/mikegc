@@ -20,10 +20,9 @@ export const intakePage = z.object({
 });
 export const intakeList = z.object({
   state: states.optional(),
-  category: z.enum(["nda", "general"]).optional(),
   assignee: z.union([z.enum(["unassigned", "me"]), intakeId]).optional(),
   search: z.string().max(200).default(""),
-  sort: z.enum(["updated", "target"]).default("updated"),
+  sort: z.enum(["updated", "updated_asc", "target"]).default("updated"),
   cursor: z.string().max(200).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
@@ -42,7 +41,6 @@ const knownTimezone = (v: { timezone: string | null }) => {
   }
 };
 const details = {
-  category: z.enum(["nda", "general"]),
   subject: text(200),
   description: text(20000),
   requester_name: text(200),
@@ -93,6 +91,7 @@ export const intakeCommands = {
   resolve: z.object({ ...versioned, body: text(20000) }).strict(),
   cancel: z.object({ ...versioned, body: text(20000) }).strict(),
   reopen: z.object(versioned).strict(),
+  delete: z.object(versioned).strict(),
 } as const;
 export type IntakeCommandAction = keyof typeof intakeCommands;
 export type IntakeCommandInput = {

@@ -16,6 +16,7 @@ import {
   partitionSupportedDocumentFiles,
 } from "@/app/lib/documentUploadValidation";
 import { FileTypeIcon } from "@/app/components/shared/FileTypeIcon";
+import { IntakeUploadPrompt } from "./IntakeDocumentDropZone";
 import { LIQUID_GLASS_MODAL_ROW_HOVER_CLASS } from "@/app/components/ui/liquid-surface";
 import { DocumentSidePanel } from "@/app/components/shared/DocumentSidePanel";
 
@@ -44,42 +45,51 @@ function formatAdded(iso: string) {
   });
 }
 
+/** A file on its way to a request, and the note it was added with, if any. */
+export type IntakeUpload = { file: File; messageId: string | null };
+
 /**
  * Uploads files to a request. The upload worker links each document to the
- * request, so the caller only reloads the list afterwards.
+ * request, and to the note it was added with, so the caller only reloads the
+ * list afterwards. Uploads from the documents field and from notes can run at
+ * the same time.
  */
 export function useIntakeDocumentUpload(
   orgId: string,
   requestId: string,
   onChanged: () => void,
 ) {
-  const [uploading, setUploading] = useState<File[]>([]);
+  const [uploading, setUploading] = useState<IntakeUpload[]>([]);
   const [warning, setWarning] = useState<string | null>(null);
 
-  async function add(candidates: File[]) {
+  async function add(candidates: File[], messageId: string | null = null) {
     const { supported, unsupported } =
       partitionSupportedDocumentFiles(candidates);
-    setWarning(formatUnsupportedDocumentWarning(unsupported));
-    if (!supported.length || uploading.length) return;
-    setUploading(supported);
+    if (!messageId) setWarning(formatUnsupportedDocumentWarning(unsupported));
+    if (!supported.length) return;
+    const batch = supported.map((file) => ({ file, messageId }));
+    setUploading((current) => [...current, ...batch]);
     try {
-      const outcomes = await uploadIntakeDocuments(
-        orgId,
-        requestId,
-        supported.map((file) => ({ file })),
-      );
+      const files = supported.map((file) => ({ file }));
+      const outcomes = await (messageId
+        ? uploadIntakeDocuments(orgId, requestId, files, { messageId })
+        : uploadIntakeDocuments(orgId, requestId, files));
       const failed = outcomes.filter(
         (outcome) => outcome.status !== "completed",
       ).length;
       if (failed)
         notifyPartialFailure(
-          `${failed} of ${supported.length} documents couldn't be uploaded. Try adding them again.`,
+          messageId
+            ? `The note was added, but ${failed} of ${supported.length} documents couldn't be uploaded. Add them to the request's documents instead.`
+            : `${failed} of ${supported.length} documents couldn't be uploaded. Try adding them again.`,
           { action: "upload the documents" },
         );
     } catch (error) {
       notifyError(error, { action: "upload the documents" });
     } finally {
-      setUploading([]);
+      setUploading((current) =>
+        current.filter((upload) => !batch.includes(upload)),
+      );
       onChanged();
     }
   }
@@ -88,25 +98,11 @@ export function useIntakeDocumentUpload(
 }
 
 /**
- * A request's documents as rows like the file directory's, above a grey field
- * that adds more; files can also be dropped anywhere on the page. Every member
- * of the organization can open them in the document viewer and add more.
+ * Opens a request's documents in the document viewer. The documents section
+ * and the notes they were added with share one viewer.
  */
-export function IntakeDocuments({
-  documents,
-  uploading,
-  warning,
-  onAdd,
-}: {
-  documents: IntakeDocument[];
-  uploading: File[];
-  warning: string | null;
-  onAdd: (files: File[]) => void;
-}) {
-  const heading = useId();
-  const input = useRef<HTMLInputElement>(null);
+export function useIntakeDocumentViewer() {
   const [viewing, setViewing] = useState<Document | null>(null);
-  const busy = uploading.length > 0;
 
   async function open(documentId: string) {
     try {
@@ -128,12 +124,53 @@ export function IntakeDocuments({
     }
   }
 
-  const spinner = (
-    <Loader2
-      aria-hidden="true"
-      className="h-3 w-3 animate-spin motion-reduce:animate-none"
+  const panel = (
+    <DocumentSidePanel
+      doc={viewing}
+      readOnly
+      versions={[]}
+      versionsLoading={false}
+      canDelete={false}
+      onClose={() => setViewing(null)}
+      onLoadVersions={noop}
+      onSelectVersion={noop}
+      onDownloadDocument={(documentId) => download(documentId)}
+      onDownloadVersion={(documentId, versionId) =>
+        download(documentId, versionId)
+      }
+      onRenameVersion={noop}
+      onDeleteVersion={noop}
+      onUploadNewVersion={async () => {}}
+      onReplaceVersion={noop}
+      onDelete={noop}
     />
   );
+
+  return { open, panel };
+}
+
+/**
+ * A request's documents as rows like the file directory's, above a grey field
+ * that adds more; files can also be dropped anywhere on the page. Every member
+ * of the organization can open them in the document viewer and add more.
+ */
+export function IntakeDocuments({
+  documents,
+  uploading,
+  warning,
+  onAdd,
+  onOpen,
+}: {
+  documents: IntakeDocument[];
+  uploading: File[];
+  warning: string | null;
+  onAdd: (files: File[]) => void;
+  onOpen: (documentId: string) => void;
+}) {
+  const heading = useId();
+  const input = useRef<HTMLInputElement>(null);
+  const busy = uploading.length > 0;
+  const spinner = <IntakeDocumentSpinner />;
   const rows = documents.length + uploading.length;
 
   return (
@@ -155,7 +192,7 @@ export function IntakeDocuments({
         }}
       />
       {rows > 0 && (
-        <div className="mb-3 text-xs">
+        <div className="-mx-2 mb-3 text-xs">
           <div
             aria-hidden="true"
             className={`${DOCUMENT_GRID_CLASS} px-2 pb-1 pt-0.5 text-[11px] font-medium text-gray-400`}
@@ -206,7 +243,7 @@ export function IntakeDocuments({
                       type="button"
                       aria-label={`Open ${document.filename}`}
                       title={document.filename}
-                      onClick={() => void open(document.document_id)}
+                      onClick={() => onOpen(document.document_id)}
                       className={`w-full rounded-md ${DOCUMENT_GRID_CLASS} px-2 py-2 text-left transition-all ${LIQUID_GLASS_MODAL_ROW_HOVER_CLASS} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40`}
                     >
                       {cells}
@@ -277,8 +314,7 @@ export function IntakeDocuments({
             onClick={() => input.current?.click()}
             className="w-full rounded-lg py-4 text-center text-sm text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
           >
-            Drag and drop documents here, or click to browse. PDF, Word, Excel
-            and PowerPoint files are supported.
+            <IntakeUploadPrompt />
           </button>
         )}
         {warning && (
@@ -287,25 +323,16 @@ export function IntakeDocuments({
           </p>
         )}
       </div>
-      <DocumentSidePanel
-        doc={viewing}
-        readOnly
-        versions={[]}
-        versionsLoading={false}
-        canDelete={false}
-        onClose={() => setViewing(null)}
-        onLoadVersions={noop}
-        onSelectVersion={noop}
-        onDownloadDocument={(documentId) => download(documentId)}
-        onDownloadVersion={(documentId, versionId) =>
-          download(documentId, versionId)
-        }
-        onRenameVersion={noop}
-        onDeleteVersion={noop}
-        onUploadNewVersion={async () => {}}
-        onReplaceVersion={noop}
-        onDelete={noop}
-      />
     </section>
+  );
+}
+
+/** A document still uploading or being processed. */
+export function IntakeDocumentSpinner() {
+  return (
+    <Loader2
+      aria-hidden="true"
+      className="h-3 w-3 animate-spin motion-reduce:animate-none"
+    />
   );
 }

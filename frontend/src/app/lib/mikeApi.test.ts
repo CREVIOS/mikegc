@@ -3674,7 +3674,7 @@ describe("intake API boundary", () => {
         const scope = "org/id";
         const id = "request/id";
         const details = {
-            category: "general" as const, subject: "Subject", description: "Exact  text.",
+            subject: "Subject", description: "Exact  text.",
             requester_name: "Jane", requester_email: null, requester_team: null,
             requested_by_date: null, timezone: null,
         };

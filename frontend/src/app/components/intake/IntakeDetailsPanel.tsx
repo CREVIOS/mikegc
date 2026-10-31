@@ -1,25 +1,38 @@
 "use client";
 import { useId, useMemo, useState, type ReactNode } from "react";
-import { ChevronDown } from "lucide-react";
+import { CalendarDays, ChevronDown, Pencil } from "lucide-react";
 import type {
-  IntakeCategory,
   IntakeDetails,
   IntakeMember,
   IntakeRequest,
+  IntakeState,
 } from "@mike/contracts";
 import { SETTINGS_CONTROL_CLASS } from "@/app/components/settings/SettingsTextInput";
+import { FormTextInput } from "@/app/components/ui/form-field";
+import { UserAvatar } from "@/app/components/ui/user-avatar";
+import { cn } from "@/app/lib/utils";
 import {
   Dropdown,
   DropdownContent,
   DropdownItem,
   DropdownRadioGroup,
   DropdownRadioItem,
-  DropdownSeparator,
   DropdownTrigger,
+  DropdownSurface,
 } from "@/shared/ui/dropdown";
-import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import {
-  INTAKE_CATEGORY_LABELS,
+  DateCalendar,
+  localDateValue,
+  parseDateValue,
+} from "@/app/components/ui/date-calendar";
+import {
+  Popover,
+  PopoverAnchor,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/app/components/ui/popover";
+import {
+  INTAKE_STATE_DOT_CLASS,
   INTAKE_STATE_LABELS,
   formatIntakeDate,
   formatIntakeDateTime,
@@ -34,11 +47,35 @@ import {
  * resize handle; it grows with its text where supported.
  */
 export const INTAKE_TEXTAREA_CLASS = `${SETTINGS_CONTROL_CLASS} block max-h-[28rem] min-h-32 resize-none py-2.5 leading-relaxed [field-sizing:content]`;
-const FIELD_CLASS = `${SETTINGS_CONTROL_CLASS} h-9`;
-/** A grey field that opens a menu; long names wrap instead of truncating. */
-const MENU_FIELD_CLASS = `${SETTINGS_CONTROL_CLASS} flex min-h-9 items-center justify-between gap-2 py-1.5 text-left [overflow-wrap:anywhere]`;
-const LABEL_CLASS = "mb-1.5 block text-xs font-medium text-gray-500";
+/**
+ * Sidebar fields read as plain values, lined up with their labels, and show
+ * a field background only when hovered or focused.
+ */
+export const PLAIN_FIELD_CLASS =
+  "-mx-2 w-[calc(100%+1rem)] rounded-md border border-transparent bg-transparent px-2 text-sm text-gray-900 shadow-none outline-none placeholder:text-gray-400 transition-colors hover:bg-gray-100 focus:bg-gray-100 focus-visible:ring-2 focus-visible:ring-gray-300/45 disabled:cursor-not-allowed disabled:opacity-60";
+export const FIELD_CLASS = `${PLAIN_FIELD_CLASS} h-8`;
+/** A field that opens a menu; long names wrap instead of truncating. */
+const MENU_FIELD_CLASS = `${PLAIN_FIELD_CLASS} flex min-h-8 items-center justify-between gap-2 py-1 text-left [overflow-wrap:anywhere]`;
+export const LABEL_CLASS = "mb-1.5 block text-xs font-medium text-gray-500";
 const EMAIL = /^[^@\s]+@[^@\s]+$/;
+
+export type IntakeStatusAction =
+  "wait" | "resume" | "resolve" | "cancel" | "reopen";
+const INTAKE_STATES: IntakeState[] = [
+  "submitted",
+  "in_review",
+  "needs_information",
+  "resolved",
+  "cancelled",
+];
+/** The command that moves an open request into each status; New has none. */
+const STATUS_ACTIONS: Record<IntakeState, IntakeStatusAction | null> = {
+  submitted: null,
+  in_review: "resume",
+  needs_information: "wait",
+  resolved: "resolve",
+  cancelled: "cancel",
+};
 
 /**
  * Keeps a field's unsaved text until the saved value changes, so a save from
@@ -65,6 +102,7 @@ export function IntakeDetailsPanel({
   locked,
   onSave,
   onAssign,
+  onStatus,
 }: {
   request: IntakeRequest;
   members: IntakeMember[];
@@ -73,37 +111,37 @@ export function IntakeDetailsPanel({
   locked: boolean;
   onSave: (patch: Partial<IntakeDetails>) => void;
   onAssign: (assigneeId: string | null) => void;
+  onStatus: (action: IntakeStatusAction) => void;
 }) {
   const caps = request.capabilities;
   const editable = caps.edit;
-  const others = members.filter(
-    (m) => m.user_id !== accountId && m.user_id !== request.assignee_id,
-  );
   const overdue = isIntakeOverdue(request);
+  const assigneeEmail =
+    members.find((m) => m.user_id === request.assignee_id)?.email ?? null;
+  const assignee = request.assignee_name ? (
+    <Person name={request.assignee_name} email={assigneeEmail} />
+  ) : (
+    <span className="text-gray-400">Unassigned</span>
+  );
   return (
-    <aside aria-labelledby="intake-details" className="space-y-4 p-5">
-      <h2 id="intake-details" className="text-sm font-medium text-gray-900">
-        Details
-      </h2>
-      <Fact label="Status">{INTAKE_STATE_LABELS[request.state]}</Fact>
-      {caps.assign ? (
+    // The fields label themselves; the name is for assistive technology.
+    <aside aria-label="Details" className="space-y-4 p-5">
+      {caps.wait ||
+      caps.resume ||
+      caps.resolve ||
+      caps.cancel ||
+      caps.reopen ? (
         <div>
-          <p className={LABEL_CLASS}>Assigned lawyer</p>
+          <p className={LABEL_CLASS}>Status</p>
           <Dropdown>
             <DropdownTrigger asChild>
               <button
                 type="button"
                 disabled={locked}
-                aria-label={`Assigned lawyer: ${request.assignee_name ?? "Unassigned"}`}
+                aria-label={`Status: ${INTAKE_STATE_LABELS[request.state]}`}
                 className={MENU_FIELD_CLASS}
               >
-                <span
-                  className={
-                    request.assignee_name ? undefined : "text-gray-400"
-                  }
-                >
-                  {request.assignee_name ?? "Unassigned"}
-                </span>
+                <StatusLabel state={request.state} />
                 <ChevronDown
                   aria-hidden="true"
                   className="h-4 w-4 shrink-0 text-gray-400"
@@ -114,115 +152,107 @@ export function IntakeDetailsPanel({
               align="start"
               className="w-[var(--radix-dropdown-menu-trigger-width)]"
             >
-              {request.assignee_id !== accountId && (
-                <DropdownItem onSelect={() => onAssign(accountId)}>
-                  Assign to me
+              {caps.reopen ? (
+                <DropdownItem onSelect={() => onStatus("reopen")}>
+                  Reopen
                 </DropdownItem>
-              )}
-              {request.assignee_id && (
-                <DropdownItem onSelect={() => onAssign(null)}>
-                  Unassign
-                </DropdownItem>
-              )}
-              {others.length > 0 && <DropdownSeparator />}
-              {others.map((m) => (
-                <DropdownItem
-                  key={m.user_id}
-                  onSelect={() => onAssign(m.user_id)}
+              ) : (
+                <DropdownRadioGroup
+                  value={request.state}
+                  onValueChange={(state) => {
+                    const action = STATUS_ACTIONS[state as IntakeState];
+                    if (state !== request.state && action) onStatus(action);
+                  }}
                 >
-                  {intakeMemberName(m)}
-                </DropdownItem>
-              ))}
+                  {INTAKE_STATES.map((state) => {
+                    const action = STATUS_ACTIONS[state];
+                    return (
+                      <DropdownRadioItem
+                        key={state}
+                        value={state}
+                        disabled={
+                          state !== request.state && !(action && caps[action])
+                        }
+                      >
+                        <StatusLabel state={state} />
+                      </DropdownRadioItem>
+                    );
+                  })}
+                </DropdownRadioGroup>
+              )}
             </DropdownContent>
           </Dropdown>
         </div>
       ) : (
-        <Fact label="Assigned lawyer">
-          {request.assignee_name ?? (
-            <span className="text-gray-400">Unassigned</span>
-          )}
+        <Fact label="Status">
+          <StatusLabel state={request.state} />
         </Fact>
       )}
-      {editable ? (
-        <div>
-          <p className={LABEL_CLASS}>Type</p>
-          <Dropdown>
-            <DropdownTrigger asChild>
-              <button
-                type="button"
-                aria-label={`Type: ${INTAKE_CATEGORY_LABELS[request.category]}`}
-                className={MENU_FIELD_CLASS}
-              >
-                {INTAKE_CATEGORY_LABELS[request.category]}
-                <ChevronDown
-                  aria-hidden="true"
-                  className="h-4 w-4 shrink-0 text-gray-400"
-                />
-              </button>
-            </DropdownTrigger>
-            <DropdownContent
-              align="start"
-              className="w-[var(--radix-dropdown-menu-trigger-width)]"
-            >
-              <DropdownRadioGroup
-                value={request.category}
-                onValueChange={(category) => {
-                  if (category !== request.category)
-                    onSave({ category: category as IntakeCategory });
-                }}
-              >
-                {(["general", "nda"] as const).map((category) => (
-                  <DropdownRadioItem key={category} value={category}>
-                    {INTAKE_CATEGORY_LABELS[category]}
-                  </DropdownRadioItem>
-                ))}
-              </DropdownRadioGroup>
-            </DropdownContent>
-          </Dropdown>
-        </div>
+      {caps.assign ? (
+        <AssigneeField
+          assigneeId={request.assignee_id}
+          assigneeName={request.assignee_name}
+          members={members}
+          accountId={accountId}
+          disabled={locked}
+          onChange={onAssign}
+        />
       ) : (
-        <Fact label="Type">{INTAKE_CATEGORY_LABELS[request.category]}</Fact>
+        <Fact label="Assigned lawyer">{assignee}</Fact>
       )}
       {editable ? (
         <>
-          <DetailField
-            label="Requester"
-            value={request.requester_name}
-            maxLength={200}
-            check={(name) => (name ? null : "Enter who asked for this.")}
-            onSave={(name) => onSave({ requester_name: name })}
-          />
-          <DetailField
-            label="Requester email"
-            type="email"
-            value={request.requester_email ?? ""}
-            maxLength={320}
-            check={(email) =>
-              !email || EMAIL.test(email)
-                ? null
-                : "Enter an email address like name@company.com."
-            }
-            onSave={(email) => onSave({ requester_email: email || null })}
-          />
-          <DetailField
-            label="Team"
-            value={request.requester_team ?? ""}
-            maxLength={200}
-            placeholder="e.g. Procurement"
-            onSave={(team) => onSave({ requester_team: team || null })}
-          />
-          <DetailField
-            label="Target date"
-            type="date"
-            value={request.requested_by_date ?? ""}
-            help={
-              request.requested_by_date ? (
-                <>
-                  {overdue && <span className="text-red-600">Overdue · </span>}
-                  Not a legal deadline.
-                </>
-              ) : undefined
-            }
+          <div>
+            <p className={LABEL_CLASS}>Requester</p>
+            <Popover>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={`Requester: ${request.requester_name}`}
+                  className={MENU_FIELD_CLASS}
+                >
+                  <Person
+                    name={request.requester_name}
+                    email={request.requester_email}
+                  />
+                  <ChevronDown
+                    aria-hidden="true"
+                    className="h-4 w-4 shrink-0 text-gray-400"
+                  />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent
+                align="start"
+                aria-label="Requester"
+                className="w-[max(var(--radix-popover-trigger-width),16rem)] space-y-3"
+              >
+                <DetailField
+                  boxed
+                  label="Name"
+                  value={request.requester_name}
+                  maxLength={200}
+                  check={(name) => (name ? null : "Enter who asked for this.")}
+                  onSave={(name) => onSave({ requester_name: name })}
+                />
+                <DetailField
+                  boxed
+                  label="Email"
+                  type="email"
+                  value={request.requester_email ?? ""}
+                  maxLength={320}
+                  check={(email) =>
+                    !email || EMAIL.test(email)
+                      ? null
+                      : "Enter an email address like name@company.com."
+                  }
+                  onSave={(email) => onSave({ requester_email: email || null })}
+                />
+              </PopoverContent>
+            </Popover>
+          </div>
+          <TargetDateField
+            value={request.requested_by_date}
+            overdue={overdue}
             onSave={(date) =>
               onSave(
                 date
@@ -246,12 +276,10 @@ export function IntakeDetailsPanel({
       ) : (
         <>
           <Fact label="Requester">
-            <span className="block">{request.requester_name}</span>
-            {request.requester_team && (
-              <span className="block text-xs text-gray-500">
-                {request.requester_team}
-              </span>
-            )}
+            <Person
+              name={request.requester_name}
+              email={request.requester_email}
+            />
             {request.requester_email && (
               <span className="block text-xs text-gray-500">
                 {request.requester_email}
@@ -265,10 +293,11 @@ export function IntakeDetailsPanel({
                   {formatIntakeDate(request.requested_by_date)}
                   {overdue && " · overdue"}
                 </span>
-                <span className="block text-xs text-gray-500">
-                  {request.timezone ? `${request.timezone} · ` : ""}
-                  not a legal deadline
-                </span>
+                {request.timezone && (
+                  <span className="block text-xs text-gray-500">
+                    {request.timezone}
+                  </span>
+                )}
               </>
             ) : (
               <span className="text-gray-400">None</span>
@@ -276,13 +305,184 @@ export function IntakeDetailsPanel({
           </Fact>
         </>
       )}
-      <Fact label="Recorded">
-        <span className="block">{request.created_by_name}</span>
-        <span className="block text-xs text-gray-500">
-          {formatIntakeDateTime(request.created_at)}
-        </span>
+      <Fact label="Created by">
+        <Person name={request.created_by_name} />
       </Fact>
+      <Fact label="Created">{formatIntakeDateTime(request.created_at)}</Fact>
     </aside>
+  );
+}
+
+/** Reads a typed target date, such as "2026-12-01" or "1 Dec 2026". */
+function parseTypedDate(text: string): string | null | undefined {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    const date = parseDateValue(trimmed);
+    return date && localDateValue(date) === trimmed ? trimmed : undefined;
+  }
+  const parsed = new Date(trimmed);
+  return Number.isNaN(parsed.getTime()) ? undefined : localDateValue(parsed);
+}
+
+/** The target date, typed or chosen from the liquid-glass calendar. */
+export function TargetDateField({
+  value,
+  overdue,
+  onSave,
+}: {
+  value: string | null;
+  overdue: boolean;
+  onSave: (date: string | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState<string | null>(null);
+  const [invalid, setInvalid] = useState(false);
+  const selected = value ? parseDateValue(value) : undefined;
+  const inputId = useId();
+  const helpId = useId();
+  // A saved date stays on screen until the request comes back with it, so
+  // the field does not flash the old date while the save is in flight.
+  const [saving, setSaving] = useState<{
+    from: string | null;
+    to: string | null;
+  }>();
+  if (saving && saving.from !== value) setSaving(undefined);
+  const current = saving ? saving.to : value;
+  const shown = draft ?? (current ? formatIntakeDate(current) : "");
+  const save = (next: string | null) => {
+    if (next === value) return;
+    setSaving({ from: value, to: next });
+    onSave(next);
+  };
+  const commit = () => {
+    if (draft === null) return;
+    const next = parseTypedDate(draft);
+    if (next === undefined) {
+      setInvalid(true);
+      return;
+    }
+    setDraft(null);
+    setInvalid(false);
+    save(next);
+  };
+  return (
+    <div>
+      <label htmlFor={inputId} className={LABEL_CLASS}>
+        Target date
+      </label>
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverAnchor asChild>
+          <div
+            className={cn(
+              MENU_FIELD_CLASS,
+              "focus-within:bg-gray-100",
+              invalid && "ring-1 ring-red-400",
+            )}
+          >
+            <input
+              id={inputId}
+              type="text"
+              value={shown}
+              placeholder="None"
+              aria-invalid={invalid || undefined}
+              aria-describedby={
+                invalid || (overdue && draft === null && !saving)
+                  ? helpId
+                  : undefined
+              }
+              onChange={(event) => {
+                setDraft(event.target.value);
+                setInvalid(false);
+              }}
+              onBlur={commit}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") commit();
+                if (event.key === "Escape") {
+                  setDraft(null);
+                  setInvalid(false);
+                }
+              }}
+              className={cn(
+                "min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-gray-400",
+                overdue && draft === null && !saving && "text-red-600",
+              )}
+            />
+            {overdue && draft === null && !saving && (
+              <span
+                id={helpId}
+                className="shrink-0 rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700"
+              >
+                Overdue
+              </span>
+            )}
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                aria-label="Choose target date"
+                className="-mr-1 rounded-full p-0.5 text-gray-400 transition-colors hover:text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+              >
+                <CalendarDays aria-hidden="true" className="h-4 w-4 shrink-0" />
+              </button>
+            </PopoverTrigger>
+          </div>
+        </PopoverAnchor>
+        <PopoverContent
+          asChild
+          align="start"
+          className="w-[var(--radix-popover-trigger-width)] rounded-2xl"
+          collisionPadding={16}
+          aria-label="Target date calendar"
+        >
+          <DropdownSurface>
+            <DateCalendar
+              fill
+              selected={selected}
+              defaultMonth={selected ?? new Date()}
+              startMonth={new Date(new Date().getFullYear() - 1, 0, 1)}
+              endMonth={new Date(new Date().getFullYear() + 5, 11, 1)}
+              onSelect={(date) => {
+                setOpen(false);
+                setDraft(null);
+                setInvalid(false);
+                save(localDateValue(date));
+              }}
+            />
+            {value && (
+              <button
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  setDraft(null);
+                  save(null);
+                }}
+                className="mt-1 w-full rounded-md py-1 text-center text-xs text-gray-500 transition-colors hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+              >
+                Clear date
+              </button>
+            )}
+          </DropdownSurface>
+        </PopoverContent>
+      </Popover>
+      {invalid && (
+        <p id={helpId} className="mt-1.5 text-xs text-red-600">
+          Enter a date such as {formatIntakeDate(localDateValue(new Date()))}.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** A status with its colour dot, matching the intake table. */
+function StatusLabel({ state }: { state: IntakeState }) {
+  return (
+    <span className="flex items-center gap-2">
+      <span
+        aria-hidden="true"
+        className={`h-2 w-2 shrink-0 rounded-full ${INTAKE_STATE_DOT_CLASS[state]}`}
+      />
+      {INTAKE_STATE_LABELS[state]}
+    </span>
   );
 }
 
@@ -298,7 +498,115 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-/** A grey input that saves its trimmed value when left or on Enter. */
+/** A person's avatar beside their name; the name labels the avatar. */
+function Person({
+  name,
+  email,
+  note,
+}: {
+  name: string;
+  email?: string | null;
+  /** Follows the name, such as "(you)", without changing the avatar. */
+  note?: string;
+}) {
+  return (
+    <span className="flex min-w-0 items-center gap-2">
+      <span aria-hidden="true" className="flex">
+        <UserAvatar size="sm" name={name} email={email} />
+      </span>
+      <span className="min-w-0 [overflow-wrap:anywhere]">
+        {name}
+        {note && (
+          <>
+            {" "}
+            <span className="text-gray-500">{note}</span>
+          </>
+        )}
+      </span>
+    </span>
+  );
+}
+
+/**
+ * Chooses who a request is assigned to: Unassigned or any member, the viewer
+ * included, each shown with their avatar.
+ */
+export function AssigneeField({
+  assigneeId,
+  assigneeName,
+  members,
+  accountId,
+  disabled,
+  onChange,
+}: {
+  assigneeId: string | null;
+  /** Shown while the members are loading or after the assignee has left. */
+  assigneeName: string | null;
+  members: IntakeMember[];
+  accountId: string | null;
+  disabled?: boolean;
+  onChange: (assigneeId: string | null) => void;
+}) {
+  const current = members.find((m) => m.user_id === assigneeId);
+  const name = current ? intakeMemberName(current) : assigneeName;
+  // The viewer comes first, then everyone else in the server's name order.
+  const ordered = [
+    ...members.filter((m) => m.user_id === accountId),
+    ...members.filter((m) => m.user_id !== accountId),
+  ];
+  return (
+    <div>
+      <p className={LABEL_CLASS}>Assigned lawyer</p>
+      <Dropdown>
+        <DropdownTrigger asChild>
+          <button
+            type="button"
+            disabled={disabled}
+            aria-label={`Assigned lawyer: ${assigneeId && name ? name : "Unassigned"}`}
+            className={MENU_FIELD_CLASS}
+          >
+            {assigneeId && name ? (
+              <Person name={name} email={current?.email} />
+            ) : (
+              <span className="text-gray-400">Unassigned</span>
+            )}
+            <ChevronDown
+              aria-hidden="true"
+              className="h-4 w-4 shrink-0 text-gray-400"
+            />
+          </button>
+        </DropdownTrigger>
+        <DropdownContent
+          align="start"
+          className="max-h-72 w-[var(--radix-dropdown-menu-trigger-width)] overflow-y-auto"
+        >
+          <DropdownRadioGroup
+            value={assigneeId ?? ""}
+            onValueChange={(value) => {
+              const next = value || null;
+              if (next !== assigneeId) onChange(next);
+            }}
+          >
+            <DropdownRadioItem value="">
+              <span className="text-gray-500">Unassigned</span>
+            </DropdownRadioItem>
+            {ordered.map((m) => (
+              <DropdownRadioItem key={m.user_id} value={m.user_id}>
+                <Person
+                  name={intakeMemberName(m)}
+                  email={m.email}
+                  note={m.user_id === accountId ? "(you)" : undefined}
+                />
+              </DropdownRadioItem>
+            ))}
+          </DropdownRadioGroup>
+        </DropdownContent>
+      </Dropdown>
+    </div>
+  );
+}
+
+/** An input that saves its trimmed value when left or on Enter. */
 function DetailField({
   label,
   value,
@@ -309,6 +617,7 @@ function DetailField({
   maxLength,
   placeholder,
   list,
+  boxed,
 }: {
   label: string;
   value: string;
@@ -320,6 +629,8 @@ function DetailField({
   maxLength?: number;
   placeholder?: string;
   list?: string;
+  /** A grey input, for fields inside a popover rather than the sidebar. */
+  boxed?: boolean;
 }) {
   const id = useId();
   const [draft, setDraft] = useFieldDraft(value);
@@ -357,7 +668,7 @@ function DetailField({
         autoComplete="off"
         aria-invalid={!!problem}
         aria-describedby={described || undefined}
-        className={FIELD_CLASS}
+        className={boxed ? `${SETTINGS_CONTROL_CLASS} h-9` : FIELD_CLASS}
         onChange={(event) => setDraft(event.target.value)}
         onBlur={commit}
         onKeyDown={(event) => {
@@ -422,9 +733,12 @@ function TimezoneField({
 export function IntakeSubjectInput({
   value,
   onSave,
+  className,
 }: {
   value: string;
   onSave: (subject: string) => void;
+  /** Sets the title's type, such as the page's serif heading. */
+  className?: string;
 }) {
   const [draft, setDraft] = useFieldDraft(value);
   function commit() {
@@ -434,13 +748,17 @@ export function IntakeSubjectInput({
     else onSave(next);
   }
   return (
-    <input
+    <FormTextInput
+      variant="minimal"
       aria-label="Subject"
       value={draft}
       maxLength={200}
       autoComplete="off"
       title={value}
-      className="-mx-1.5 w-full min-w-0 truncate rounded-md bg-transparent px-1.5 text-gray-900 outline-none transition-colors hover:bg-gray-100 focus:bg-gray-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500/40"
+      className={cn(
+        "min-w-0 truncate text-gray-900",
+        className,
+      )}
       onChange={(event) => setDraft(event.target.value)}
       onBlur={commit}
       onKeyDown={(event) => {
@@ -488,44 +806,49 @@ export function IntakeDescription({
             type="button"
             aria-label="Edit request"
             onClick={() => setDraft(value)}
-            className="rounded-md text-xs text-gray-500 transition-colors hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+            title="Edit request"
+            className="flex h-6 w-6 items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
           >
-            Edit
+            <Pencil aria-hidden="true" className="h-3.5 w-3.5" />
           </button>
         )}
       </div>
       {editing ? (
-        <>
+        // The actions sit inside the box, under the text, like the note box.
+        <div className="rounded-lg bg-gray-100 transition-shadow focus-within:ring-2 focus-within:ring-gray-300/45">
           <textarea
             aria-labelledby="intake-request"
             rows={5}
             maxLength={20000}
             autoFocus
             value={draft}
-            className={`${INTAKE_TEXTAREA_CLASS} min-h-48`}
+            className={cn(
+              INTAKE_TEXTAREA_CLASS,
+              "min-h-48 bg-transparent focus:border-transparent focus:ring-0",
+            )}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Escape") setDraft(null);
             }}
           />
-          <div className="flex justify-end gap-2">
+          <div className="flex items-center justify-end gap-1 px-2 pb-2">
             <button
               type="button"
               onClick={() => setDraft(null)}
-              className="rounded-md px-2 py-1.5 text-sm text-gray-500 transition-colors hover:text-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+              className="rounded-md px-2 text-sm text-gray-500 transition-colors hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
             >
               Cancel
             </button>
-            <PillButtonUI
-              tone="black"
-              size="sm"
+            <button
+              type="button"
               disabled={!draft.trim() || draft.trim() === value || locked}
               onClick={() => onSave(draft.trim())}
+              className="rounded-md px-2 text-sm font-medium text-gray-900 transition-colors hover:text-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:text-gray-400"
             >
-              Save
-            </PillButtonUI>
+              Submit
+            </button>
           </div>
-        </>
+        </div>
       ) : (
         <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700">
           {value}

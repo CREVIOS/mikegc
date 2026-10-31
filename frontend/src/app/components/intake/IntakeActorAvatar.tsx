@@ -15,10 +15,10 @@ export function IntakeActorAvatar({ name }: { name: string | null }) {
       className="flex h-6 w-6 shrink-0 items-center justify-center"
     >
       {name ? (
-        <UserAvatar name={name} />
+        <UserAvatar size="sm" name={name} />
       ) : (
-        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-gray-200 text-gray-500">
-          <Settings className="h-3 w-3" />
+        <span className="flex h-4 w-4 items-center justify-center rounded-full bg-gray-200 text-gray-500">
+          <Settings className="h-2.5 w-2.5" />
         </span>
       )}
     </span>

@@ -1,4 +1,5 @@
 "use client";
+import { UserAvatar } from "@/app/components/ui/user-avatar";
 import { AlertCircle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
@@ -6,7 +7,6 @@ import { useRouter } from "next/navigation";
 import type {
   IntakeMember,
   IntakeRequestSummary,
-  IntakeCategory,
   IntakeState,
 } from "@mike/contracts";
 import { useWorkspace } from "@/app/contexts/WorkspaceContext";
@@ -51,29 +51,32 @@ import { formatDate } from "@/app/components/projects/ProjectPageParts";
 import { EmptyState } from "@/app/components/ui/empty-state";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { DropdownItem, DropdownSeparator } from "@/shared/ui/dropdown";
-import { IntakeRequestModal } from "./IntakeRequestModal";
+import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
+import { discardIntakeDraft, getIntakeMemory } from "@/app/lib/intakeMemory";
 import { IntakeReasonModal } from "./IntakeReasonModal";
-import { useIntakeDraft, useIntakeMemory } from "./useIntakeMemory";
 import { intakeError } from "./useIntakeOperation";
 import {
-  INTAKE_CATEGORY_LABELS,
+  INTAKE_STATE_DOT_CLASS,
   INTAKE_STATE_LABELS,
   formatIntakeDate,
   isIntakeOverdue,
 } from "./intakeLabels";
 
-type IntakeView = "all" | "mine";
+type IntakeView = "all" | "mine" | "resolved" | "cancelled";
 
 const VIEWS: { id: IntakeView; label: string }[] = [
   { id: "all", label: "All" },
   { id: "mine", label: "Assigned to me" },
+  { id: "resolved", label: "Resolved" },
+  { id: "cancelled", label: "Cancelled" },
 ];
+
+/** The closed tabs show one status; the others leave the status filter free. */
+const isClosedView = (view: IntakeView): view is "resolved" | "cancelled" =>
+  view === "resolved" || view === "cancelled";
 
 const STATE_OPTIONS = (Object.keys(INTAKE_STATE_LABELS) as IntakeState[]).map(
   (value) => ({ value, label: INTAKE_STATE_LABELS[value] }),
-);
-const CATEGORY_OPTIONS = (["nda", "general"] as IntakeCategory[]).map(
-  (value) => ({ value, label: INTAKE_CATEGORY_LABELS[value] }),
 );
 /** Quiet refreshes when the window regains focus are at most this frequent. */
 const FOCUS_REFRESH_MS = 30_000;
@@ -119,31 +122,33 @@ export function Inbox({
   accountId: string;
 }) {
   const router = useRouter();
-  const memory = useIntakeMemory(orgId, "new-request");
   const [members, setMembers] = useState<IntakeMember[]>([]);
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebouncedValue(search, 250);
   const [state, setState] = useState<IntakeState | null>(null);
-  const [category, setCategory] = useState<IntakeCategory | null>(null);
   const [view, setView] = useState<IntakeView>("all");
   const [assignee, setAssignee] = useState<PersonOption | null>(null);
-  const [sortByTarget, setSortByTarget] = useState(false);
+  const [sort, setSort] = useState<"updated" | "updated_asc" | "target">(
+    "updated",
+  );
   const [reload, setReload] = useState(0);
-  const [creating, setCreating] = useIntakeDraft(memory, "creating", false);
   const [cancelTargets, setCancelTargets] = useState<
     IntakeRequestSummary[] | null
   >(null);
   const [cancelReason, setCancelReason] = useState("");
   const [cancelling, setCancelling] = useState(false);
+  const [deleteTargets, setDeleteTargets] = useState<
+    IntakeRequestSummary[] | null
+  >(null);
+  const [deleting, setDeleting] = useState(false);
   const query = useMemo<IntakeListQuery>(
     () => ({
       search: debouncedSearch,
-      state: state ?? undefined,
-      category: category ?? undefined,
+      state: isClosedView(view) ? view : (state ?? undefined),
       assignee: view === "mine" ? "me" : assignee?.user_id,
-      sort: sortByTarget ? "target" : "updated",
+      sort,
     }),
-    [debouncedSearch, state, category, view, assignee, sortByTarget],
+    [debouncedSearch, state, view, assignee, sort],
   );
   // Rows, errors and selection are stored against the query that produced
   // them, so a change shows the loading state at once and a late response
@@ -259,7 +264,7 @@ export function Inbox({
   }
 
   const filtered =
-    !!debouncedSearch || !!state || !!category || view === "mine" || !!assignee;
+    !!debouncedSearch || !!state || view !== "all" || !!assignee;
   const failure = error;
   const hrefFor = (request: IntakeRequestSummary) =>
     `/intake/${request.id}?org=${orgId}`;
@@ -291,6 +296,7 @@ export function Inbox({
       : selectedIds;
     const targets = (rows ?? []).filter((r) => ids.includes(r.id));
     const cancellable = targets.filter((r) => r.capabilities.cancel);
+    const deletable = targets.filter((r) => r.capabilities.delete);
     const single = targets.length === 1 ? targets[0] : null;
     return (
       <>
@@ -331,25 +337,76 @@ export function Inbox({
         >
           {targets.length > 1 ? `Copy ${targets.length} links` : "Copy link"}
         </DropdownItem>
+        {(cancellable.length > 0 || deletable.length > 0) && (
+          <DropdownSeparator />
+        )}
         {cancellable.length > 0 && (
-          <>
-            <DropdownSeparator />
-            <DropdownItem
-              variant="destructive"
-              onSelect={() => {
-                close();
-                setCancelReason("");
-                setCancelTargets(cancellable);
-              }}
-            >
-              {cancellable.length > 1
-                ? `Cancel ${cancellable.length} requests`
-                : "Cancel request"}
-            </DropdownItem>
-          </>
+          <DropdownItem
+            variant="destructive"
+            onSelect={() => {
+              close();
+              setCancelReason("");
+              setCancelTargets(cancellable);
+            }}
+          >
+            {cancellable.length > 1
+              ? `Cancel ${cancellable.length} requests`
+              : "Cancel request"}
+          </DropdownItem>
+        )}
+        {deletable.length > 0 && (
+          <DropdownItem
+            variant="destructive"
+            onSelect={() => {
+              close();
+              setDeleteTargets(deletable);
+            }}
+          >
+            {deletable.length > 1
+              ? `Delete ${deletable.length} requests`
+              : "Delete request"}
+          </DropdownItem>
         )}
       </>
     );
+  }
+
+  async function deleteRequests(targets: IntakeRequestSummary[]) {
+    setDeleting(true);
+    const failed: IntakeRequestSummary[] = [];
+    let lastError: unknown = null;
+    for (const request of targets) {
+      try {
+        await commandIntakeRequest(orgId, request.id, "delete", {
+          command_id: crypto.randomUUID(),
+          expected_version: request.version,
+        });
+        // A note or reason left unsent on the deleted request has nowhere to go.
+        discardIntakeDraft(getIntakeMemory(accountId, orgId, request.id));
+      } catch (e) {
+        failed.push(request);
+        lastError = e;
+      }
+    }
+    setDeleting(false);
+    setDeleteTargets(null);
+    setSelectedIds(() => []);
+    refresh();
+    const deleted = targets.length - failed.length;
+    if (deleted > 0)
+      notifySuccess(
+        deleted === 1 ? "Request deleted" : `${deleted} requests deleted`,
+      );
+    if (failed.length === targets.length && lastError)
+      notifyError(lastError, {
+        action:
+          targets.length === 1 ? "delete the request" : "delete the requests",
+      });
+    else if (failed.length > 0)
+      notifyPartialFailure(
+        `${failed.length} of ${targets.length} requests couldn't be deleted. They may have changed; reload and try again.`,
+        { action: "delete the requests" },
+      );
   }
 
   async function cancelRequests(targets: IntakeRequestSummary[]) {
@@ -384,6 +441,8 @@ export function Inbox({
       );
   }
 
+  const deletingMany = !!deleteTargets && deleteTargets.length > 1;
+
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
       <PageHeader
@@ -396,7 +455,7 @@ export function Inbox({
           },
           {
             type: "new",
-            onClick: () => setCreating(true),
+            onClick: () => router.push("/intake/new"),
             title: "New request",
           },
         ]}
@@ -455,34 +514,24 @@ export function Inbox({
             <TableHeaderCell className="ml-auto w-44">
               Requester
             </TableHeaderCell>
-            <TableHeaderCell className="w-32">
-              <div className="flex items-center gap-1">
-                <span>Type</span>
-                <TableFilters
-                  label="Filter by type"
-                  value={category}
-                  allLabel="All types"
-                  options={CATEGORY_OPTIONS}
-                  onChange={setCategory}
-                />
-              </div>
-            </TableHeaderCell>
             <TableHeaderCell className="w-44">
               <div className="flex items-center gap-1">
                 <span>Status</span>
-                <TableFilters
-                  label="Filter by status"
-                  value={state}
-                  allLabel="All statuses"
-                  options={STATE_OPTIONS}
-                  onChange={setState}
-                />
+                {!isClosedView(view) && (
+                  <TableFilters
+                    label="Filter by status"
+                    value={state}
+                    allLabel="All statuses"
+                    options={STATE_OPTIONS}
+                    onChange={setState}
+                  />
+                )}
               </div>
             </TableHeaderCell>
             <TableHeaderCell className="w-44">
               <div className="flex items-center gap-1">
                 <span>Assigned lawyer</span>
-                {view === "all" && (
+                {view !== "mine" && (
                   <PersonFilter
                     label="Filter by assigned lawyer"
                     selectedTitle={(name) => `Assigned to ${name}`}
@@ -498,14 +547,29 @@ export function Inbox({
                 <span>Target date</span>
                 <TableFilters
                   label="Sort by target date"
-                  value={sortByTarget ? "target" : null}
+                  value={sort === "target" ? "target" : null}
                   allLabel="Recently updated first"
                   options={[{ value: "target", label: "Soonest target first" }]}
-                  onChange={(value) => setSortByTarget(value === "target")}
+                  onChange={(value) =>
+                    setSort(value === "target" ? "target" : "updated")
+                  }
                 />
               </div>
             </TableHeaderCell>
-            <TableHeaderCell className="w-28">Updated</TableHeaderCell>
+            <TableHeaderCell className="w-28">
+              <div className="flex items-center gap-1">
+                <span>Updated</span>
+                <TableFilters
+                  label="Sort by updated"
+                  value={sort === "updated_asc" ? "updated_asc" : null}
+                  allLabel="Newest first"
+                  options={[{ value: "updated_asc", label: "Oldest first" }]}
+                  onChange={(value) =>
+                    setSort(value === "updated_asc" ? "updated_asc" : "updated")
+                  }
+                />
+              </div>
+            </TableHeaderCell>
             <TableHeaderCell className="w-8" />
           </TableHeaderRow>
         }
@@ -545,9 +609,9 @@ export function Inbox({
                   <PillButtonUI
                     tone="black"
                     size="sm"
-                    onClick={() => setCreating(true)}
+                    onClick={() => router.push("/intake/new")}
                   >
-                    Record a request
+                    Create a request
                   </PillButtonUI>
                 }
               />
@@ -588,16 +652,30 @@ export function Inbox({
                     }
                   />
                   <TableCell className="ml-auto w-44 [overflow-wrap:anywhere]">
-                    {request.requester_name}
-                  </TableCell>
-                  <TableCell className="w-32">
-                    {INTAKE_CATEGORY_LABELS[request.category]}
+                    <IntakePerson
+                      name={request.requester_name}
+                      email={request.requester_email}
+                    />
                   </TableCell>
                   <TableCell className="w-44">
-                    {INTAKE_STATE_LABELS[request.state]}
+                    <span className="flex items-center gap-2">
+                      <span
+                        aria-hidden="true"
+                        className={`h-2 w-2 shrink-0 rounded-full ${INTAKE_STATE_DOT_CLASS[request.state]}`}
+                      />
+                      {INTAKE_STATE_LABELS[request.state]}
+                    </span>
                   </TableCell>
                   <TableCell className="w-44 [overflow-wrap:anywhere]">
-                    {request.assignee_name ?? (
+                    {request.assignee_name ? (
+                      <IntakePerson
+                        name={request.assignee_name}
+                        email={
+                          members.find((m) => m.user_id === request.assignee_id)
+                            ?.email
+                        }
+                      />
+                    ) : (
                       <span className="text-gray-400">Unassigned</span>
                     )}
                   </TableCell>
@@ -668,13 +746,25 @@ export function Inbox({
           onClose={() => setCancelTargets(null)}
         />
       )}
-      {creating && (
-        <IntakeRequestModal
-          orgId={orgId}
-          onClose={() => setCreating(false)}
-          onSaved={(id) => router.push(`/intake/${id}?org=${orgId}`)}
-        />
-      )}
+      <ConfirmPopup
+        open={!!deleteTargets}
+        title={
+          deletingMany
+            ? `Delete ${deleteTargets.length} requests?`
+            : "Delete this request?"
+        }
+        message={`${deletingMany ? "Their" : "Its"} notes, history and documents are deleted for everyone in your organization. This can't be undone.`}
+        confirmLabel={deletingMany ? "Delete requests" : "Delete request"}
+        confirmVariant="danger"
+        confirmStatus={deleting ? "loading" : "idle"}
+        cancelLabel={deletingMany ? "Keep requests" : "Keep request"}
+        onCancel={() => {
+          if (!deleting) setDeleteTargets(null);
+        }}
+        onConfirm={() => {
+          if (deleteTargets && !deleting) void deleteRequests(deleteTargets);
+        }}
+      />
     </div>
   );
 }
@@ -695,16 +785,13 @@ function IntakeLoadingRows() {
             </div>
           </TableStickyCell>
           <TableCell className="ml-auto w-44">
-            <SkeletonLine className="w-24" />
-          </TableCell>
-          <TableCell className="w-32">
-            <SkeletonLine className="w-20" />
+            <SkeletonPerson width="w-24" />
           </TableCell>
           <TableCell className="w-44">
             <SkeletonLine className="w-16" />
           </TableCell>
           <TableCell className="w-44">
-            <SkeletonLine className="w-24" />
+            <SkeletonPerson width="w-24" />
           </TableCell>
           <TableCell className="w-32">
             <SkeletonLine className="w-20" />
@@ -716,5 +803,32 @@ function IntakeLoadingRows() {
         </TableRow>
       ))}
     </TableBody>
+  );
+}
+
+/** A person's avatar beside their name; the name already labels the row. */
+function IntakePerson({
+  name,
+  email,
+}: {
+  name: string;
+  email?: string | null;
+}) {
+  return (
+    <span className="flex min-w-0 items-center gap-2">
+      <span aria-hidden="true" className="flex">
+        <UserAvatar size="sm" name={name} email={email} />
+      </span>
+      <span className="min-w-0">{name}</span>
+    </span>
+  );
+}
+
+function SkeletonPerson({ width }: { width: string }) {
+  return (
+    <div className="flex items-center gap-2">
+      <div className="h-4 w-4 shrink-0 animate-pulse rounded-full bg-gray-100" />
+      <SkeletonLine className={width} />
+    </div>
   );
 }

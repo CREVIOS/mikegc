@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import { useRouter } from "next/navigation";
+import { Link2, MoreHorizontal } from "lucide-react";
 import { useIntakeMemory, useIntakeDraft } from "./useIntakeMemory";
 import type {
   IntakeAction,
@@ -32,6 +33,10 @@ import {
 } from "@/app/lib/mikeApi";
 import { notifyError } from "@/app/lib/userFacingError";
 import { notifySuccess } from "@/shared/lib/errorNotifier";
+import {
+  formatUnsupportedDocumentWarning,
+  partitionSupportedDocumentFiles,
+} from "@/app/lib/documentUploadValidation";
 import { PageHeader } from "@/app/components/shared/PageHeader";
 import {
   SkeletonLine,
@@ -39,10 +44,17 @@ import {
 } from "@/app/components/shared/TablePrimitive";
 import { EmptyState } from "@/app/components/ui/empty-state";
 import { IntakeSkeuoIcon } from "@/app/components/shared/AppSidebarSkeuoIcons";
-import { RowActions } from "@/app/components/shared/RowActions";
 import { GlassCardUI } from "@/shared/ui/GlassCardUI";
+import { HeaderButtonUI } from "@/shared/ui/HeaderButtonsUI";
+import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
+import {
+  Dropdown,
+  DropdownContent,
+  DropdownItem,
+  DropdownTrigger,
+} from "@/shared/ui/dropdown";
+import { discardIntakeDraft } from "@/app/lib/intakeMemory";
 import { LIQUID_GLASS_FLAT_CLASS } from "@/app/components/ui/liquid-surface";
-import { DropdownItem, DropdownSeparator } from "@/shared/ui/dropdown";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { TextSlabUI } from "@/shared/ui/TextSlabUI";
 import {
@@ -51,10 +63,14 @@ import {
   useIntakeOperation,
 } from "./useIntakeOperation";
 import { IntakeActorAvatar } from "./IntakeActorAvatar";
-import { IntakeDocuments, useIntakeDocumentUpload } from "./IntakeDocuments";
+import {
+  IntakeDocuments,
+  useIntakeDocumentUpload,
+  useIntakeDocumentViewer,
+} from "./IntakeDocuments";
+import { IntakeNoteDocuments, IntakeNoteForm } from "./IntakeNoteForm";
 import { IntakeReasonModal } from "./IntakeReasonModal";
 import {
-  INTAKE_TEXTAREA_CLASS,
   IntakeDescription,
   IntakeDetailsPanel,
   IntakeSubjectInput,
@@ -109,7 +125,8 @@ async function allPages<T>(read: (offset: number) => Promise<T[]>) {
 }
 type Closing = "resolve" | "cancel";
 /** Which retained draft a successful command has consumed. */
-type Consumed = "note" | "reason" | null;
+/** "request" means the request itself is gone, so the page leaves it. */
+type Consumed = "note" | "reason" | "request" | null;
 /** Show the current request and gate commands on its server-provided capabilities. */
 export function Detail({
   orgId,
@@ -129,6 +146,16 @@ export function Detail({
   const [members, setMembers] = useState<IntakeMember[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useIntakeDraft(memory, "note", "");
+  // Documents to upload with the note once it is saved, kept with its text.
+  const [noteFiles, setNoteFiles] = useIntakeDraft<File[]>(
+    memory,
+    "noteFiles",
+    [],
+  );
+  const [noteWarning, setNoteWarning] = useState<string | null>(null);
+  // The note form stays closed until asked for, or while a draft is kept.
+  const [noteOpen, setNoteOpen] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [reason, setReason] = useIntakeDraft(memory, "reason", "");
   const [closing, setClosing] = useIntakeDraft<Closing | null>(
     memory,
@@ -195,10 +222,30 @@ export function Detail({
   const savedVersion = useRef(0);
   // Remounting the sidebar after a rejected change drops unsaved field text.
   const [detailsEpoch, setDetailsEpoch] = useState(0);
+  const upload = useIntakeDocumentUpload(
+    orgId,
+    requestId,
+    () => void refresh(),
+  );
+  const viewer = useIntakeDocumentViewer();
   const operation = useIntakeOperation(
     (receipt) => {
+      if (consumes === "request") {
+        discardIntakeDraft(memory);
+        notifySuccess("Request deleted");
+        router.push("/intake");
+        return;
+      }
       savedVersion.current = receipt.applied_version;
-      if (consumes === "note") setNote("");
+      if (consumes === "note") {
+        // The note exists now, so its documents can be added with it.
+        if (noteFiles.length && receipt.message_id)
+          void upload.add(noteFiles, receipt.message_id);
+        setNote("");
+        setNoteFiles([]);
+        setNoteWarning(null);
+        setNoteOpen(false);
+      }
       if (consumes === "reason") {
         setReason("");
         setClosing(null);
@@ -226,7 +273,9 @@ export function Detail({
     },
     memory,
   );
-  useIntakeDraftWarning(!!note || !!reason || operation.locked);
+  useIntakeDraftWarning(
+    !!note || noteFiles.length > 0 || !!reason || operation.locked,
+  );
   /** Capture the displayed request version; recovery reuses the same command. */
   function command(
     action: IntakeAction,
@@ -257,7 +306,6 @@ export function Detail({
   function sendDetails(patch: Partial<IntakeDetails>) {
     if (!request) return;
     const input: IntakeEdit = {
-      category: request.category,
       subject: request.subject,
       description: request.description,
       requester_name: request.requester_name,
@@ -293,14 +341,18 @@ export function Detail({
     sendDetails(queued);
   });
   const caps = request?.capabilities;
-  const upload = useIntakeDocumentUpload(
-    orgId,
-    requestId,
-    () => void refresh(),
-  );
-  // Files dropped anywhere on the page are added to the request.
+  // Files dropped anywhere on the page are added to the request; dropped on
+  // the note form, they wait to be added with the note.
   const dragDepth = useRef(0);
   const [dragging, setDragging] = useState(false);
+  const noteBox = useRef<HTMLDivElement>(null);
+  const [overNote, setOverNote] = useState(false);
+  const addNoteFiles = (candidates: File[]) => {
+    const { supported, unsupported } =
+      partitionSupportedDocumentFiles(candidates);
+    setNoteWarning(formatUnsupportedDocumentWarning(unsupported));
+    if (supported.length) setNoteFiles((current) => [...current, ...supported]);
+  };
   const pinned = request
     ? [...messages]
         .reverse()
@@ -341,100 +393,51 @@ export function Detail({
       </PillButtonUI>
     </div>
   );
-  const hasMenu = !!caps && (caps.wait || caps.resume || caps.cancel);
   return (
     <div className="flex h-full min-h-0 flex-col">
       <PageHeader
         shrink
         actions={
-          request && caps
+          request
             ? [
-                (caps.resolve || caps.reopen) && {
-                  type: "custom",
-                  render: caps.resolve ? (
-                    <PillButtonUI
-                      tone="black"
-                      size="sm"
-                      disabled={operation.locked}
-                      onClick={() => setClosing("resolve")}
-                    >
-                      Resolve
-                    </PillButtonUI>
-                  ) : caps.reopen ? (
-                    <PillButtonUI
-                      tone="black"
-                      size="sm"
-                      disabled={operation.locked}
-                      onClick={() => command("reopen", "reopen the request")}
-                    >
-                      Reopen
-                    </PillButtonUI>
-                  ) : null,
+                {
+                  title: "Copy link",
+                  iconOnly: true,
+                  icon: <Link2 aria-hidden="true" className="h-4 w-4" />,
+                  onClick: () => {
+                    const link = new URL(
+                      `/intake/${requestId}?org=${orgId}`,
+                      window.location.origin,
+                    ).href;
+                    navigator.clipboard.writeText(link).then(
+                      () => notifySuccess("Link copied"),
+                      (e) => notifyError(e, { action: "copy the link" }),
+                    );
+                  },
                 },
-                hasMenu &&
+                caps?.delete &&
                   !operation.locked && {
                     type: "custom",
                     render: (
-                      <RowActions
-                        ariaLabel="More actions"
-                        renderItems={(close) => (
-                          <>
-                            {caps.wait && (
-                              <DropdownItem
-                                onSelect={() => {
-                                  close();
-                                  command(
-                                    "wait",
-                                    "mark the request as waiting",
-                                  );
-                                }}
-                              >
-                                Mark waiting on requester
-                              </DropdownItem>
-                            )}
-                            {caps.resume && (
-                              <DropdownItem
-                                onSelect={() => {
-                                  close();
-                                  command("resume", "resume the request");
-                                }}
-                              >
-                                Resume
-                              </DropdownItem>
-                            )}
-                            <DropdownItem
-                              onSelect={() => {
-                                close();
-                                const link = new URL(
-                                  `/intake/${requestId}?org=${orgId}`,
-                                  window.location.origin,
-                                ).href;
-                                navigator.clipboard.writeText(link).then(
-                                  () => notifySuccess("Link copied"),
-                                  (e) =>
-                                    notifyError(e, { action: "copy the link" }),
-                                );
-                              }}
-                            >
-                              Copy link
-                            </DropdownItem>
-                            {caps.cancel && (
-                              <>
-                                <DropdownSeparator />
-                                <DropdownItem
-                                  variant="destructive"
-                                  onSelect={() => {
-                                    close();
-                                    setClosing("cancel");
-                                  }}
-                                >
-                                  Cancel request
-                                </DropdownItem>
-                              </>
-                            )}
-                          </>
-                        )}
-                      />
+                      // A round trigger to match the other header buttons.
+                      <Dropdown>
+                        <DropdownTrigger asChild>
+                          <HeaderButtonUI iconOnly aria-label="More actions">
+                            <MoreHorizontal
+                              aria-hidden="true"
+                              className="h-4 w-4"
+                            />
+                          </HeaderButtonUI>
+                        </DropdownTrigger>
+                        <DropdownContent align="end">
+                          <DropdownItem
+                            variant="destructive"
+                            onSelect={() => setConfirmingDelete(true)}
+                          >
+                            Delete request
+                          </DropdownItem>
+                        </DropdownContent>
+                      </Dropdown>
                     ),
                   },
               ]
@@ -447,19 +450,9 @@ export function Detail({
             title: "Back to Intake",
           },
           {
-            label:
-              request && caps?.edit ? (
-                <IntakeSubjectInput
-                  key={detailsEpoch}
-                  value={request.subject}
-                  onSave={(subject) => saveDetails({ subject })}
-                />
-              ) : (
-                request?.subject
-              ),
+            label: request?.subject,
             title: request?.subject,
             loading: !request && !error,
-            cursor: "text",
           },
         ]}
       />
@@ -475,20 +468,28 @@ export function Detail({
           if (!request || !event.dataTransfer.types.includes("Files")) return;
           event.preventDefault();
           event.dataTransfer.dropEffect = "copy";
+          setOverNote(!!noteBox.current?.contains(event.target as Node));
         }}
         onDragLeave={() => {
           dragDepth.current = Math.max(0, dragDepth.current - 1);
-          if (!dragDepth.current) setDragging(false);
+          if (!dragDepth.current) {
+            setDragging(false);
+            setOverNote(false);
+          }
         }}
         onDrop={(event) => {
           if (!request) return;
           event.preventDefault();
           dragDepth.current = 0;
           setDragging(false);
-          void upload.add(Array.from(event.dataTransfer.files));
+          setOverNote(false);
+          const files = Array.from(event.dataTransfer.files);
+          if (noteBox.current?.contains(event.target as Node))
+            addNoteFiles(files);
+          else void upload.add(files);
         }}
       >
-        {dragging && (
+        {dragging && !overNote && (
           <div
             aria-hidden="true"
             className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-xl bg-white/70 text-sm text-gray-700 ring-2 ring-inset ring-blue-500/40"
@@ -520,6 +521,24 @@ export function Detail({
           <DetailSkeleton>{recheck}</DetailSkeleton>
         ) : (
           <DetailColumns
+            title={
+              caps.edit ? (
+                <>
+                  {/* The title edits in place; this names the page for assistive technology. */}
+                  <h1 className="sr-only">{request.subject}</h1>
+                  <IntakeSubjectInput
+                    key={detailsEpoch}
+                    value={request.subject}
+                    onSave={(subject) => saveDetails({ subject })}
+                    className="font-serif text-2xl font-medium"
+                  />
+                </>
+              ) : (
+                <h1 className="font-serif text-2xl font-medium text-gray-900 [overflow-wrap:anywhere]">
+                  {request.subject}
+                </h1>
+              )
+            }
             details={
               <IntakeDetailsPanel
                 key={detailsEpoch}
@@ -529,11 +548,22 @@ export function Detail({
                 locked={operation.locked}
                 onSave={saveDetails}
                 onAssign={assign}
+                onStatus={(action) => {
+                  if (action === "resolve" || action === "cancel")
+                    setClosing(action);
+                  else
+                    command(
+                      action,
+                      action === "wait"
+                        ? "mark the request as waiting"
+                        : action === "resume"
+                          ? "resume the request"
+                          : "reopen the request",
+                    );
+                }}
               />
             }
           >
-            {/* The page header shows the subject; this names the page for assistive technology. */}
-            <h1 className="sr-only">{request.subject}</h1>
             {pinned && (
               <GlassCardUI>
                 <section
@@ -581,9 +611,10 @@ export function Detail({
                 <div className="p-5">
                   <IntakeDocuments
                     documents={documents}
-                    uploading={upload.uploading}
+                    uploading={upload.uploading.map((u) => u.file)}
                     warning={upload.warning}
                     onAdd={(files) => void upload.add(files)}
+                    onOpen={(documentId) => void viewer.open(documentId)}
                   />
                 </div>
               </div>
@@ -621,58 +652,66 @@ export function Detail({
                             </time>
                           </p>
                           {"message" in entry && (
-                            <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700">
-                              {entry.message.body}
-                            </p>
+                            <>
+                              <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700">
+                                {entry.message.body}
+                              </p>
+                              <IntakeNoteDocuments
+                                documents={documents.filter(
+                                  (d) => d.message_id === entry.message.id,
+                                )}
+                                uploading={upload.uploading.filter(
+                                  (u) => u.messageId === entry.message.id,
+                                )}
+                                onOpen={(documentId) =>
+                                  void viewer.open(documentId)
+                                }
+                              />
+                            </>
                           )}
                         </div>
                       </li>
                     );
                   })}
                 </ol>
-                {caps.note && (
-                  <div className="border-t border-gray-100 p-5">
-                    <label
-                      htmlFor="intake-note"
-                      className="mb-2 block text-sm font-medium text-gray-700"
-                    >
-                      Add a note
-                    </label>
-                    <textarea
-                      id="intake-note"
-                      rows={3}
-                      className={INTAKE_TEXTAREA_CLASS}
-                      maxLength={20000}
-                      placeholder="What happened, what the requester said, what was sent"
-                      aria-describedby="intake-note-help"
-                      value={note}
+                {caps.note && !noteOpen && !note && !noteFiles.length && (
+                  <div className="border-t border-gray-100 px-5 py-4">
+                    <button
+                      type="button"
                       disabled={operation.locked}
-                      onChange={(e) => setNote(e.target.value)}
-                    />
-                    <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                      <p
-                        id="intake-note-help"
-                        className="text-xs text-gray-500"
-                      >
-                        Visible to everyone in your organization.
-                      </p>
-                      <PillButtonUI
-                        tone="black"
-                        size="sm"
-                        disabled={!note.trim() || operation.locked}
-                        onClick={() =>
-                          command(
-                            "notes",
-                            "add the note",
-                            { body: note },
-                            "note",
-                          )
-                        }
-                      >
-                        Add note
-                      </PillButtonUI>
-                    </div>
+                      onClick={() => setNoteOpen(true)}
+                      className="rounded-md text-sm text-gray-500 transition-colors hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:opacity-60"
+                    >
+                      Add note
+                    </button>
                   </div>
+                )}
+                {caps.note && (noteOpen || !!note || noteFiles.length > 0) && (
+                  <IntakeNoteForm
+                    boxRef={noteBox}
+                    note={note}
+                    files={noteFiles}
+                    warning={noteWarning}
+                    dropping={dragging && overNote}
+                    locked={operation.locked}
+                    autoFocus={noteOpen}
+                    onNoteChange={setNote}
+                    onAddFiles={addNoteFiles}
+                    onRemoveFile={(index) =>
+                      setNoteFiles((current) =>
+                        current.filter((_, i) => i !== index),
+                      )
+                    }
+                    onCancel={() => {
+                      setNote("");
+                      setNoteFiles([]);
+                      setNoteWarning(null);
+                      setNoteOpen(false);
+                    }}
+                    onSubmit={() =>
+                      command("notes", "add the note", { body: note }, "note")
+                    }
+                  />
                 )}
               </section>
             </GlassCardUI>
@@ -680,6 +719,20 @@ export function Detail({
           </DetailColumns>
         )}
       </div>
+      {viewer.panel}
+      <ConfirmPopup
+        open={confirmingDelete}
+        title="Delete this request?"
+        message="Its notes, history and documents are deleted for everyone in your organization. This can't be undone."
+        confirmLabel="Delete request"
+        confirmVariant="danger"
+        cancelLabel="Keep request"
+        onCancel={() => setConfirmingDelete(false)}
+        onConfirm={() => {
+          setConfirmingDelete(false);
+          command("delete", "delete the request", {}, "request");
+        }}
+      />
       {closing && request && (
         <IntakeReasonModal
           title={closing === "resolve" ? "Resolve request" : "Cancel request"}
@@ -735,24 +788,32 @@ export function Detail({
  * screens; on wide ones they sit on the right and stay in place while the
  * page scrolls, scrolling on their own only when taller than the window.
  */
-function DetailColumns({
+export function DetailColumns({
+  title,
   details,
   children,
 }: {
+  /** Sits above the request, so the sidebar's top lines up with the first card. */
+  title?: ReactNode;
   details: ReactNode;
   children: ReactNode;
 }) {
   return (
     <div className="min-h-0 flex-1 overflow-y-auto [overflow-wrap:anywhere]">
       <div className="mx-auto grid w-full max-w-[68rem] gap-5 px-3 pb-8 pt-2 md:px-6.5 @[52rem]:grid-cols-[minmax(0,1fr)_18rem] @[52rem]:items-start">
+        {title && (
+          <div className="min-w-0 @[52rem]:col-start-1 @[52rem]:row-start-1">
+            {title}
+          </div>
+        )}
         {/* The panel is the flat glass surface itself, so scrolling its
             content never clips the surface's shadow. */}
         <div
-          className={`min-w-0 rounded-xl ${LIQUID_GLASS_FLAT_CLASS} @[52rem]:sticky @[52rem]:top-2 @[52rem]:col-start-2 @[52rem]:row-start-1 @[52rem]:max-h-[calc(100dvh-8rem)] @[52rem]:overflow-y-auto`}
+          className={`min-w-0 rounded-xl ${LIQUID_GLASS_FLAT_CLASS} @[52rem]:sticky @[52rem]:top-2 @[52rem]:col-start-2 @[52rem]:row-start-2 @[52rem]:max-h-[calc(100dvh-8rem)] @[52rem]:overflow-y-auto`}
         >
           {details}
         </div>
-        <div className="min-w-0 space-y-5 @[52rem]:col-start-1 @[52rem]:row-start-1">
+        <div className="min-w-0 space-y-5 @[52rem]:col-start-1 @[52rem]:row-start-2">
           {children}
         </div>
       </div>
@@ -764,9 +825,9 @@ function DetailColumns({
 function DetailSkeleton({ children }: { children?: ReactNode }) {
   return (
     <DetailColumns
+      title={<SkeletonLine className="h-7 w-2/3 rounded-lg" />}
       details={
         <div className="space-y-4 p-5" aria-hidden="true">
-          <SkeletonLine className="w-16" />
           {[
             "w-28",
             "h-9 w-full",

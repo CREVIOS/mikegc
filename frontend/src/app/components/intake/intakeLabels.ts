@@ -1,5 +1,4 @@
 import type {
-  IntakeCategory,
   IntakeMessage,
   IntakeState,
 } from "@mike/contracts";
@@ -13,9 +12,13 @@ export const INTAKE_STATE_LABELS: Record<IntakeState, string> = {
   cancelled: "Cancelled",
 };
 
-export const INTAKE_CATEGORY_LABELS: Record<IntakeCategory, string> = {
-  general: "Legal question",
-  nda: "Contract review",
+/** A status dot beside the label, so statuses scan by colour as well as text. */
+export const INTAKE_STATE_DOT_CLASS: Record<IntakeState, string> = {
+  submitted: "bg-blue-500",
+  in_review: "bg-amber-500",
+  needs_information: "bg-violet-500",
+  resolved: "bg-emerald-500",
+  cancelled: "bg-gray-400",
 };
 
 /** Legacy question, reply and answer messages read as notes. */

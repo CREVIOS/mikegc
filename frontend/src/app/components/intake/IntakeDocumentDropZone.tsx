@@ -8,6 +8,20 @@ import {
   partitionSupportedDocumentFiles,
 } from "@/app/lib/documentUploadValidation";
 
+/** What an empty upload field asks for: the action, then the accepted files. */
+export function IntakeUploadPrompt() {
+  return (
+    <>
+      <span className="block">
+        Drag and drop documents here, or click to browse.
+      </span>
+      <span className="mt-0.5 block text-xs text-gray-500">
+        PDF, Word, Excel and PowerPoint files are supported.
+      </span>
+    </>
+  );
+}
+
 /**
  * Collects files for a request: drop them on the area, or click it to browse.
  * Files only wait here; the caller uploads them to the request.
@@ -18,7 +32,6 @@ export function IntakeDocumentDropZone({
   onRemove,
   disabled = false,
   labelledBy,
-  emptyPrompt = "Drag and drop documents here, or click to browse. PDF, Word, Excel and PowerPoint files are supported.",
 }: {
   files: File[];
   onAdd: (files: File[]) => void;
@@ -26,7 +39,6 @@ export function IntakeDocumentDropZone({
   disabled?: boolean;
   /** The field label that names the area. */
   labelledBy: string;
-  emptyPrompt?: string;
 }) {
   const input = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
@@ -112,7 +124,7 @@ export function IntakeDocumentDropZone({
           disabled={disabled}
           className="w-full rounded-lg py-4 text-center text-sm text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:cursor-not-allowed"
         >
-          {dragging ? "Drop documents to add them" : emptyPrompt}
+          {dragging ? "Drop documents to add them" : <IntakeUploadPrompt />}
         </button>
       )}
       {warning && (

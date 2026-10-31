@@ -20,18 +20,21 @@ export async function canAttachIntakeDocuments(
 }
 
 /**
- * Link an uploaded document to its request. The upload worker calls this as
- * soon as the document row exists; repeating it for the same pair is a no-op.
+ * Link an uploaded document to its request, and to the uploader's note when
+ * it was added with one. The upload worker calls this as soon as the document
+ * row exists; repeating it for the same pair is a no-op.
  */
 export function attachIntakeDocument(
   db: Db,
   scope: IntakeScope,
   requestId: string,
   documentId: string,
+  messageId: string | null = null,
 ) {
   return intakeRpc<null>(db, "intake_attach_document", {
     ...scoped(scope, requestId),
     p_document: documentId,
+    p_message: messageId,
   });
 }
 

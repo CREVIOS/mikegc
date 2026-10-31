@@ -34,8 +34,18 @@ describe("parseUploadSessionRequest", () => {
     expect(
       parseUploadSessionRequest(request, USER_ID, SESSION_ID).destination,
     ).toEqual(destination);
+    // Documents added with a note name it.
+    const withNote = { ...destination, message_id: USER_ID };
+    expect(
+      parseUploadSessionRequest(
+        { ...request, destination: withNote },
+        USER_ID,
+        SESSION_ID,
+      ).destination,
+    ).toEqual(withNote);
     for (const invalid of [
       { ...request, destination: { scope: "intake", org_id: USER_ID } },
+      { ...request, destination: { ...destination, message_id: "note" } },
       {
         ...request,
         files: [{ ...request.files[0], folder_id: SESSION_ID }],
