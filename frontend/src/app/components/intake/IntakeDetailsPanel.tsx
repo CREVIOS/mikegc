@@ -397,7 +397,11 @@ export function TargetDateField({
               }}
               onBlur={commit}
               onKeyDown={(event) => {
-                if (event.key === "Enter") commit();
+                if (event.key === "Enter") {
+                  // Enter confirms the date; inside a form it must not submit it.
+                  event.preventDefault();
+                  commit();
+                }
                 if (event.key === "Escape") {
                   setDraft(null);
                   setInvalid(false);

@@ -351,6 +351,17 @@ describe("recording requests", () => {
     });
   });
 
+  it("confirms a typed target date with Enter without creating the request", async () => {
+    render(<IntakeNewRequestPage />);
+    fillRequest();
+    const date = screen.getByLabelText("Target date");
+    fireEvent.change(date, { target: { value: "2026-11-10" } });
+    // Not cancelled, Enter would submit the surrounding form.
+    expect(fireEvent.keyDown(date, { key: "Enter" })).toBe(false);
+    expect((date as HTMLInputElement).value).toMatch(/Nov/);
+    expect(mocks.submit).not.toHaveBeenCalled();
+  });
+
   it("requires a known timezone for a target date", async () => {
     render(<IntakeNewRequestPage />);
     fillRequest();
@@ -1294,6 +1305,18 @@ describe("request detail", () => {
       await screen.findByRole("dialog", { name: "Document viewer" }),
     ).toHaveTextContent("Supplier NDA.docx");
     expect(mocks.document).toHaveBeenCalledWith("doc-n");
+  });
+
+  it("leaves a text drop on the note form to the browser", async () => {
+    render(detail());
+    const editor = await noteEditor();
+    const dataTransfer = { types: ["text/plain"], files: [], dropEffect: "none" };
+    // Not cancelled, so the browser still inserts the dragged text.
+    expect(fireEvent.drop(editor, { dataTransfer })).toBe(true);
+    expect(
+      screen.queryByRole("list", { name: "Documents to add with the note" }),
+    ).not.toBeInTheDocument();
+    expect(mocks.upload).not.toHaveBeenCalled();
   });
 
   it("keeps files dropped on the note form for the note, until it is cancelled", async () => {

@@ -129,7 +129,10 @@ test("Legal records a business request, works it and resolves it exactly once", 
     );
     await expect(lawyerA.getByText("test.pdf", { exact: true })).toBeVisible();
     await expect(lawyerA.getByLabel("Timezone")).toHaveValue("Europe/Stockholm");
-    await expect(lawyerA.getByLabel("Assign to me")).toBeChecked();
+    // New requests start assigned to their creator.
+    await expect(
+      lawyerA.getByRole("button", { name: "Assigned lawyer: Intake Lawyer A" }),
+    ).toBeVisible();
     const submissions: unknown[] = [];
     await lawyerA.route("**/api/intake/*/requests", async (route) => {
       if (route.request().method() !== "POST") return route.continue();
@@ -240,7 +243,9 @@ test("Legal records a business request, works it and resolves it exactly once", 
     await summaryB
       .getByRole("button", { name: "Assigned lawyer: Intake Lawyer A" })
       .click();
-    await lawyerB.getByRole("menuitem", { name: "Assign to me" }).click();
+    await lawyerB
+      .getByRole("menuitemradio", { name: "Intake Lawyer B (you)" })
+      .click();
     await expect(
       lawyerB
         .getByRole("region", { name: "Activity" })

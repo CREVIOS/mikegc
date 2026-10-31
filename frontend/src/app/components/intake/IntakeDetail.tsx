@@ -478,7 +478,8 @@ export function Detail({
           }
         }}
         onDrop={(event) => {
-          if (!request) return;
+          // Text dragged into a field drops as usual; only files are taken.
+          if (!request || !event.dataTransfer.types.includes("Files")) return;
           event.preventDefault();
           dragDepth.current = 0;
           setDragging(false);
