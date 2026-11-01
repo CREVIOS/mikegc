@@ -8,14 +8,23 @@ import { DocumentPill } from "@/app/components/shared/DocumentPill";
 import { SUPPORTED_DOCUMENT_ACCEPT } from "@/app/lib/documentUploadValidation";
 import { INTAKE_TEXTAREA_CLASS } from "./IntakeDetailsPanel";
 import { IntakeDocumentSpinner, type IntakeUpload } from "./IntakeDocuments";
+import type { IntakePickedDocument } from "./IntakeDocumentPicker";
 
 const TEXT_BUTTON_CLASS =
   "rounded-md px-2 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40";
 
+/** The note form's title, and the button that opens the form under the same name. */
+export const NOTE_TITLE_CLASS = "text-sm font-medium text-gray-700";
+/** The icon before the title: Close when the form is open, a plus when it is not. */
+export const NOTE_TITLE_ICON_CLASS =
+  "rounded-full p-0.5 text-gray-400 transition-colors hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:opacity-60";
+
 /**
  * Writes a note, with documents to add alongside it: chosen here or dropped
  * on the box. The page uploads them once the note is saved, so they are
- * tagged on the note and listed with the request's documents.
+ * tagged on the note and listed with the request's documents. Resolve
+ * request, beside Submit, resolves the request when it can be resolved, with
+ * any comment as the resolution.
  */
 export function IntakeNoteForm({
   boxRef,
@@ -24,11 +33,13 @@ export function IntakeNoteForm({
   warning,
   dropping,
   locked,
-  autoFocus,
   onNoteChange,
   onAddFiles,
   onRemoveFile,
-  onCancel,
+  picked = [],
+  onBrowse,
+  onRemovePicked,
+  onResolve,
   onSubmit,
 }: {
   /** The box the page treats as the note's drop target. */
@@ -39,11 +50,16 @@ export function IntakeNoteForm({
   /** Files are being dragged over the box. */
   dropping: boolean;
   locked: boolean;
-  autoFocus: boolean;
   onNoteChange: (note: string) => void;
   onAddFiles: (files: File[]) => void;
   onRemoveFile: (index: number) => void;
-  onCancel: () => void;
+  /** Library documents chosen to add with the note, copied once it is saved. */
+  picked?: IntakePickedDocument[];
+  /** Opens the Add documents modal; without it the button browses files. */
+  onBrowse?: () => void;
+  onRemovePicked?: (id: string) => void;
+  /** Open the resolve dialog; absent when the request cannot be resolved. */
+  onResolve?: () => void;
   onSubmit: () => void;
 }) {
   const input = useRef<HTMLInputElement>(null);
@@ -51,9 +67,9 @@ export function IntakeNoteForm({
     <div className="border-t border-gray-100 p-5">
       <label
         htmlFor="intake-note"
-        className="mb-2 block text-sm font-medium text-gray-700"
+        className={cn("mb-2 block", NOTE_TITLE_CLASS)}
       >
-        Add a note
+        Add comment
       </label>
       {/* The documents and actions sit inside the box, under the text. */}
       <div
@@ -73,11 +89,10 @@ export function IntakeNoteForm({
           maxLength={20000}
           placeholder="What happened, what the requester said, what was sent"
           value={note}
-          autoFocus={autoFocus}
           disabled={locked}
           onChange={(e) => onNoteChange(e.target.value)}
         />
-        {files.length > 0 && (
+        {files.length + picked.length > 0 && (
           <ul
             aria-label="Documents to add with the note"
             className="flex flex-wrap gap-1.5 px-3 pb-2"
@@ -87,6 +102,15 @@ export function IntakeNoteForm({
                 <DocumentPill
                   filename={file.name}
                   onRemove={() => onRemoveFile(index)}
+                  removeDisabled={locked}
+                />
+              </li>
+            ))}
+            {picked.map((document) => (
+              <li key={document.id} className="min-w-0">
+                <DocumentPill
+                  filename={document.filename}
+                  onRemove={() => onRemovePicked?.(document.id)}
                   removeDisabled={locked}
                 />
               </li>
@@ -115,7 +139,7 @@ export function IntakeNoteForm({
           <button
             type="button"
             disabled={locked}
-            onClick={() => input.current?.click()}
+            onClick={() => (onBrowse ? onBrowse() : input.current?.click())}
             className={cn(
               TEXT_BUTTON_CLASS,
               "inline-flex items-center gap-1.5 text-gray-500 hover:text-gray-900 disabled:opacity-60",
@@ -125,17 +149,20 @@ export function IntakeNoteForm({
             Add documents
           </button>
           <div className="flex items-center gap-1">
-            <button
-              type="button"
-              disabled={locked}
-              onClick={onCancel}
-              className={cn(
-                TEXT_BUTTON_CLASS,
-                "text-gray-500 hover:text-gray-900 disabled:opacity-60",
-              )}
-            >
-              Cancel
-            </button>
+            {/* Resolving saves any comment as the resolution; none is needed. */}
+            {onResolve && (
+              <button
+                type="button"
+                disabled={locked}
+                onClick={onResolve}
+                className={cn(
+                  TEXT_BUTTON_CLASS,
+                  "text-gray-500 hover:text-gray-900 disabled:opacity-60",
+                )}
+              >
+                Resolve request
+              </button>
+            )}
             <button
               type="button"
               disabled={!note.trim() || locked}

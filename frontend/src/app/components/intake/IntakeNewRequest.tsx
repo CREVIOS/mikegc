@@ -7,6 +7,7 @@ import type {
 } from "@mike/contracts";
 import { useWorkspace } from "@/app/contexts/WorkspaceContext";
 import {
+  copyIntakeDocuments,
   getIntakeMembers,
   submitIntakeRequest,
   uploadIntakeDocuments,
@@ -39,33 +40,35 @@ import {
   isIntakeOverdue,
   isKnownTimezone,
 } from "./intakeLabels";
+import { INTAKE_REQUESTS_PATH } from "./intakeQuery";
+import {
+  IntakeDocumentPicker,
+  type IntakePickedDocument,
+} from "./IntakeDocumentPicker";
 
 const EMAIL = /^[^@\s]+@[^@\s]+$/;
 
-/** The new-request page for the current organization workspace. */
+/** The new-request page for the current workspace: an organization or Personal. */
 export function IntakeNewRequestPage() {
-  const { accountId, activeOrganization } = useWorkspace();
+  const { accountId, workspaceId } = useWorkspace();
   const router = useRouter();
-  if (!accountId || !activeOrganization)
+  if (!accountId || !workspaceId)
     return (
-      <EmptyState
-        title="Intake"
-        description="Switch to an organization workspace to record requests."
-      />
+      <EmptyState title="Intake" description="Sign in to create requests." />
     );
-  const orgId = activeOrganization.id;
+  const orgId = workspaceId;
   return (
     <IntakeNewRequest
       key={`${accountId}:${orgId}`}
       orgId={orgId}
-      onClose={() => router.push("/intake")}
+      onClose={() => router.push(INTAKE_REQUESTS_PATH)}
       onSaved={(id) => router.replace(`/intake/${id}?org=${orgId}`)}
     />
   );
 }
 
 /**
- * Records a request for a named business requester, laid out like the
+ * Creates a request for a named business requester, laid out like the
  * request page: the subject as the title, the request beside its details. The draft lives in intake
  * memory, so it survives navigation, and an uncertain save is replayed with
  * the same IDs until its outcome is known. Details are edited afterwards on
@@ -123,6 +126,13 @@ export function IntakeNewRequest({
     };
   }, [orgId]);
   const [files, setFiles] = useIntakeDraft<File[]>(memory, "files", []);
+  // Library documents chosen in Add documents, copied once the request exists.
+  const [picked, setPicked] = useIntakeDraft<IntakePickedDocument[]>(
+    memory,
+    "picked",
+    [],
+  );
+  const [picking, setPicking] = useState(false);
   const [dirty, setDirty] = useIntakeDraft(memory, "dirty", false);
   const [uploading, setUploading] = useState(false);
   const mounted = useRef(true);
@@ -136,6 +146,25 @@ export function IntakeNewRequest({
    * Contract review documents upload once the request exists. A failure then
    * must not read as a failed request: the request is saved either way.
    */
+  /**
+   * Library documents are copied once the request exists. As with uploads, a
+   * failure must not read as a failed request: the request is saved anyway.
+   */
+  async function copyDocuments(
+    requestId: string,
+    chosen: IntakePickedDocument[],
+  ) {
+    await copyIntakeDocuments(
+      orgId,
+      requestId,
+      chosen.map((document) => document.id),
+    ).catch(() =>
+      notifyPartialFailure(
+        "The request was saved, but its library documents couldn't be added. Add them from the request.",
+        { action: "add the documents" },
+      ),
+    );
+  }
   async function uploadDocuments(requestId: string, pending: File[]) {
     setUploading(true);
     const failed = await uploadIntakeDocuments(
@@ -161,12 +190,16 @@ export function IntakeNewRequest({
       const requestId = receipt.request_id;
       if (!requestId) return;
       const pending = files;
-      if (!pending.length) {
+      const copies = picked;
+      if (!pending.length && !copies.length) {
         discardIntakeDraft(memory);
         onSaved(requestId);
         return;
       }
-      void uploadDocuments(requestId, pending).then(() => {
+      void Promise.all([
+        pending.length ? uploadDocuments(requestId, pending) : null,
+        copies.length ? copyDocuments(requestId, copies) : null,
+      ]).then(() => {
         // Someone who left mid-upload is not pulled back to the request.
         // Read before discarding: the draft also holds the open dialog.
         const stillOpen = mounted.current;
@@ -220,7 +253,7 @@ export function IntakeNewRequest({
       description,
       requester_name: requesterName.trim(),
       requester_email: requesterEmail.trim() || null,
-      // The team field is hidden for now; requests are recorded without one.
+      // The team field is hidden for now; requests are created without one.
       requester_team: null,
       requested_by_date: date || null,
       timezone: date ? timezone.trim() : null,
@@ -236,7 +269,7 @@ export function IntakeNewRequest({
       if (receipt.request_id !== body.id)
         throw new Error("Mismatched intake receipt");
       return receipt;
-    }, "record the request");
+    }, "create the request");
   }
 
   const savingLabel = uploading ? "Uploading documents…" : "Creating…";
@@ -421,6 +454,23 @@ export function IntakeNewRequest({
                   onAdd={(added) => change(setFiles)([...files, ...added])}
                   onRemove={(index) =>
                     change(setFiles)(files.filter((_, i) => i !== index))
+                  }
+                  picked={picked}
+                  onBrowse={() => setPicking(true)}
+                  onRemovePicked={(id) =>
+                    change(setPicked)(picked.filter((d) => d.id !== id))
+                  }
+                />
+                <IntakeDocumentPicker
+                  open={picking}
+                  onClose={() => setPicking(false)}
+                  onPick={(chosen) =>
+                    change(setPicked)([
+                      ...picked,
+                      ...chosen.filter(
+                        (c) => !picked.some((p) => p.id === c.id),
+                      ),
+                    ])
                   }
                 />
               </section>

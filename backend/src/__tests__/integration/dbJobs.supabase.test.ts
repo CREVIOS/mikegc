@@ -14,6 +14,12 @@ const maybeDescribe = url && serviceKey ? describe : describe.skip;
 /** Stale threshold used by the calls below (seconds). */
 const STALE = 600;
 const STALE_AGO = new Date(Date.now() - (STALE + 60) * 1000).toISOString();
+/**
+ * Claims take the oldest run_at first, and other stack suites leave due jobs
+ * behind (such as storage cleanup after deleting documents) with no worker to
+ * drain them. Dating these jobs first keeps a batch from filling up with them.
+ */
+const FIRST_IN_LINE = "2000-01-01T00:00:00Z";
 
 maybeDescribe("db_jobs claim SQL", () => {
     let db: SupabaseClient;
@@ -22,7 +28,12 @@ maybeDescribe("db_jobs claim SQL", () => {
     const insertJob = async (row: Record<string, unknown>) => {
         const { data, error } = await db
             .from("db_jobs")
-            .insert({ kind: "stack.test", payload: {}, ...row })
+            .insert({
+                kind: "stack.test",
+                payload: {},
+                run_at: FIRST_IN_LINE,
+                ...row,
+            })
             .select("*")
             .single();
         if (error) throw new Error(error.message);

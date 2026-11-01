@@ -2,6 +2,7 @@ import type {
   IntakeDetails,
   IntakeEvent,
   IntakeMember,
+  IntakeRequester,
   IntakeMessage,
   IntakeReceipt,
   IntakeRequest,
@@ -34,6 +35,15 @@ const detailArgs = (d: IntakeDetails) => ({
 
 export function listIntakeMembers(db: Db, scope: IntakeScope) {
   return intakeRpc<IntakeMember[]>(db, "intake_members", scoped(scope));
+}
+
+/** Each requester the queue can be filtered by, once. */
+export function listIntakeRequesters(db: Db, scope: IntakeScope) {
+  return intakeRpc<IntakeRequester[]>(
+    db,
+    "intake_list_requesters",
+    scoped(scope),
+  );
 }
 
 type Cursor = { key: string | null; id: string };
@@ -72,6 +82,8 @@ export async function listIntakeRequests(
     assignee?: string;
     search: string;
     sort: "updated" | "updated_asc" | "target";
+    scope?: "open" | "unassigned" | "overdue" | "recorded_30d" | "resolved_30d";
+    requester?: string;
     cursor?: string;
     limit: number;
   },
@@ -91,6 +103,8 @@ export async function listIntakeRequests(
     p_after_key: after?.key ?? null,
     p_after_id: after?.id ?? null,
     p_limit: filters.limit,
+    p_scope: filters.scope ?? null,
+    p_requester: filters.requester ?? null,
   });
   if (!result.ok) return result;
   return ok({
@@ -188,7 +202,10 @@ export function commandIntakeRequest(
   };
   if (action !== "notes") args.p_version = input.expected_version;
   if (action === "assignment") args.p_assignee = input.assignee_id ?? null;
-  if (["notes", "resolve", "cancel"].includes(action)) args.p_body = input.body;
+  // Resolving needs no text, but its function still takes p_body: an absent
+  // value would be dropped from the call and match no signature.
+  if (["notes", "resolve", "cancel"].includes(action))
+    args.p_body = input.body ?? null;
   if ((action === "wait" || action === "resume") && input.body !== undefined)
     args.p_body = input.body;
   return intakeRpc<IntakeReceipt>(db, COMMAND_RPC[action], args);

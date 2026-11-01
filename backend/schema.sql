@@ -10948,11 +10948,13 @@ alter table public.intake_messages add constraint intake_messages_kind_check
   check (kind in ('note', 'resolution', 'cancel_reason', 'question', 'reply', 'answer'));
 
 -- Membership reads never inherit content access from an administrative role.
+-- Team organizations hold their members' requests; each account's personal
+-- organization, whose only member is its owner, holds that person's own.
 create or replace function public.intake_member_role(p_org uuid,p_actor uuid)
 returns text language sql stable set search_path=public,pg_temp as $$
   select m.role from public.org_members m join public.organizations o on o.id=m.org_id
   join public.user_profiles u on u.user_id=m.user_id
-  where m.org_id=p_org and m.user_id=p_actor and o.kind='team' and o.deleted_at is null
+  where m.org_id=p_org and m.user_id=p_actor and o.kind in ('team','personal') and o.deleted_at is null
     and u.account_deletion_requested_at is null
 $$;
 create or replace function public.intake_lock_org(p_org uuid,p_actor uuid)
@@ -10960,7 +10962,7 @@ returns void language plpgsql set search_path=public,pg_temp as $$
 begin
   -- Same first lock as remove_org_member and organization deletion. Avoid
   -- membership row locks: existing deletion triggers already lock the org.
-  perform 1 from public.organizations where id=p_org and kind='team' and deleted_at is null for update;
+  perform 1 from public.organizations where id=p_org and kind in ('team','personal') and deleted_at is null for update;
   if not found or public.intake_member_role(p_org,p_actor) is null then
     raise exception 'Intake not found' using errcode='P0002';
   end if;
@@ -11060,7 +11062,8 @@ begin
   if public.intake_member_role(p_org, p_actor) is null then
     raise exception 'Intake not found' using errcode = 'P0002';
   end if;
-  return (select coalesce(jsonb_agg(jsonb_build_object('user_id', m.user_id, 'display_name', u.display_name, 'email', u.email)
+  return (select coalesce(jsonb_agg(jsonb_build_object('user_id', m.user_id, 'display_name', u.display_name, 'email', u.email,
+      'profile_photo', u.profile_photo)
       order by lower(coalesce(u.display_name, u.email, '')), m.user_id), '[]')
     from public.org_members m join public.user_profiles u on u.user_id = m.user_id
     where m.org_id = p_org and u.account_deletion_requested_at is null);
@@ -11123,7 +11126,8 @@ begin
   if p_action is null or p_action not in ('assign', 'note', 'wait', 'resume', 'resolve', 'cancel', 'reopen')
     or (p_action <> 'assign' and p_assignee is not null)
     or (p_action in ('assign', 'reopen') and p_body is not null)
-    or (p_action in ('note', 'resolve', 'cancel') and p_body is null)
+    -- A resolution's text is optional; a cancellation still needs its reason.
+    or (p_action in ('note', 'cancel') and p_body is null)
   then
     raise exception 'Invalid command' using errcode = '22023';
   end if;
@@ -11290,6 +11294,7 @@ returns jsonb language sql stable set search_path = public, pg_temp as $$
     'requested_by_date', r.requested_by_date, 'timezone', r.timezone, 'state', r.state, 'version', r.version,
     'assignee_id', r.assignee_id,
     'assignee_name', case when r.assignee_id is null then null else coalesce(a.display_name, a.email, 'Former member') end,
+    'created_by', r.created_by,
     'created_by_name', coalesce(c.display_name, c.email, 'Former member'),
     'created_at', r.created_at, 'updated_at', r.updated_at,
     'capabilities', jsonb_build_object(
@@ -11326,6 +11331,94 @@ returns jsonb language sql stable set search_path = public, pg_temp as $$
       'delete', true))
 $$;
 
+-- The intake dashboard: where the open requests stand, how many came in and
+-- were resolved each week, how long resolving takes, and who holds what.
+-- Weeks start on Monday in the viewer's timezone; a request is overdue once
+-- its target day has passed in its own timezone, as the queue shows it.
+create or replace function public.intake_dashboard(p_org uuid, p_actor uuid, p_timezone text default 'UTC',
+  p_weeks integer default 8, p_created_days integer default 30,
+  p_resolved_days integer default 30, p_median_days integer default 30)
+returns jsonb language plpgsql set search_path = public, pg_temp as $$
+declare first_week date; result jsonb;
+begin
+  perform 1 from public.organizations where id = p_org for share;
+  if public.intake_member_role(p_org, p_actor) is null then
+    raise exception 'Intake not found' using errcode = 'P0002';
+  end if;
+  if p_timezone is null or char_length(p_timezone) > 64 or not public.intake_valid_timezone(p_timezone)
+    or p_weeks is null or p_weeks not between 1 and 26
+    or p_created_days is null or p_created_days not in (7, 30, 90, 365)
+    or p_resolved_days is null or p_resolved_days not in (7, 30, 90, 365)
+    or p_median_days is null or p_median_days not in (30, 90, 365) then
+    raise exception 'Invalid dashboard filter' using errcode = '22023';
+  end if;
+  first_week := date_trunc('week', now() at time zone p_timezone)::date - (p_weeks - 1) * 7;
+  with open_requests as (
+    select r.state, r.assignee_id,
+      r.requested_by_date is not null
+        and (now() at time zone coalesce(r.timezone, 'UTC'))::date > r.requested_by_date as overdue
+    from public.intake_requests r
+    where r.org_id = p_org and r.state not in ('resolved', 'cancelled')
+  ), resolved as (
+    -- Each time a request was resolved; reopening and resolving it again counts again.
+    select e.request_id, e.created_at
+    from public.intake_events e
+    where e.org_id = p_org and e.request_id is not null and e.to_state = 'resolved'
+  ), created_weeks as (
+    select date_trunc('week', r.created_at at time zone p_timezone)::date as week, count(*) as n
+    from public.intake_requests r
+    where r.org_id = p_org and r.created_at >= first_week::timestamp at time zone p_timezone
+    group by 1
+  ), resolved_weeks as (
+    select date_trunc('week', x.created_at at time zone p_timezone)::date as week, count(distinct x.request_id) as n
+    from resolved x
+    where x.created_at >= first_week::timestamp at time zone p_timezone
+    group by 1
+  ), workload as (
+    select o.assignee_id,
+      coalesce(u.display_name, u.email, 'Former member') as name,
+      u.profile_photo as photo,
+      count(*) as open_count,
+      count(*) filter (where o.state = 'needs_information') as waiting_count,
+      count(*) filter (where o.overdue) as overdue_count
+    from open_requests o
+    left join public.user_profiles u on u.user_id = o.assignee_id
+    where o.assignee_id is not null
+    group by o.assignee_id, u.display_name, u.email, u.profile_photo
+  )
+  select jsonb_build_object(
+    'open', (select count(*) from open_requests),
+    'new', (select count(*) from open_requests where state = 'submitted'),
+    'in_progress', (select count(*) from open_requests where state = 'in_review'),
+    'waiting', (select count(*) from open_requests where state = 'needs_information'),
+    'unassigned', (select count(*) from open_requests where assignee_id is null),
+    'overdue', (select count(*) from open_requests where overdue),
+    'created_days', p_created_days, 'resolved_days', p_resolved_days,
+    'median_days', p_median_days, 'weeks_shown', p_weeks,
+    'created', (select count(*) from public.intake_requests r
+      where r.org_id = p_org and r.created_at >= now() - make_interval(days => p_created_days)),
+    'resolved', (select count(distinct x.request_id) from resolved x
+      where x.created_at >= now() - make_interval(days => p_resolved_days)),
+    -- From recording to the latest resolution, for requests that are resolved
+    -- now and were resolved in the last p_median_days days.
+    'median_hours_to_resolve', (select round((percentile_cont(0.5) within group (
+        order by extract(epoch from (l.resolved_at - r.created_at)) / 3600))::numeric, 1)
+      from (select request_id, max(created_at) as resolved_at from resolved group by request_id) l
+      join public.intake_requests r on r.id = l.request_id and r.org_id = p_org
+      where r.state = 'resolved' and l.resolved_at >= now() - make_interval(days => p_median_days)),
+    'weeks', (select jsonb_agg(jsonb_build_object('week_start', w.week::date,
+        'created', coalesce(c.n, 0), 'resolved', coalesce(x.n, 0)) order by w.week)
+      from generate_series(first_week, first_week + (p_weeks - 1) * 7, interval '1 week') w(week)
+      left join created_weeks c on c.week = w.week::date
+      left join resolved_weeks x on x.week = w.week::date),
+    'workload', (select coalesce(jsonb_agg(jsonb_build_object('assignee_id', assignee_id, 'name', name, 'photo', photo,
+        'open', open_count, 'waiting', waiting_count, 'overdue', overdue_count)
+        order by open_count desc, lower(name), assignee_id), '[]')
+      from workload))
+  into result;
+  return result;
+end $$;
+
 create or replace function public.intake_list_matches(r public.intake_requests, p_state text,
   p_unassigned boolean, p_assignee uuid, p_search text)
 returns boolean language sql stable set search_path = public, pg_temp as $$
@@ -11340,11 +11433,30 @@ returns boolean language sql stable set search_path = public, pg_temp as $$
       or strpos(lower(coalesce(r.requester_team, '')), lower(p_search)) > 0)
 $$;
 
+-- What a dashboard figure counted, so each figure opens exactly its requests:
+-- open, open and unassigned, overdue (its target day passed in its own
+-- timezone), recorded in the last 30 days, or resolved in the last 30 days.
+create or replace function public.intake_list_in_scope(r public.intake_requests, p_scope text)
+returns boolean language sql stable set search_path = public, pg_temp as $$
+  select p_scope is null
+    or (p_scope in ('open', 'unassigned', 'overdue') and r.state not in ('resolved', 'cancelled')
+      and (p_scope = 'open'
+        or (p_scope = 'unassigned' and r.assignee_id is null)
+        or (p_scope = 'overdue' and r.requested_by_date is not null
+          and (now() at time zone coalesce(r.timezone, 'UTC'))::date > r.requested_by_date)))
+    or (p_scope = 'recorded_30d' and r.created_at >= now() - interval '30 days')
+    or (p_scope = 'resolved_30d' and exists(select 1 from public.intake_events e
+      where e.org_id = r.org_id and e.request_id = r.id and e.to_state = 'resolved'
+        and e.created_at >= now() - interval '30 days'))
+$$;
+
 -- Keyset pages: a request created or updated between pages is never repeated.
 -- p_assignee is null (everyone), 'unassigned', 'me' or a member's user ID.
+-- p_requester is null (everyone) or one requester's name, matched without case.
 create or replace function public.intake_list_requests(p_org uuid, p_actor uuid, p_state text default null,
   p_assignee text default null, p_search text default '', p_sort text default 'updated',
-  p_after_key text default null, p_after_id uuid default null, p_limit integer default 50)
+  p_after_key text default null, p_after_id uuid default null, p_scope text default null,
+  p_requester text default null, p_limit integer default 50)
 returns jsonb language plpgsql set search_path = public, pg_temp as $$
 declare unassigned boolean; assignee uuid; after_at timestamptz; after_date date;
   page jsonb; more boolean; last jsonb;
@@ -11357,6 +11469,8 @@ begin
     or p_limit is null or p_limit not between 1 and 100
     or p_search is null or char_length(p_search) > 200
     or (p_state is not null and p_state not in ('submitted', 'in_review', 'needs_information', 'resolved', 'cancelled'))
+    or (p_requester is not null and char_length(p_requester) not between 1 and 200)
+    or (p_scope is not null and p_scope not in ('open', 'unassigned', 'overdue', 'recorded_30d', 'resolved_30d'))
     or (p_after_id is null and p_after_key is not null)
     or (p_sort in ('updated', 'updated_asc') and p_after_id is not null and p_after_key is null)
   then
@@ -11373,6 +11487,8 @@ begin
           row_number() over (order by r.updated_at desc, r.id desc) as n
         from public.intake_requests r
         where r.org_id = p_org and public.intake_list_matches(r, p_state, unassigned, assignee, p_search)
+          and public.intake_list_in_scope(r, p_scope)
+          and (p_requester is null or lower(r.requester_name) = lower(p_requester))
           and (p_after_id is null or (r.updated_at, r.id) < (after_at, p_after_id))
         order by r.updated_at desc, r.id desc limit p_limit + 1) x;
   elsif p_sort = 'updated_asc' then
@@ -11383,6 +11499,8 @@ begin
           row_number() over (order by r.updated_at asc, r.id asc) as n
         from public.intake_requests r
         where r.org_id = p_org and public.intake_list_matches(r, p_state, unassigned, assignee, p_search)
+          and public.intake_list_in_scope(r, p_scope)
+          and (p_requester is null or lower(r.requester_name) = lower(p_requester))
           and (p_after_id is null or (r.updated_at, r.id) > (after_at, p_after_id))
         order by r.updated_at asc, r.id asc limit p_limit + 1) x;
   else
@@ -11393,6 +11511,8 @@ begin
           row_number() over (order by r.requested_by_date asc nulls last, r.id asc) as n
         from public.intake_requests r
         where r.org_id = p_org and public.intake_list_matches(r, p_state, unassigned, assignee, p_search)
+          and public.intake_list_in_scope(r, p_scope)
+          and (p_requester is null or lower(r.requester_name) = lower(p_requester))
           and (p_after_id is null
             or (after_date is null and r.requested_by_date is null and r.id > p_after_id)
             or (after_date is not null and (r.requested_by_date is null or r.requested_by_date > after_date
@@ -11403,6 +11523,22 @@ begin
   return jsonb_build_object('requests', page, 'next', case when more then jsonb_build_object(
     'key', last ->> (case when p_sort = 'target' then 'requested_by_date' else 'updated_at' end),
     'id', last ->> 'id') end);
+end $$;
+
+-- The requesters the queue can be filtered by: each name once, ignoring case,
+-- with the email it was most recently recorded with.
+create or replace function public.intake_list_requesters(p_org uuid, p_actor uuid)
+returns jsonb language plpgsql set search_path = public, pg_temp as $$
+begin
+  perform 1 from public.organizations where id = p_org for share;
+  if public.intake_member_role(p_org, p_actor) is null then
+    raise exception 'Intake not found' using errcode = 'P0002';
+  end if;
+  return (select coalesce(jsonb_agg(jsonb_build_object('name', x.requester_name, 'email', x.requester_email)
+      order by lower(x.requester_name), x.requester_name), '[]')
+    from (select distinct on (lower(r.requester_name)) r.requester_name, r.requester_email
+      from public.intake_requests r where r.org_id = p_org
+      order by lower(r.requester_name), r.updated_at desc, r.id) x);
 end $$;
 
 -- System changes have no actor; erased people read as former members.
@@ -11420,6 +11556,8 @@ begin
   if p_events then
     return (select coalesce(jsonb_agg(to_jsonb(x) order by x.id), '[]') from (
       select e.id, e.kind, e.from_state, e.to_state, e.created_at,
+        -- IDs let the page show each person's photo from its member list.
+        case when e.kind in ('assignee_left', 'reviewer_removed') then null else e.actor_id end as actor_id,
         case when e.kind in ('assignee_left', 'reviewer_removed') then null
           else coalesce(u.display_name, u.email, 'Former member') end as actor_name,
         case when e.assignee_id is null then null else coalesce(a.display_name, a.email, 'Former member') end as assignee_name
@@ -11430,7 +11568,8 @@ begin
       order by e.id offset p_offset limit p_limit) x);
   end if;
   return (select coalesce(jsonb_agg(to_jsonb(x) order by x.created_at, x.id), '[]') from (
-    select m.id, m.kind, m.body, m.created_at, coalesce(u.display_name, u.email, 'Former member') as author_name
+    select m.id, m.kind, m.body, m.created_at, m.author_id,
+      coalesce(u.display_name, u.email, 'Former member') as author_name
     from public.intake_messages m left join public.user_profiles u on u.user_id = m.author_id
     where m.org_id = p_org and m.request_id = p_request
     order by m.created_at, m.id offset p_offset limit p_limit) x);
@@ -11555,8 +11694,9 @@ create trigger intake_attachment_detached after delete on public.intake_request_
 
 -- The upload worker links each new document as soon as its row exists, so an
 -- interrupted browser never leaves a file that belongs to no request. A
--- document added with a note links to that note, which must be the uploader's
--- own note on the same request. The note records it, so it gets no event.
+-- document added with a note or a resolution links to that message, which must
+-- be the uploader's own on the same request. The message records it, so it
+-- gets no event.
 create or replace function public.intake_attach_document(p_org uuid, p_actor uuid, p_request uuid, p_document uuid,
   p_message uuid default null)
 returns void language plpgsql set search_path = public, pg_temp as $$
@@ -11571,7 +11711,8 @@ begin
     raise exception 'Document not found' using errcode = 'P0002';
   end if;
   if p_message is not null and not exists(select 1 from public.intake_messages where id = p_message
-      and org_id = p_org and request_id = p_request and author_id = p_actor and kind = 'note') then
+      and org_id = p_org and request_id = p_request and author_id = p_actor
+      and kind in ('note', 'resolution')) then
     raise exception 'Note not found' using errcode = 'P0002';
   end if;
   if exists(select 1 from public.intake_request_documents where document_id = p_document and request_id <> p_request) then
@@ -11813,5 +11954,13 @@ insert into public.schema_migrations (filename) values
   ('20261030_04_intake_delete_request.sql'),
   ('20261030_05_intake_sort_updated_asc.sql'),
   ('20261031_01_intake_remove_category.sql'),
-  ('20261101_01_intake_note_documents.sql')
+  ('20261101_01_intake_note_documents.sql'),
+  ('20261101_02_intake_personal_workspace.sql'),
+  ('20261101_03_intake_dashboard.sql'),
+  ('20261101_04_intake_list_scopes.sql'),
+  ('20261101_05_intake_requester_filter.sql'),
+  ('20261101_06_intake_member_photos.sql'),
+  ('20261101_07_intake_resolution_documents.sql'),
+  ('20261101_08_intake_dashboard_periods.sql'),
+  ('20261102_01_intake_resolve_optional_text.sql')
 on conflict (filename) do nothing;

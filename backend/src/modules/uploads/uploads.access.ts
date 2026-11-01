@@ -18,7 +18,11 @@ import {
   resolveStandaloneOrgId,
 } from "../../lib/access";
 import type { Db } from "../../lib/supabase";
-import { canAttachIntakeDocuments } from "../intake/intake.service";
+import { reportableServiceError } from "../../lib/serviceResult";
+import {
+  canAttachIntakeDocuments,
+  resolveIntakeOrg,
+} from "../intake/intake.service";
 import type { ParsedUploadSessionRequest } from "./uploads.manifest";
 import {
   failure,
@@ -56,9 +60,15 @@ export async function validateDestinationAccess(
     if (destination.scope === "standalone") return { ok: true };
     if (destination.scope === "intake") {
       // Any current member of the request's organization may add documents.
+      const org = await resolveIntakeOrg(
+        db,
+        userId,
+        destination.org_id as string,
+      );
+      if (!org.ok) return internalFailure(reportableServiceError(org));
       const allowed = await canAttachIntakeDocuments(
         db,
-        { orgId: destination.org_id as string, actorId: userId },
+        { orgId: org.data, actorId: userId },
         destination.request_id as string,
       );
       if (!allowed.ok && allowed.kind === "error")

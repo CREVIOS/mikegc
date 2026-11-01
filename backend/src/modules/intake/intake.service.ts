@@ -1,5 +1,6 @@
 export {
   listIntakeMembers,
+  listIntakeRequesters,
   listIntakeRequests,
   submitIntakeRequest,
   getIntakeRequest,
@@ -14,4 +15,11 @@ export {
   attachIntakeDocument,
   listIntakeDocuments,
 } from "./intake.documents";
+export { copyIntakeDocuments } from "./intake.copy";
+export { getIntakeDashboard } from "./intake.dashboard";
+export {
+  PERSONAL_INTAKE,
+  personalIntakeOrgId,
+  resolveIntakeOrg,
+} from "./intake.workspace";
 export { validateIntakeExport, purgeIntake } from "./intake.lifecycle";

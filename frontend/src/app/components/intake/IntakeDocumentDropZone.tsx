@@ -7,6 +7,7 @@ import {
   formatUnsupportedDocumentWarning,
   partitionSupportedDocumentFiles,
 } from "@/app/lib/documentUploadValidation";
+import type { IntakePickedDocument } from "./IntakeDocumentPicker";
 
 /** What an empty upload field asks for: the action, then the accepted files. */
 export function IntakeUploadPrompt() {
@@ -32,8 +33,16 @@ export function IntakeDocumentDropZone({
   onRemove,
   disabled = false,
   labelledBy,
+  picked = [],
+  onBrowse,
+  onRemovePicked,
 }: {
   files: File[];
+  /** Library documents chosen to add, copied once the request exists. */
+  picked?: IntakePickedDocument[];
+  /** Clicking the area opens this, such as the Add documents modal. */
+  onBrowse?: () => void;
+  onRemovePicked?: (id: string) => void;
   onAdd: (files: File[]) => void;
   onRemove: (index: number) => void;
   disabled?: boolean;
@@ -93,11 +102,11 @@ export function IntakeDocumentDropZone({
           event.target.value = "";
         }}
       />
-      {files.length ? (
+      {files.length + picked.length ? (
         <>
           <button
             type="button"
-            onClick={() => input.current?.click()}
+            onClick={() => (onBrowse ? onBrowse() : input.current?.click())}
             disabled={disabled}
             className="mb-3 block rounded-md text-left text-xs text-gray-500 transition-colors hover:text-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:cursor-not-allowed"
           >
@@ -115,12 +124,21 @@ export function IntakeDocumentDropZone({
                 />
               </li>
             ))}
+            {picked.map((document) => (
+              <li key={document.id} className="min-w-0">
+                <DocumentPill
+                  filename={document.filename}
+                  onRemove={() => onRemovePicked?.(document.id)}
+                  removeDisabled={disabled}
+                />
+              </li>
+            ))}
           </ul>
         </>
       ) : (
         <button
           type="button"
-          onClick={() => input.current?.click()}
+          onClick={() => (onBrowse ? onBrowse() : input.current?.click())}
           disabled={disabled}
           className="w-full rounded-lg py-4 text-center text-sm text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:cursor-not-allowed"
         >

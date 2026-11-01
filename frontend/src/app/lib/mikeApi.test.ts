@@ -1,4 +1,4 @@
-import {getIntakeMembers,getIntakeDocuments,listIntakeRequests,submitIntakeRequest,getIntakeRequest,editIntakeRequest,getIntakeMessages,getIntakeEvents,commandIntakeRequest} from "./mikeApi";
+import {getIntakeMembers,getIntakeRequesters,getIntakeDashboard,getIntakeDocuments,copyIntakeDocuments,listIntakeRequests,submitIntakeRequest,getIntakeRequest,editIntakeRequest,getIntakeMessages,getIntakeEvents,commandIntakeRequest} from "./mikeApi";
 import { listOrgPrivateContent, setOrgPrivateContentPermission, openOrgPrivateContent, closeOrgPrivateContent } from "./mikeApi";
 import { setUserProfilePhoto, listDeletedOrganizations, restoreOrganization } from "./mikeApi";
 import { listOrgDepartures, reassignOrgDepartureArchives, deleteOrgDepartureArchives } from "./mikeApi";
@@ -3693,6 +3693,11 @@ describe("intake API boundary", () => {
             [()=>getIntakeMessages(scope,id,100),"requests/request%2Fid/messages?offset=100&limit=100","GET"],
             [()=>getIntakeEvents(scope,id),"requests/request%2Fid/events?offset=0&limit=100","GET"],
             [()=>getIntakeDocuments(scope,id),"requests/request%2Fid/documents","GET"],
+            [()=>copyIntakeDocuments(scope,id,["doc-a","doc-b"]),"requests/request%2Fid/documents/copy","POST",{document_ids:["doc-a","doc-b"],message_id:null}],
+            [()=>copyIntakeDocuments(scope,id,["doc-a"],"note-a"),"requests/request%2Fid/documents/copy","POST",{document_ids:["doc-a"],message_id:"note-a"}],
+            [()=>getIntakeRequesters(scope),"requesters","GET"],
+            [()=>getIntakeDashboard(scope,"Europe/Stockholm"),"dashboard?timezone=Europe%2FStockholm&weeks=8&created_days=30&resolved_days=30&median_days=30","GET"],
+            [()=>getIntakeDashboard(scope,"UTC",{weeks:26,created_days:7,resolved_days:90,median_days:365}),"dashboard?timezone=UTC&weeks=26&created_days=7&resolved_days=90&median_days=365","GET"],
             [()=>getIntakeEvents(scope,id,100),"requests/request%2Fid/events?offset=100&limit=100","GET"],
             [()=>commandIntakeRequest(scope,id,"resolve",command),"requests/request%2Fid/resolve","POST",command],
             [()=>commandIntakeRequest(scope,id,"notes",note),"requests/request%2Fid/notes","POST",note],

@@ -1,5 +1,5 @@
 "use client";
-import { useId, useMemo, useState, type ReactNode } from "react";
+import { useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { CalendarDays, ChevronDown, Pencil } from "lucide-react";
 import type {
   IntakeDetails,
@@ -41,6 +41,7 @@ import {
   isIntakeOverdue,
   isKnownTimezone,
 } from "./intakeLabels";
+import { IntakeUnassigned } from "./IntakeUnassigned";
 
 /**
  * Grey and flat like the playbook fields. A fixed starting height with no
@@ -103,6 +104,7 @@ export function IntakeDetailsPanel({
   onSave,
   onAssign,
   onStatus,
+  onStatusMenuClosed,
 }: {
   request: IntakeRequest;
   members: IntakeMember[];
@@ -112,16 +114,26 @@ export function IntakeDetailsPanel({
   onSave: (patch: Partial<IntakeDetails>) => void;
   onAssign: (assigneeId: string | null) => void;
   onStatus: (action: IntakeStatusAction) => void;
+  /** After Resolved is chosen and the menu closes, where focus goes next. */
+  onStatusMenuClosed?: () => void;
 }) {
   const caps = request.capabilities;
   const editable = caps.edit;
+  // Set when a status choice sends focus elsewhere, such as the note form.
+  const focusLeaves = useRef(false);
   const overdue = isIntakeOverdue(request);
   const assigneeEmail =
     members.find((m) => m.user_id === request.assignee_id)?.email ?? null;
   const assignee = request.assignee_name ? (
-    <Person name={request.assignee_name} email={assigneeEmail} />
+    <Person
+      name={request.assignee_name}
+      email={assigneeEmail}
+      photo={
+        members.find((m) => m.user_id === request.assignee_id)?.profile_photo
+      }
+    />
   ) : (
-    <span className="text-gray-400">Unassigned</span>
+    <IntakeUnassigned className="text-gray-400" />
   );
   return (
     // The fields label themselves; the name is for assistive technology.
@@ -151,6 +163,14 @@ export function IntakeDetailsPanel({
             <DropdownContent
               align="start"
               className="w-[var(--radix-dropdown-menu-trigger-width)]"
+              onCloseAutoFocus={(event) => {
+                // Resolving moves focus to the note form once the menu has
+                // closed, rather than back to this field.
+                if (!focusLeaves.current) return;
+                focusLeaves.current = false;
+                event.preventDefault();
+                onStatusMenuClosed?.();
+              }}
             >
               {caps.reopen ? (
                 <DropdownItem onSelect={() => onStatus("reopen")}>
@@ -161,7 +181,9 @@ export function IntakeDetailsPanel({
                   value={request.state}
                   onValueChange={(state) => {
                     const action = STATUS_ACTIONS[state as IntakeState];
-                    if (state !== request.state && action) onStatus(action);
+                    if (state === request.state || !action) return;
+                    focusLeaves.current = action === "resolve";
+                    onStatus(action);
                   }}
                 >
                   {INTAKE_STATES.map((state) => {
@@ -198,7 +220,7 @@ export function IntakeDetailsPanel({
           onChange={onAssign}
         />
       ) : (
-        <Fact label="Assigned lawyer">{assignee}</Fact>
+        <Fact label="Reviewer">{assignee}</Fact>
       )}
       {editable ? (
         <>
@@ -306,7 +328,13 @@ export function IntakeDetailsPanel({
         </>
       )}
       <Fact label="Created by">
-        <Person name={request.created_by_name} />
+        <Person
+          name={request.created_by_name}
+          photo={
+            members.find((m) => m.user_id === request.created_by)
+              ?.profile_photo
+          }
+        />
       </Fact>
       <Fact label="Created">{formatIntakeDateTime(request.created_at)}</Fact>
     </aside>
@@ -506,34 +534,28 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
 function Person({
   name,
   email,
-  note,
+  photo,
+  label,
 }: {
   name: string;
   email?: string | null;
-  /** Follows the name, such as "(you)", without changing the avatar. */
-  note?: string;
+  photo?: string | null;
+  /** Shown in place of the name, such as "Myself"; the avatar keeps it. */
+  label?: string;
 }) {
   return (
     <span className="flex min-w-0 items-center gap-2">
       <span aria-hidden="true" className="flex">
-        <UserAvatar size="sm" name={name} email={email} />
+        <UserAvatar size="sm" name={name} email={email} photo={photo} />
       </span>
-      <span className="min-w-0 [overflow-wrap:anywhere]">
-        {name}
-        {note && (
-          <>
-            {" "}
-            <span className="text-gray-500">{note}</span>
-          </>
-        )}
-      </span>
+      <span className="min-w-0 [overflow-wrap:anywhere]">{label ?? name}</span>
     </span>
   );
 }
 
 /**
- * Chooses who a request is assigned to: Unassigned or any member, the viewer
- * included, each shown with their avatar.
+ * Chooses who a request is assigned to: Unassigned or any member, each shown
+ * with their avatar. The viewer is listed first, as Myself.
  */
 export function AssigneeField({
   assigneeId,
@@ -560,19 +582,23 @@ export function AssigneeField({
   ];
   return (
     <div>
-      <p className={LABEL_CLASS}>Assigned lawyer</p>
+      <p className={LABEL_CLASS}>Reviewer</p>
       <Dropdown>
         <DropdownTrigger asChild>
           <button
             type="button"
             disabled={disabled}
-            aria-label={`Assigned lawyer: ${assigneeId && name ? name : "Unassigned"}`}
+            aria-label={`Reviewer: ${assigneeId && name ? name : "Unassigned"}`}
             className={MENU_FIELD_CLASS}
           >
             {assigneeId && name ? (
-              <Person name={name} email={current?.email} />
+              <Person
+                name={name}
+                email={current?.email}
+                photo={current?.profile_photo}
+              />
             ) : (
-              <span className="text-gray-400">Unassigned</span>
+              <IntakeUnassigned className="text-gray-400" />
             )}
             <ChevronDown
               aria-hidden="true"
@@ -592,14 +618,15 @@ export function AssigneeField({
             }}
           >
             <DropdownRadioItem value="">
-              <span className="text-gray-500">Unassigned</span>
+              <IntakeUnassigned className="text-gray-500" />
             </DropdownRadioItem>
             {ordered.map((m) => (
               <DropdownRadioItem key={m.user_id} value={m.user_id}>
                 <Person
                   name={intakeMemberName(m)}
                   email={m.email}
-                  note={m.user_id === accountId ? "(you)" : undefined}
+                  photo={m.profile_photo}
+                  label={m.user_id === accountId ? "Myself" : undefined}
                 />
               </DropdownRadioItem>
             ))}
@@ -759,10 +786,7 @@ export function IntakeSubjectInput({
       maxLength={200}
       autoComplete="off"
       title={value}
-      className={cn(
-        "min-w-0 truncate text-gray-900",
-        className,
-      )}
+      className={cn("min-w-0 truncate text-gray-900", className)}
       onChange={(event) => setDraft(event.target.value)}
       onBlur={commit}
       onKeyDown={(event) => {

@@ -104,6 +104,22 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
     sql(migration("20261031_01_intake_remove_category.sql"));
     sql(migration("20261101_01_intake_note_documents.sql"));
     sql(migration("20261101_01_intake_note_documents.sql"));
+    sql(migration("20261101_02_intake_personal_workspace.sql"));
+    sql(migration("20261101_02_intake_personal_workspace.sql"));
+    sql(migration("20261101_03_intake_dashboard.sql"));
+    sql(migration("20261101_03_intake_dashboard.sql"));
+    sql(migration("20261101_04_intake_list_scopes.sql"));
+    sql(migration("20261101_04_intake_list_scopes.sql"));
+    sql(migration("20261101_05_intake_requester_filter.sql"));
+    sql(migration("20261101_05_intake_requester_filter.sql"));
+    sql(migration("20261101_06_intake_member_photos.sql"));
+    sql(migration("20261101_06_intake_member_photos.sql"));
+    sql(migration("20261101_07_intake_resolution_documents.sql"));
+    sql(migration("20261101_07_intake_resolution_documents.sql"));
+    sql(migration("20261101_08_intake_dashboard_periods.sql"));
+    sql(migration("20261101_08_intake_dashboard_periods.sql"));
+    sql(migration("20261102_01_intake_resolve_optional_text.sql"));
+    sql(migration("20261102_01_intake_resolve_optional_text.sql"));
   }, 60000);
   afterAll(() => {
     execFileSync("docker", [
@@ -207,6 +223,14 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
         (m: { user_id: string }) => m.user_id,
       ),
     ).toEqual([1, 2, 3, 4, 5].map(uid));
+    // Each member's photo comes once, with the member list.
+    const photo = "data:image/png;base64,iVBORw0KGgo=";
+    sql(`update public.user_profiles set profile_photo='${photo}' where user_id=${q(3)}`);
+    expect(
+      json(`select public.intake_members(${q(10)},${q(2)});`).find(
+        (m: { user_id: string }) => m.user_id === uid(3),
+      ),
+    ).toMatchObject({ profile_photo: photo });
   });
   it("adds notes without a version, including after resolution", () => {
     sql(submit());
@@ -217,7 +241,21 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
     sql(cmd("resolve", 3, 103, 1, ",'Done'"));
     expect(json(note(4, 104, "Follow-up after resolution")).applied_version).toBe(2);
     expect(sql("select count(*) from public.intake_messages where kind='note'")).toBe("3");
+    // Notes name their author by ID, so the page can show their photo.
+    expect(
+      json(`select public.intake_read_history(${q(10)},${q(2)},${q(20)});`)[0],
+    ).toMatchObject({ author_id: uid(3), author_name: "person3@example.test" });
     expect(() => sql(note(4, 105, "   "))).toThrow(/22023/);
+    // A request resolves without a resolution, and then has no message for
+    // it; a cancellation still needs its reason.
+    sql(submit(110, { request: 21 }));
+    expect(json(cmd("resolve", 3, 111, 1, ",null", 21)).message_id).toBeNull();
+    expect(state(21)).toBe("resolved:2:-");
+    expect(
+      sql(`select count(*) from public.intake_messages where request_id=${q(21)}`),
+    ).toBe("0");
+    sql(submit(112, { request: 22 }));
+    expect(() => sql(cmd("cancel", 3, 113, 1, ",null", 22))).toThrow(/22023/);
   });
   it("tells reused commands and stale versions apart", () => {
     sql(submit());
@@ -277,8 +315,11 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
     const events = json(
       `select public.intake_read_history(${q(10)},${q(2)},${q(20)},true);`,
     );
+    // History names who acted by ID, so the page can show their photo.
+    expect(events[0]).toMatchObject({ kind: "submitted", actor_id: uid(2) });
     expect(events.at(-1)).toMatchObject({
       kind: "assignee_left",
+      actor_id: null,
       actor_name: null,
       assignee_name: "person3@example.test",
     });
@@ -310,6 +351,7 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
     expect(
       json(`select public.intake_get_request(${q(10)},${q(4)},${q(20)});`),
     ).toMatchObject({
+      created_by: uid(2),
       subject: "Renamed",
       requester_name: "Sam Business",
       requester_email: "sam@acme.test",
@@ -336,26 +378,40 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
     expect(ids(list(2, `,null,'${uid(4)}'`))).toEqual([uid(22)]);
     expect(ids(list(2, ",'in_review'"))).toEqual([22, 21].map(uid));
     expect(ids(list(2, ",null,null,'marketing'"))).toEqual([uid(21)]);
+    // One requester, by name without case; the picker lists each name once.
+    sql(`update public.intake_requests set requester_name='Sam Business' where id=${q(21)}`);
+    expect(ids(list(2, ",p_requester=>'sam business'"))).toEqual([uid(21)]);
+    expect(ids(list(2, ",p_requester=>'JANE BUSINESS'"))).toEqual([22, 20].map(uid));
+    expect(() => list(2, ",p_requester=>''")).toThrow(/22023/);
+    expect(
+      json(`select public.intake_list_requesters(${q(10)},${q(2)});`),
+    ).toEqual([
+      { name: "Jane Business", email: "jane@acme.test" },
+      { name: "Sam Business", email: "jane@acme.test" },
+    ]);
+    expect(() =>
+      sql(`select public.intake_list_requesters(${q(10)},${q(9)});`),
+    ).toThrow(/P0002/);
     expect(ids(list(2, ",null,null,'jane@acme'"))).toHaveLength(3);
     expect(ids(list(2, ",null,null,'','target'"))).toEqual([22, 20, 21].map(uid));
     expect(list(2).requests[0]).not.toHaveProperty("description");
     // Updated order: page one, then a new request arrives before page two.
-    const first = list(2, ",null,null,'','updated',null,null,2");
+    const first = list(2, ",null,null,'','updated',null,null,p_limit=>2");
     expect(ids(first)).toEqual([22, 21].map(uid));
     sql(submit(103, { request: 23, subject: "Fourth" }));
     const second = list(
       2,
-      `,null,null,'','updated','${first.next.key}','${first.next.id}',2`,
+      `,null,null,'','updated','${first.next.key}','${first.next.id}',p_limit=>2`,
     );
     expect(ids(second)).toEqual([uid(20)]);
     expect(second.next).toBeNull();
     // Target order keeps undated requests last across pages.
-    const t1 = list(2, ",null,null,'','target',null,null,2");
+    const t1 = list(2, ",null,null,'','target',null,null,p_limit=>2");
     expect(ids(t1)).toEqual([22, 20].map(uid));
-    const t2 = list(2, `,null,null,'','target','${t1.next.key}','${t1.next.id}',2`);
+    const t2 = list(2, `,null,null,'','target','${t1.next.key}','${t1.next.id}',p_limit=>2`);
     expect(t2.requests.map((r: { requested_by_date: string | null }) => r.requested_by_date)).toEqual([null, null]);
     const t3 = t2.next
-      ? list(2, `,null,null,'','target',null,'${t2.next.id}',2`)
+      ? list(2, `,null,null,'','target',null,'${t2.next.id}',p_limit=>2`)
       : { requests: [] };
     expect(t3.requests).toEqual([]);
     expect(() => list(2, ",'bogus'")).toThrow(/22023/);
@@ -707,6 +763,28 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
       sql("select count(*) from public.intake_events where kind='document_added'"),
     ).toBe("0");
   });
+  it("links documents added with a resolution to it, but not to a cancellation reason", () => {
+    sql(submit());
+    sql(submit(101, { request: 21, subject: "Second" }));
+    const resolution = json(
+      cmd("resolve", 2, 102, 1, ",'Approved with the signed copy.'"),
+    ).message_id;
+    const reason = json(cmd("cancel", 2, 103, 1, ",'Withdrawn.'", 21)).message_id;
+    upload(50);
+    upload(51);
+    const attach = (document: number, request: number, message: string) =>
+      `select public.intake_attach_document(${q(10)},${q(2)},${q(request)},${q(document)},'${message}');`;
+    sql(attach(50, 20, resolution));
+    expect(
+      json(`select public.intake_list_documents(${q(10)},${q(4)},${q(20)});`),
+    ).toEqual([
+      expect.objectContaining({ document_id: uid(50), message_id: resolution }),
+    ]);
+    expect(() => sql(attach(51, 21, reason))).toThrow(/P0002/);
+    expect(
+      sql("select count(*) from public.intake_events where kind='document_added'"),
+    ).toBe("0");
+  });
   it("links only the uploader's own intake documents in the same organization", () => {
     sql(submit());
     sql(submit(101, { request: 21, subject: "Second" }));
@@ -828,6 +906,99 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
     expect(json(remove(5, 105, 2)).replayed).toBe(false);
     expect(sql("select count(*) from public.intake_requests")).toBe("0");
   });
+  it("keeps a person's own requests in their personal organization, for them alone", () => {
+    // Every account gets a personal organization, with itself as its owner.
+    const personal = sql(
+      `select id from public.organizations where personal_user_id=${q(2)} and kind='personal'`,
+    );
+    const own = (actor: number, command: number) =>
+      `select public.intake_submit_request('${personal}',${q(actor)},${q(command)},${q(30)},'Lease renewal','Check the break clause',` +
+      `'Me',null,null,null,null,${q(actor)});`;
+    expect(json(own(2, 200)).applied_version).toBe(1);
+    expect(
+      json(`select public.intake_list_requests('${personal}',${q(2)});`).requests,
+    ).toEqual([
+      expect.objectContaining({ subject: "Lease renewal", state: "in_review" }),
+    ]);
+    expect(json(`select public.intake_members('${personal}',${q(2)});`)).toEqual([
+      expect.objectContaining({ user_id: uid(2) }),
+    ]);
+    // Nobody else reaches it, not even a colleague from a shared organization.
+    expect(() => sql(own(3, 201))).toThrow(/P0002/);
+    expect(() =>
+      sql(`select public.intake_get_request('${personal}',${q(3)},${q(30)});`),
+    ).toThrow(/P0002/);
+    expect(
+      json(`select public.intake_list_requests(${q(10)},${q(2)});`).requests,
+    ).toEqual([]);
+  });
+  it("summarizes where requests stand for the dashboard", () => {
+    sql(submit(100, { date: "'2020-01-01'", timezone: "'UTC'" }));
+    sql(submit(101, { request: 21, subject: "Second", assignee: `${q(3)}` }));
+    sql(submit(102, { request: 22, subject: "Third", assignee: `${q(3)}` }));
+    sql(cmd("wait", 3, 103, 1, ",'Asked Jane'", 22));
+    sql(submit(104, { request: 23, subject: "Fourth", assignee: `${q(4)}` }));
+    sql(cmd("resolve", 4, 105, 1, ",'Done.'", 23));
+    // Recorded two days before it was resolved.
+    sql(`update public.intake_requests set created_at=now()-interval '2 days' where id=${q(23)}`);
+    const dashboard = json(
+      `select public.intake_dashboard(${q(10)},${q(5)},'Europe/Stockholm');`,
+    );
+    expect(dashboard).toMatchObject({
+      open: 3,
+      new: 1,
+      in_progress: 1,
+      waiting: 1,
+      unassigned: 1,
+      overdue: 1,
+      created: 4,
+      resolved: 1,
+      created_days: 30,
+      resolved_days: 30,
+      median_days: 30,
+      weeks_shown: 8,
+      median_hours_to_resolve: 48,
+    });
+    expect(dashboard.weeks).toHaveLength(8);
+    expect(dashboard.weeks.at(-1)).toMatchObject({ resolved: 1 });
+    expect(
+      dashboard.weeks.reduce((n: number, w: { created: number }) => n + w.created, 0),
+    ).toBe(4);
+    expect(dashboard.workload).toEqual([
+      { assignee_id: uid(3), name: "person3@example.test", photo: null, open: 2, waiting: 1, overdue: 0 },
+    ]);
+    // Each figure opens exactly the requests it counted.
+    const scoped = (scope: string, extra = "") =>
+      json(
+        `select public.intake_list_requests(${q(10)},${q(5)}${extra},p_scope=>'${scope}');`,
+      ).requests.map((r: { subject: string }) => r.subject).sort();
+    expect(scoped("open")).toEqual(["Second", "Supplier NDA", "Third"]);
+    expect(scoped("unassigned")).toEqual(["Supplier NDA"]);
+    expect(scoped("overdue")).toEqual(["Supplier NDA"]);
+    expect(scoped("recorded_30d")).toHaveLength(4);
+    expect(scoped("resolved_30d")).toEqual(["Fourth"]);
+    expect(() => scoped("late")).toThrow(/22023/);
+    expect(() =>
+      sql(`select public.intake_dashboard(${q(10)},${q(6)},'UTC');`),
+    ).toThrow(/P0002/);
+    expect(() =>
+      sql(`select public.intake_dashboard(${q(10)},${q(5)},'Not/AZone');`),
+    ).toThrow(/22023/);
+    // Each period figure reads over its own period, from a fixed set.
+    expect(
+      json(
+        `select public.intake_dashboard(${q(10)},${q(5)},'UTC',4,7,365,30);`,
+      ),
+    ).toMatchObject({
+      created_days: 7,
+      resolved_days: 365,
+      median_days: 30,
+      weeks_shown: 4,
+    });
+    expect(() =>
+      sql(`select public.intake_dashboard(${q(10)},${q(5)},'UTC',8,14);`),
+    ).toThrow(/22023/);
+  });
   it("backfills legacy requests from their creator's profile", () => {
     // Shape of a request recorded before the tracker migration.
     sql(`alter table public.intake_requests add column category text not null default 'general';
@@ -838,6 +1009,9 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
         values(${q(40)},${q(10)},${q(2)},'general','Legacy','Old request'),(${q(41)},${q(10)},null,'general','Erased','Old request');`);
     sql(migration("20261030_02_intake_internal_tracker.sql"));
     sql(migration("20261031_01_intake_remove_category.sql"));
+    sql(migration("20261101_04_intake_list_scopes.sql"));
+    sql(migration("20261101_05_intake_requester_filter.sql"));
+    sql(migration("20261101_06_intake_member_photos.sql"));
     const profile = sql(
       `select coalesce(nullif(btrim(display_name),''),email) from public.user_profiles where user_id=${q(2)}`,
     );

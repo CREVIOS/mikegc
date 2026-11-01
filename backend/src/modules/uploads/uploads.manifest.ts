@@ -79,7 +79,8 @@ const documentDestinationSchema = z.discriminatedUnion("scope", [
   z
     .object({
       scope: z.literal("intake"),
-      org_id: z.string().uuid(),
+      // A team organization, or "personal" for the uploader's own workspace.
+      org_id: z.union([z.literal("personal"), z.string().uuid()]),
       request_id: z.string().uuid(),
       // The uploader's note the documents are added with, if any.
       message_id: z.string().uuid().optional(),

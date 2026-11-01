@@ -23,6 +23,8 @@ import { setIntakeMemoryAccount } from "@/app/lib/intakeMemory";
 
 const mocks = vi.hoisted(() => ({
   members: vi.fn(),
+  requesters: vi.fn(),
+  copy: vi.fn(),
   list: vi.fn(),
   submit: vi.fn(),
   edit: vi.fn(),
@@ -36,14 +38,18 @@ const mocks = vi.hoisted(() => ({
   push: vi.fn(),
   notify: vi.fn(),
   partial: vi.fn(),
+  dashboard: vi.fn(),
+  searchParams: new URLSearchParams(),
   workspace: {
     accountId: "account-a",
     workspaceId: "org-a",
-    activeOrganization: { id: "org-a" },
+    activeOrganization: { id: "org-a" } as { id: string } | null,
   },
 }));
 vi.mock("@/app/lib/mikeApi", () => ({
   getIntakeMembers: mocks.members,
+  getIntakeRequesters: mocks.requesters,
+  copyIntakeDocuments: mocks.copy,
   listIntakeRequests: mocks.list,
   submitIntakeRequest: mocks.submit,
   editIntakeRequest: mocks.edit,
@@ -51,6 +57,7 @@ vi.mock("@/app/lib/mikeApi", () => ({
   getIntakeMessages: mocks.messages,
   getIntakeEvents: mocks.events,
   commandIntakeRequest: mocks.command,
+  getIntakeDashboard: mocks.dashboard,
   getIntakeDocuments: mocks.documents,
   uploadIntakeDocuments: mocks.upload,
   getDocument: mocks.document,
@@ -58,19 +65,48 @@ vi.mock("@/app/lib/mikeApi", () => ({
   isMfaRequiredError: (error: { code?: string }) =>
     error?.code === "mfa_verification_required",
 }));
+// The real Add documents modal needs the app's directory; a stand-in picks
+// one library document.
+vi.mock("./IntakeDocumentPicker", () => ({
+  IntakeDocumentPicker: ({
+    open,
+    onPick,
+    onClose,
+  }: {
+    open: boolean;
+    onPick: (documents: { id: string; filename: string }[]) => void;
+    onClose: () => void;
+  }) =>
+    open ? (
+      <div role="dialog" aria-label="Add documents">
+        <button
+          type="button"
+          onClick={() => {
+            onClose();
+            onPick([{ id: "library-doc", filename: "Library NDA.pdf" }]);
+          }}
+        >
+          Pick Library NDA.pdf
+        </button>
+      </div>
+    ) : null,
+}));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: mocks.push, replace: mocks.push }),
+  useSearchParams: () => mocks.searchParams,
 }));
 vi.mock("next/link", () => ({
   default: (props: AnchorHTMLAttributes<HTMLAnchorElement>) => <a {...props} />,
 }));
 vi.mock("@/app/contexts/WorkspaceContext", () => ({
+  PERSONAL_WORKSPACE: "personal",
   useWorkspace: () => mocks.workspace,
 }));
 vi.mock("@/app/hooks/useItemWorkspace", () => ({ useItemWorkspace: vi.fn() }));
 vi.mock("@/app/components/shared/PageHeader", () => ({
   PageHeader: ({
     children,
-    actions = [],
+    actions: ungrouped = [],
+    actionGroups,
     breadcrumbs = [],
   }: {
     children?: ReactNode;
@@ -86,21 +122,37 @@ vi.mock("@/app/components/shared/PageHeader", () => ({
           render?: ReactNode;
           disabled?: boolean;
           onClick?: () => void;
+          value?: string;
+          placeholder?: string;
+          onChange?: (value: string) => void;
+          pressed?: boolean;
         }
     )[];
-  }) => (
+    actionGroups?: (typeof ungrouped)[];
+  }) => {
+    const actions = actionGroups ? actionGroups.flat() : ungrouped;
+    return (
     <header>
       {/* The current page's title, which may be an editable input. */}
       {breadcrumbs.length > 1 && breadcrumbs[breadcrumbs.length - 1].label}
       {children}
       {actions.map((action, index) =>
-        !action || action.type === "search" ? null : action.type === "custom" ? (
+        !action ? null : action.type === "search" ? (
+          <input
+            key={index}
+            type="search"
+            aria-label={action.placeholder}
+            value={action.value}
+            onChange={(event) => action.onChange?.(event.target.value)}
+          />
+        ) : action.type === "custom" ? (
           <span key={index}>{action.render}</span>
         ) : (
           <button
             key={index}
             type="button"
             aria-label={action.type === "new" ? undefined : action.title}
+            aria-pressed={action.type === "new" ? undefined : action.pressed}
             disabled={action.disabled}
             onClick={action.onClick}
           >
@@ -109,7 +161,8 @@ vi.mock("@/app/components/shared/PageHeader", () => ({
         ),
       )}
     </header>
-  ),
+    );
+  },
 }));
 vi.mock("@/app/lib/userFacingError", () => ({
   describeError: () => ({ message: "Could not load requests." }),
@@ -173,6 +226,7 @@ const request = (overrides: Partial<IntakeRequest> = {}): IntakeRequest => ({
   version: 1,
   assignee_id: "lawyer-b",
   assignee_name: "Lawyer B",
+  created_by: "account-a",
   created_by_name: "Lawyer A",
   created_at: "2026-10-26T10:00:00Z",
   updated_at: "2026-10-26T10:00:00Z",
@@ -206,7 +260,7 @@ const page = (
   next_cursor: string | null = null,
 ): IntakeRequestPage => ({ requests, next_cursor });
 const EMPTY_QUEUE =
-  "Record an NDA request or legal question from the business to start tracking it.";
+  "Create an NDA request or legal question from the business to start tracking it.";
 const receipt = {
   request_id: "request-a",
   applied_version: 2,
@@ -215,6 +269,8 @@ const receipt = {
 };
 
 beforeEach(() => {
+  mocks.searchParams = new URLSearchParams();
+  window.history.replaceState(null, "", "/intake");
   setIntakeMemoryAccount(null);
   vi.resetAllMocks();
   mocks.workspace = {
@@ -225,6 +281,10 @@ beforeEach(() => {
   mocks.members.mockResolvedValue([
     { user_id: "account-a", display_name: "Lawyer A", email: "a@example.test" },
     { user_id: "lawyer-b", display_name: "Lawyer B", email: "b@example.test" },
+  ]);
+  mocks.requesters.mockResolvedValue([
+    { name: "Jane Business", email: "jane@business.test" },
+    { name: "Sam Business", email: null },
   ]);
   mocks.list.mockResolvedValue(page());
   mocks.request.mockResolvedValue(request());
@@ -242,6 +302,8 @@ beforeEach(() => {
   );
   mocks.command.mockResolvedValue(receipt);
   vi.spyOn(window, "confirm").mockReturnValue(false);
+  // jsdom does not scroll; choosing Resolved brings the comment box into view.
+  Element.prototype.scrollIntoView = vi.fn();
   vi.stubGlobal(
     "matchMedia",
     vi.fn().mockReturnValue({
@@ -273,7 +335,7 @@ async function chooseAssignee(
   user: ReturnType<typeof userEvent.setup>,
   name: string,
 ) {
-  await user.click(screen.getByRole("button", { name: /^Assigned lawyer:/ }));
+  await user.click(screen.getByRole("button", { name: /^Reviewer:/ }));
   await user.click(await screen.findByRole("menuitemradio", { name }));
 }
 function fillRequest(subject = "Supplier NDA") {
@@ -291,14 +353,14 @@ function fillRequest(subject = "Supplier NDA") {
 /** The note editor, opening it first unless a kept draft already shows it. */
 async function noteEditor() {
   const button = await screen.findByRole("button", {
-    name: /^(Add note|Submit)$/,
+    name: /^(Add comment|Submit)$/,
   });
-  if (button.textContent === "Add note") fireEvent.click(button);
-  return screen.getByLabelText("Add a note");
+  if (button.textContent === "Add comment") fireEvent.click(button);
+  return screen.getByLabelText("Add comment");
 }
 
-describe("recording requests", () => {
-  it("records a request for a named requester and assigns it to its creator", async () => {
+describe("creating requests", () => {
+  it("creates a request for a named requester and assigns it to its creator", async () => {
     mocks.submit.mockImplementation(
       async (_org: string, body: { id: string }) => ({
         ...receipt,
@@ -390,7 +452,7 @@ describe("recording requests", () => {
     expect(screen.getByLabelText("Subject")).toHaveValue("Unsent question");
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     fireEvent.click(screen.getByRole("button", { name: "Discard" }));
-    expect(mocks.push).toHaveBeenCalledWith("/intake");
+    expect(mocks.push).toHaveBeenCalledWith("/intake/requests");
     expect(mocks.submit).not.toHaveBeenCalled();
   });
 
@@ -441,16 +503,16 @@ describe("recording requests", () => {
     );
     expect(screen.getByLabelText("Timezone")).toHaveValue("Europe/Stockholm");
     expect(
-      await screen.findByRole("button", { name: "Assigned lawyer: Lawyer B" }),
+      await screen.findByRole("button", { name: "Reviewer: Lawyer B" }),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     fireEvent.click(screen.getByRole("button", { name: "Discard" }));
-    expect(mocks.push).toHaveBeenCalledWith("/intake");
+    expect(mocks.push).toHaveBeenCalledWith("/intake/requests");
     second.unmount();
     render(<IntakeNewRequestPage />);
     expect(screen.getByLabelText("Subject")).toHaveValue("");
     expect(
-      await screen.findByRole("button", { name: "Assigned lawyer: Lawyer A" }),
+      await screen.findByRole("button", { name: "Reviewer: Lawyer A" }),
     ).toBeInTheDocument();
   });
 });
@@ -478,22 +540,35 @@ describe("queue", () => {
     expect(screen.getByText("Unassigned")).toBeInTheDocument();
   });
 
-  it("switches between All and Assigned to me, searches lawyers and sorts by target date", async () => {
+  it("filters the queue to one requester and clears it with the X", async () => {
     const user = userEvent.setup();
     render(<Inbox orgId="org-a" accountId="account-a" />);
-    await user.click(await screen.findByRole("button", { name: "Assigned to me" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Filter by requester" }),
+    );
+    await user.click(await screen.findByRole("button", { name: /Sam Business/ }));
     await waitFor(() =>
       expect(mocks.list).toHaveBeenLastCalledWith(
         "org-a",
-        expect.objectContaining({ assignee: "me" }),
+        expect.objectContaining({ requester: "Sam Business" }),
       ),
     );
-    expect(
-      screen.queryByRole("button", { name: "Filter by assigned lawyer" }),
-    ).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "All" }));
+    await user.click(screen.getByRole("button", { name: "Filter by requester" }));
     await user.click(
-      await screen.findByRole("button", { name: "Filter by assigned lawyer" }),
+      await screen.findByRole("button", {
+        name: "Remove Sam Business from the filter",
+      }),
+    );
+    await waitFor(() =>
+      expect(mocks.list.mock.calls.at(-1)?.[1].requester).toBeUndefined(),
+    );
+  });
+
+  it("searches lawyers to filter by one and sorts by target date", async () => {
+    const user = userEvent.setup();
+    render(<Inbox orgId="org-a" accountId="account-a" />);
+    await user.click(
+      await screen.findByRole("button", { name: "Filter by reviewer" }),
     );
     await user.type(
       screen.getByRole("searchbox", { name: "Search people" }),
@@ -703,6 +778,179 @@ describe("queue", () => {
     );
   });
 
+  it("keeps the person's own requests in Personal, and deletes them for them alone", async () => {
+    const user = userEvent.setup();
+    const organization = { ...mocks.workspace };
+    Object.assign(mocks.workspace, {
+      workspaceId: "personal",
+      activeOrganization: null,
+    });
+    try {
+      mocks.list.mockResolvedValue(page([summary()]));
+      render(<IntakeInbox />);
+      await user.click(
+        await screen.findByRole("button", {
+          name: "Actions for Confidential request A",
+        }),
+      );
+      expect(mocks.list).toHaveBeenCalledWith("personal", expect.anything());
+      await user.click(screen.getByRole("menuitem", { name: "Delete request" }));
+      expect(await screen.findByRole("dialog")).toHaveTextContent(
+        "Its notes, history and documents are deleted. This can't be undone.",
+      );
+    } finally {
+      Object.assign(mocks.workspace, organization);
+    }
+  });
+
+  it("switches to the dashboard page from the header", async () => {
+    render(<Inbox orgId="org-a" accountId="account-a" />);
+    expect(
+      screen.getByRole("heading", { name: "Intake: Requests" }),
+    ).toBeInTheDocument();
+    const requests = await screen.findByRole("button", { name: "Requests" });
+    expect(requests).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(requests);
+    expect(mocks.push).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Dashboard" }));
+    expect(mocks.push).toHaveBeenCalledWith("/intake/dashboard");
+  });
+
+  it("opens the list its URL describes and keeps the URL in step", async () => {
+    const lawyer = "00000000-0000-4000-8000-0000000000b0";
+    mocks.searchParams = new URLSearchParams(
+      `tab=resolved&assignee=${lawyer}&sort=updated_asc&q=nda&scope=bogus`,
+    );
+    render(<Inbox orgId="org-a" accountId="account-a" />);
+    await waitFor(() =>
+      expect(mocks.list).toHaveBeenCalledWith("org-a", {
+        search: "nda",
+        state: "resolved",
+        assignee: lawyer,
+        sort: "updated_asc",
+      }),
+    );
+    expect(screen.getByRole("button", { name: "Resolved" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    const push = vi.spyOn(window.history, "pushState");
+    const replace = vi.spyOn(window.history, "replaceState");
+    // A tab is a step Back returns from; a filter only replaces the URL.
+    fireEvent.click(screen.getByRole("button", { name: "Outstanding" }));
+    await waitFor(() =>
+      expect(push).toHaveBeenLastCalledWith(
+        null,
+        "",
+        `?assignee=${lawyer}&sort=updated_asc&q=nda`,
+      ),
+    );
+    fireEvent.change(
+      screen.getByRole("searchbox", { name: "Search requests or requesters…" }),
+      {
+        target: { value: "lease" },
+      },
+    );
+    await waitFor(() =>
+      expect(replace).toHaveBeenLastCalledWith(
+        null,
+        "",
+        `?assignee=${lawyer}&sort=updated_asc&q=lease`,
+      ),
+    );
+    expect(mocks.list).toHaveBeenLastCalledWith(
+      "org-a",
+      expect.objectContaining({ search: "lease" }),
+    );
+  });
+
+  it("lists outstanding requests by default, with the tabs for closed ones", async () => {
+    const user = userEvent.setup();
+    render(<Inbox orgId="org-a" accountId="account-a" />);
+    await waitFor(() =>
+      expect(mocks.list).toHaveBeenCalledWith("org-a", {
+        search: "",
+        sort: "updated",
+        scope: "open",
+      }),
+    );
+    expect(
+      screen.getByRole("button", { name: "Outstanding" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(
+      screen.getAllByRole("button", { name: /^(Outstanding|Resolved|Cancelled)$/ }),
+    ).toHaveLength(3);
+    // Only the statuses an outstanding request can have, each with its colour.
+    await user.click(screen.getByRole("button", { name: "Filter by status" }));
+    expect(
+      screen.queryByRole("menuitem", { name: "Resolved" }),
+    ).not.toBeInTheDocument();
+    const inProgress = screen.getByRole("menuitem", { name: "In progress" });
+    expect(
+      inProgress.querySelector('[aria-hidden="true"].rounded-full'),
+    ).toHaveClass("bg-amber-500");
+  });
+
+  it("shows recent figures, which count closed requests too, under no tab", async () => {
+    mocks.searchParams = new URLSearchParams("scope=recorded_30d");
+    render(<Inbox orgId="org-a" accountId="account-a" />);
+    await waitFor(() =>
+      expect(mocks.list).toHaveBeenCalledWith("org-a", {
+        search: "",
+        sort: "updated",
+        scope: "recorded_30d",
+      }),
+    );
+    expect(
+      screen.getByRole("button", { name: "Created in the last 30 days" }),
+    ).toBeInTheDocument();
+    for (const name of ["Outstanding", "Resolved", "Cancelled"])
+      expect(screen.getByRole("button", { name })).toHaveAttribute(
+        "aria-pressed",
+        "false",
+      );
+  });
+
+  it("names a dashboard figure's filter and clears it when chosen", async () => {
+    mocks.searchParams = new URLSearchParams("scope=overdue&sort=target");
+    mocks.list.mockResolvedValue(page([summary()]));
+    render(<Inbox orgId="org-a" accountId="account-a" />);
+    await screen.findByRole("link", { name: "Confidential request A" });
+    expect(mocks.list).toHaveBeenCalledWith("org-a", {
+      search: "",
+      sort: "target",
+      scope: "overdue",
+    });
+    expect(
+      screen.getByRole("button", { name: "Outstanding" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Overdue" }));
+    // Back to the plain Outstanding list.
+    await waitFor(() =>
+      expect(mocks.list.mock.calls.at(-1)?.[1]).toMatchObject({
+        scope: "open",
+      }),
+    );
+    expect(
+      screen.queryByRole("button", { name: "Overdue" }),
+    ).not.toBeInTheDocument();
+    expect(window.location.search).toBe("?sort=target");
+  });
+
+  it("drops a dashboard figure's filter with any other tab", async () => {
+    mocks.searchParams = new URLSearchParams("scope=open");
+    render(<Inbox orgId="org-a" accountId="account-a" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Resolved" }));
+    await waitFor(() =>
+      expect(mocks.list.mock.calls.at(-1)?.[1]).toEqual({
+        search: "",
+        state: "resolved",
+        sort: "updated",
+      }),
+    );
+    expect(window.location.search).toBe("?tab=resolved");
+  });
+
   it("opens the new request page from New request", async () => {
     render(<Inbox orgId="org-a" accountId="account-a" />);
     await openNewRequest();
@@ -787,6 +1035,7 @@ const message = (overrides: Partial<IntakeMessage>): IntakeMessage => ({
   id: "message-a",
   kind: "note",
   body: "A note",
+  author_id: "account-a",
   author_name: "Lawyer A",
   created_at: "2026-10-27T10:00:00Z",
   ...overrides,
@@ -796,6 +1045,7 @@ const event = (overrides: Partial<IntakeEvent>): IntakeEvent => ({
   kind: "submitted",
   from_state: null,
   to_state: "submitted",
+  actor_id: "account-a",
   actor_name: "Lawyer A",
   assignee_name: null,
   created_at: "2026-10-26T10:00:00Z",
@@ -828,7 +1078,33 @@ describe("contract review documents", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Unsupported file type");
   });
 
-  it("uploads the documents to the request once it is recorded", async () => {
+  it("copies library documents picked in Add documents once the request is created", async () => {
+    mocks.submit.mockImplementation(async (_org: string, body: { id: string }) => ({
+      ...receipt,
+      request_id: body.id,
+    }));
+    mocks.copy.mockResolvedValue([]);
+    render(<IntakeNewRequestPage />);
+    fillRequest();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /^Drag and drop documents here, or click to browse\./,
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Pick Library NDA.pdf" }),
+    );
+    expect(screen.getByText("Library NDA.pdf")).toBeInTheDocument();
+    expect(mocks.copy).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Create request" }));
+    await waitFor(() => expect(mocks.push).toHaveBeenCalled());
+    const requestId = mocks.submit.mock.calls[0][1].id;
+    expect(mocks.copy).toHaveBeenCalledWith("org-a", requestId, [
+      "library-doc",
+    ]);
+  });
+
+  it("uploads the documents to the request once it is created", async () => {
     mocks.submit.mockImplementation(async (_org: string, body: { id: string }) => ({
       ...receipt,
       request_id: body.id,
@@ -928,32 +1204,34 @@ describe("request detail", () => {
       "notes",
       { command_id: expect.any(String), body: "  Called Jane.\nShe agreed.  " },
     ]);
-    await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Add note" }),
-      ).toBeInTheDocument(),
-    );
+    // The box stays open, emptied for the next comment.
+    await waitFor(() => expect(screen.getByLabelText("Add comment")).toHaveValue(""));
     expect(mocks.request).toHaveBeenCalledTimes(2);
   });
 
-  it("resolves with an exact resolution and retries the same command after a lost response", async () => {
+  it("resolves from the note form with the exact note, and retries the same command after a lost response", async () => {
     mocks.command
       .mockRejectedValueOnce(new TypeError("lost response"))
       .mockRejectedValueOnce(new TypeError("offline"));
     const user = userEvent.setup();
     render(detail());
+    // Choosing Resolved opens the note form rather than a dialog.
     await user.click(await screen.findByRole("button", { name: /^Status:/ }));
     await user.click(screen.getByRole("menuitemradio", { name: "Resolved" }));
-    const dialog = await screen.findByRole("dialog");
-    const field = within(dialog).getByLabelText("Resolution");
+    const field = await screen.findByLabelText("Add comment");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({
+        block: "center",
+        behavior: "smooth",
+      }),
+    );
     fireEvent.change(field, {
       target: { value: "  Approved with edits.\nSecond line  " },
     });
-    await user.click(within(dialog).getByRole("button", { name: "Resolve" }));
+    await user.click(screen.getByRole("button", { name: "Resolve request" }));
     await waitFor(() =>
-      expect(
-        within(dialog).getByRole("button", { name: "Check again" }),
-      ).toBeEnabled(),
+      expect(screen.getByRole("button", { name: "Check again" })).toBeEnabled(),
     );
     const original = structuredClone(mocks.command.mock.calls[0]);
     expect(original).toEqual([
@@ -968,14 +1246,11 @@ describe("request detail", () => {
     ]);
     expect(mocks.command.mock.calls[1]).toEqual(original);
     expect(field).toBeDisabled();
-    await user.click(
-      within(dialog).getByRole("button", { name: "Check again" }),
-    );
+    await user.click(screen.getByRole("button", { name: "Check again" }));
     await waitFor(() => expect(mocks.command).toHaveBeenCalledTimes(3));
     expect(mocks.command.mock.calls[2]).toEqual(original);
-    await waitFor(() =>
-      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
-    );
+    // Once saved, the note that became the resolution is cleared.
+    await waitFor(() => expect(screen.getByLabelText("Add comment")).toHaveValue(""));
   });
 
   it("keeps a resolution after a conflict and resends it as a new command at the refreshed version", async () => {
@@ -988,22 +1263,15 @@ describe("request detail", () => {
       .mockResolvedValue(request({ version: 2 }));
     const user = userEvent.setup();
     render(detail());
-    await user.click(await screen.findByRole("button", { name: /^Status:/ }));
-    await user.click(screen.getByRole("menuitemradio", { name: "Resolved" }));
-    fireEvent.change(await screen.findByLabelText("Resolution"), {
+    fireEvent.change(await noteEditor(), {
       target: { value: "Needs confirmation" },
     });
-    await user.click(
-      within(screen.getByRole("dialog")).getByRole("button", {
-        name: "Resolve",
-      }),
-    );
+    await user.click(screen.getByRole("button", { name: "Resolve request" }));
     await waitFor(() => expect(mocks.request).toHaveBeenCalledTimes(2));
-    const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByLabelText("Resolution")).toHaveValue(
+    expect(await screen.findByLabelText("Add comment")).toHaveValue(
       "Needs confirmation",
     );
-    await user.click(within(dialog).getByRole("button", { name: "Resolve" }));
+    await user.click(screen.getByRole("button", { name: "Resolve request" }));
     await waitFor(() => expect(mocks.command).toHaveBeenCalledTimes(2));
     expect(mocks.command.mock.calls[1][3]).toMatchObject({
       expected_version: 2,
@@ -1019,18 +1287,18 @@ describe("request detail", () => {
     const user = userEvent.setup();
     const editor = await noteEditor();
     fireEvent.change(editor, { target: { value: "Unsent note" } });
-    await user.click(screen.getByRole("button", { name: "Assigned lawyer: Lawyer B" }));
+    await user.click(screen.getByRole("button", { name: "Reviewer: Lawyer B" }));
     const options = screen.getAllByRole("menuitemradio");
     expect(options).toHaveLength(3);
-    ["Unassigned", "Lawyer A (you)", "Lawyer B"].forEach((name, i) =>
+    ["Unassigned", "Myself", "Lawyer B"].forEach((name, i) =>
       expect(options[i]).toHaveAccessibleName(name),
     );
     expect(
       screen.getByRole("menuitemradio", { name: "Lawyer B" }),
     ).toHaveAttribute("aria-checked", "true");
-    await user.click(screen.getByRole("menuitemradio", { name: "Lawyer A (you)" }));
+    await user.click(screen.getByRole("menuitemradio", { name: "Myself" }));
     await waitFor(() => expect(mocks.request).toHaveBeenCalledTimes(2));
-    expect(screen.getByLabelText("Add a note")).toHaveValue("Unsent note");
+    expect(screen.getByLabelText("Add comment")).toHaveValue("Unsent note");
     expect(mocks.command.mock.calls[0]).toEqual([
       "org-a",
       "request-a",
@@ -1043,7 +1311,79 @@ describe("request detail", () => {
     ]);
   });
 
-  it("pins the resolution and names people and automatic changes in history", async () => {
+  it("shows people's photos on a closed request too, and copes without them", async () => {
+    const photo = "data:image/png;base64,AAAA";
+    mocks.request.mockResolvedValue(
+      request({
+        state: "resolved",
+        capabilities: { ...capabilities, assign: false, resolve: false, reopen: true },
+      }),
+    );
+    mocks.members.mockResolvedValue([
+      { user_id: "account-a", display_name: "Lawyer A", email: "a@example.test", profile_photo: photo },
+    ]);
+    mocks.messages.mockResolvedValue([
+      message({ id: "m2", kind: "resolution", body: "Approved.", author_id: "account-a" }),
+    ]);
+    const { unmount } = render(detail());
+    const activity = await screen.findByRole("region", { name: "Activity" });
+    await waitFor(() =>
+      expect(activity.querySelector(`img[src="${photo}"]`)).not.toBeNull(),
+    );
+    unmount();
+    // Without the member list, a closed request still loads, with initials.
+    mocks.members.mockRejectedValue(new Error("members unavailable"));
+    render(detail());
+    expect(
+      await screen.findByRole("region", { name: "Activity" }),
+    ).toHaveTextContent("Approved.");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("reads a cancellation's reason in the timeline and offers Reopen in place of a note", async () => {
+    const user = userEvent.setup();
+    mocks.request.mockResolvedValue(
+      request({
+        state: "cancelled",
+        version: 3,
+        capabilities: {
+          ...capabilities,
+          resolve: false,
+          cancel: false,
+          reopen: true,
+          edit: false,
+        },
+      }),
+    );
+    mocks.messages.mockResolvedValue([
+      message({ id: "m2", kind: "cancel_reason", body: "Jane withdrew it." }),
+    ]);
+    mocks.events.mockResolvedValue([event({ id: 3, kind: "cancel" })]);
+    render(detail());
+    const activity = await screen.findByRole("region", { name: "Activity" });
+    expect(activity).toHaveTextContent(
+      "Lawyer A gave the reason for cancelling ·",
+    );
+    expect(activity).toHaveTextContent("Jane withdrew it.");
+    expect(activity).toHaveTextContent("Lawyer A cancelled this ·");
+    expect(
+      screen.queryByRole("region", { name: "Cancellation reason" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Add comment" }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Reopen" }));
+    await waitFor(() =>
+      expect(mocks.command).toHaveBeenCalledWith(
+        "org-a",
+        "request-a",
+        "reopen",
+        { command_id: expect.any(String), expected_version: 3 },
+      ),
+    );
+  });
+
+  it("reads the resolution in history, offers Reopen, and names people and automatic changes", async () => {
     mocks.request.mockResolvedValue(
       request({
         state: "resolved",
@@ -1070,12 +1410,19 @@ describe("request detail", () => {
       event({ id: 3, kind: "resolve" }),
     ]);
     render(detail());
-    const outcome = await screen.findByRole("region", { name: "Resolution" });
-    expect(outcome).toHaveTextContent("Approved as drafted.");
+    // The resolution reads in the timeline; nothing is pinned above it.
+    await screen.findByText("Approved as drafted.");
+    expect(
+      screen.queryByRole("region", { name: "Resolution" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reopen" })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Add comment" }),
+    ).not.toBeInTheDocument();
     // Each entry reads as who did what; an automatic change has no person.
     const activity = screen.getByRole("region", { name: "Activity" });
     expect(activity).toHaveTextContent(
-      "Lawyer A recorded this and assigned it to Lawyer B ·",
+      "Lawyer A created this and assigned it to Lawyer B ·",
     );
     expect(activity).toHaveTextContent(
       "Automatically unassigned Lawyer B because they left the organization ·",
@@ -1120,7 +1467,7 @@ describe("request detail", () => {
         .map((button) => button.getAttribute("aria-label")),
     ).toEqual([
       "Status: In progress",
-      "Assigned lawyer: Lawyer B",
+      "Reviewer: Lawyer B",
       "Requester: Jane Business",
       "Choose target date",
     ]);
@@ -1168,10 +1515,10 @@ describe("request detail", () => {
     const activity = await screen.findByRole("region", { name: "Activity" });
     const entries = within(activity).getAllByRole("listitem");
     // A note's text sits below its line.
-    expect(entries[1].textContent).toMatch(/added a note · .*Called the supplier$/);
+    expect(entries[1].textContent).toMatch(/commented · .*Called the supplier$/);
     expect(entries.map((entry) => entry.textContent)).toEqual([
-      expect.stringContaining("Lawyer A recorded this"),
-      expect.stringContaining("Lawyer A added a note"),
+      expect.stringContaining("Lawyer A created this"),
+      expect.stringContaining("Lawyer A commented"),
       expect.stringContaining("Lawyer A marked this waiting on the requester"),
     ]);
   });
@@ -1190,8 +1537,8 @@ describe("request detail", () => {
     expect(
       within(activity).getAllByRole("listitem").map((entry) => entry.textContent),
     ).toEqual([
-      expect.stringContaining("recorded this"),
-      expect.stringContaining("added a note"),
+      expect.stringContaining("created this"),
+      expect.stringContaining("commented"),
       expect.stringContaining("marked this waiting on the requester"),
     ]);
   });
@@ -1226,7 +1573,7 @@ describe("request detail", () => {
         expect.objectContaining({ expected_version: 1 }),
       ),
     );
-    await waitFor(() => expect(mocks.push).toHaveBeenCalledWith("/intake"));
+    await waitFor(() => expect(mocks.push).toHaveBeenCalledWith("/intake/requests"));
     // The deleted request is not loaded again.
     expect(mocks.request).toHaveBeenCalledTimes(1);
   });
@@ -1339,7 +1686,33 @@ describe("request detail", () => {
     expect(mocks.upload).not.toHaveBeenCalled();
   });
 
-  it("keeps files dropped on the note form for the note, until it is cancelled", async () => {
+  it("adds library documents to a note, copied onto it once it is saved", async () => {
+    mocks.command.mockResolvedValue({ ...receipt, message_id: "note-1" });
+    mocks.copy.mockResolvedValue([]);
+    const user = userEvent.setup();
+    render(detail());
+    const editor = await noteEditor();
+    await user.click(screen.getByRole("button", { name: "Add documents" }));
+    await user.click(
+      screen.getByRole("button", { name: "Pick Library NDA.pdf" }),
+    );
+    expect(
+      screen.getByRole("list", { name: "Documents to add with the note" }),
+    ).toHaveTextContent("Library NDA.pdf");
+    expect(mocks.copy).not.toHaveBeenCalled();
+    fireEvent.change(editor, { target: { value: "Sent the signed copy." } });
+    await user.click(screen.getByRole("button", { name: "Submit" }));
+    await waitFor(() =>
+      expect(mocks.copy).toHaveBeenCalledWith(
+        "org-a",
+        "request-a",
+        ["library-doc"],
+        "note-1",
+      ),
+    );
+  });
+
+  it("keeps files dropped on the comment box for the comment, until removed", async () => {
     render(detail());
     const editor = await noteEditor();
     const file = contractFile();
@@ -1354,11 +1727,72 @@ describe("request detail", () => {
       screen.getByRole("list", { name: "Documents to add with the note" }),
     ).toHaveTextContent("Supplier NDA.docx");
     expect(mocks.upload).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove Supplier NDA.docx" }));
     expect(
       screen.queryByRole("list", { name: "Documents to add with the note" }),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Add note" })).toBeInTheDocument();
+    // The box itself is always there; it has no Close.
+    expect(screen.getByLabelText("Add comment")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Close" })).not.toBeInTheDocument();
+  });
+
+  it("resolves from the comment box with or without a comment, in place of Cancel", async () => {
+    mocks.command.mockResolvedValue(receipt);
+    const user = userEvent.setup();
+    render(detail());
+    const editor = await noteEditor();
+    expect(
+      screen.queryByRole("button", { name: "Cancel" }),
+    ).not.toBeInTheDocument();
+    // With nothing typed, it resolves without a resolution.
+    const resolve = screen.getByRole("button", { name: "Resolve request" });
+    expect(resolve).toBeEnabled();
+    await user.click(resolve);
+    await waitFor(() => expect(mocks.command).toHaveBeenCalledTimes(1));
+    expect(mocks.command.mock.calls[0][3]).not.toHaveProperty("body");
+    // A comment, when there is one, becomes the resolution.
+    fireEvent.change(editor, { target: { value: "Signed as drafted." } });
+    await user.click(resolve);
+    await waitFor(() =>
+      expect(mocks.command).toHaveBeenCalledWith(
+        "org-a",
+        "request-a",
+        "resolve",
+        expect.objectContaining({ body: "Signed as drafted." }),
+      ),
+    );
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("reads a resolution under its resolved entry in the timeline", async () => {
+    const at = "2026-10-28T10:00:00Z";
+    mocks.request.mockResolvedValue(
+      request({ state: "resolved", capabilities: { ...capabilities, edit: false, assign: false, resolve: false, cancel: false, reopen: true } }),
+    );
+    mocks.messages.mockResolvedValue([
+      message({ id: "m1", kind: "resolution", body: "Signed as drafted.", created_at: at }),
+    ]);
+    mocks.events.mockResolvedValue([
+      event({ id: 1, created_at: "2026-10-26T10:00:00Z" }),
+      event({ id: 2, kind: "resolve", to_state: "resolved", created_at: at }),
+    ]);
+    render(detail());
+    const activity = await screen.findByRole("region", { name: "Activity" });
+    const entries = within(activity).getAllByRole("listitem");
+    expect(entries).toHaveLength(2);
+    expect(entries[1]).toHaveTextContent(/resolved this · .*Signed as drafted\.$/);
+  });
+
+  it("leaves Resolve request out when the request cannot be resolved", async () => {
+    // An open request the server says this member cannot resolve.
+    mocks.request.mockResolvedValue(
+      request({ capabilities: { ...capabilities, resolve: false } }),
+    );
+    render(detail());
+    await noteEditor();
+    expect(
+      screen.queryByRole("button", { name: "Resolve request" }),
+    ).not.toBeInTheDocument();
   });
 
   it("asks for documents in the field and says what is uploading", async () => {
@@ -1388,7 +1822,23 @@ describe("request detail", () => {
         name: /^Drag and drop documents here, or click to browse\./,
       }),
     );
-    expect(browse).toHaveBeenCalledTimes(1);
+    // Clicking opens Add documents, and a picked library file is copied on.
+    expect(browse).not.toHaveBeenCalled();
+    mocks.copy.mockResolvedValue([]);
+    fireEvent.click(
+      within(screen.getByRole("dialog", { name: "Add documents" })).getByRole(
+        "button",
+        { name: "Pick Library NDA.pdf" },
+      ),
+    );
+    await waitFor(() =>
+      expect(mocks.copy).toHaveBeenCalledWith(
+        "org-a",
+        "request-a",
+        ["library-doc"],
+        null,
+      ),
+    );
     fireEvent.change(
       documents.querySelector<HTMLInputElement>('input[type="file"]')!,
       { target: { files: [contractFile()] } },
@@ -1523,13 +1973,15 @@ describe("request detail", () => {
     await user.click(await screen.findByRole("button", { name: "Edit request" }));
     const editor = screen.getByRole("textbox", { name: "Request" });
     expect(editor).toHaveValue("Request description");
-    expect(screen.getByRole("button", { name: "Submit" })).toBeDisabled();
+    // The comment box has a Submit of its own, so look in the request's section.
+    const section = editor.closest("section")!;
+    expect(within(section).getByRole("button", { name: "Submit" })).toBeDisabled();
     await user.clear(editor);
     await user.type(editor, "A clearer description");
     mocks.request.mockResolvedValue(
       request({ version: 2, description: "A clearer description" }),
     );
-    await user.click(screen.getByRole("button", { name: "Submit" }));
+    await user.click(within(section).getByRole("button", { name: "Submit" }));
     await waitFor(() =>
       expect(mocks.edit).toHaveBeenCalledWith(
         "org-a",
@@ -1576,7 +2028,7 @@ describe("request detail", () => {
     expect(
       screen.queryByText("Confidential request A"),
     ).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Add a note")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Add comment")).not.toBeInTheDocument();
     const original = structuredClone(mocks.command.mock.calls[0]);
     fireEvent.click(screen.getByRole("button", { name: "Check again" }));
     await waitFor(() => expect(mocks.command).toHaveBeenCalledTimes(3));
@@ -1612,7 +2064,7 @@ describe("history navigation recovery", () => {
     first.unmount();
     mocks.request.mockResolvedValue(request({ version: 7 }));
     render(detail());
-    expect(screen.queryByLabelText("Add a note")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Add comment")).not.toBeInTheDocument();
     expect(await noteEditor()).toHaveValue(
       "Retained note!",
     );

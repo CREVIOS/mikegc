@@ -100,6 +100,23 @@ describe.skipIf(!url || !key || !anon)(
     }, 60000);
     afterAll(async () => {
       if (db) {
+        // A test that failed part way may leave documents that would block
+        // deleting the organizations and accounts.
+        expect(
+          (
+            await db
+              .from("documents")
+              .delete()
+              .or(
+                [
+                  `org_id.in.(${org},${other})`,
+                  ...(users.length
+                    ? [`user_id.in.(${users.map((u) => u.id).join(",")})`]
+                    : []),
+                ].join(","),
+              )
+          ).error,
+        ).toBeNull();
         expect(
           (await db.from("organizations").delete().in("id", [org, other]))
             .error,
@@ -511,6 +528,183 @@ describe.skipIf(!url || !key || !anon)(
       expect(
         (await db.from("documents").select("id").eq("id", documentId)).data,
       ).toEqual([]);
+    });
+    it("copies a member's library document onto a request and their comment, leaving the original alone", async () => {
+      const { uploadFile, downloadFile } = await import(
+        "../../lib/storage.js"
+      );
+      const bytes = new TextEncoder().encode("%PDF-1.4 synthetic library NDA");
+      const library = async (
+        owner: number,
+        orgId: string | null,
+        filename: string,
+      ) => {
+        const id = randomUUID();
+        const versionId = randomUUID();
+        const storagePath = `documents/${users[owner].id}/${id}/source.pdf`;
+        await uploadFile(storagePath, bytes.slice().buffer, "application/pdf");
+        expect(
+          (
+            await db.from("documents").insert({
+              id,
+              org_id: orgId,
+              user_id: users[owner].id,
+              library_kind: "file",
+              status: "ready",
+            })
+          ).error,
+        ).toBeNull();
+        expect(
+          (
+            await db.from("document_versions").insert({
+              id: versionId,
+              document_id: id,
+              storage_path: storagePath,
+              version_number: 1,
+              filename,
+              file_type: "pdf",
+              size_bytes: bytes.length,
+            })
+          ).error,
+        ).toBeNull();
+        await db
+          .from("documents")
+          .update({ current_version_id: versionId })
+          .eq("id", id);
+        return id;
+      };
+      const source = await library(1, org, "Library NDA.pdf");
+      const personal = await library(1, null, "Personal draft.pdf");
+      const outsider = await library(5, other, "Other NDA.pdf");
+      const unfinished = await library(1, org, "Unfinished NDA.pdf");
+      await db
+        .from("documents")
+        .update({ status: "processing" })
+        .eq("id", unfinished);
+      const body = input();
+      expect((await post(1, "/requests", body)).status).toBe(201);
+      const copyPath = `/requests/${body.id}/documents/copy`;
+
+      const copied = await post(1, copyPath, { document_ids: [source] });
+      expect(copied.status).toBe(201);
+      expect(copied.body).toEqual([
+        expect.objectContaining({
+          filename: "Library NDA.pdf",
+          file_type: "pdf",
+          status: "ready",
+          message_id: null,
+          added_by_name: users[1].email,
+        }),
+      ]);
+      const copyId = copied.body[0].document_id as string;
+      expect(copyId).not.toBe(source);
+      const { data: copy } = await db
+        .from("documents")
+        .select("org_id, library_kind, current_version_id")
+        .eq("id", copyId)
+        .single();
+      expect(copy).toMatchObject({
+        org_id: org,
+        library_kind: "intake_attachment",
+      });
+      const { data: version } = await db
+        .from("document_versions")
+        .select("storage_path")
+        .eq("id", copy!.current_version_id)
+        .single();
+      expect(version!.storage_path).not.toContain(source);
+      expect(
+        new Uint8Array((await downloadFile(version!.storage_path))!),
+      ).toEqual(bytes);
+      expect(
+        (await db.from("documents").select("library_kind").eq("id", source))
+          .data,
+      ).toEqual([{ library_kind: "file" }]);
+
+      // A copy onto the actor's own comment is tagged there, and the comment
+      // is the timeline entry, so no document event of its own.
+      for (const actor of [1, 2])
+        expect(
+          (
+            await post(actor, `/requests/${body.id}/notes`, {
+              command_id: randomUUID(),
+              body: `Comment by ${actor}`,
+            })
+          ).status,
+        ).toBe(200);
+      const comments = (await get(1, `/requests/${body.id}/messages`))
+        .body as { id: string; author_id: string }[];
+      const mine = comments.find((m) => m.author_id === users[1].id)!;
+      const theirs = comments.find((m) => m.author_id === users[2].id)!;
+      const tagged = await post(1, copyPath, {
+        document_ids: [source],
+        message_id: mine.id,
+      });
+      expect(tagged.status).toBe(201);
+      expect(
+        tagged.body.filter(
+          (d: { message_id: string | null }) => d.message_id === mine.id,
+        ),
+      ).toHaveLength(1);
+      expect(
+        (await get(1, `/requests/${body.id}/events`)).body.filter(
+          (e: { kind: string }) => e.kind === "document_added",
+        ),
+      ).toHaveLength(1);
+
+      // Refused: another workspace's document, one the actor cannot read, one
+      // still processing, and someone else's comment. None leaves a copy.
+      const attachments = async () =>
+        (
+          await db
+            .from("documents")
+            .select("id")
+            .eq("user_id", users[1].id)
+            .eq("library_kind", "intake_attachment")
+        ).data?.length;
+      const before = await attachments();
+      const personalCopy = await post(1, copyPath, {
+        document_ids: [personal],
+      });
+      expect(personalCopy.status).toBe(400);
+      expect(personalCopy.body.code).toBe("workspace_mismatch");
+      expect(
+        (await post(1, copyPath, { document_ids: [outsider] })).status,
+      ).toBe(404);
+      expect(
+        (await post(1, copyPath, { document_ids: [source, unfinished] }))
+          .status,
+      ).toBe(400);
+      expect(
+        (
+          await post(1, copyPath, {
+            document_ids: [source],
+            message_id: theirs.id,
+          })
+        ).status,
+      ).toBe(404);
+      expect(await attachments()).toBe(before);
+      expect((await get(1, `/requests/${body.id}/documents`)).body).toHaveLength(
+        2,
+      );
+
+      expect(
+        (await db.from("intake_requests").delete().eq("id", body.id)).error,
+      ).toBeNull();
+      expect(
+        (await db.from("documents").select("id").eq("id", copyId)).data,
+      ).toEqual([]);
+      expect(
+        (await db.from("documents").select("id").eq("id", source)).data,
+      ).toHaveLength(1);
+      expect(
+        (
+          await db
+            .from("documents")
+            .delete()
+            .in("id", [source, personal, outsider, unfinished])
+        ).error,
+      ).toBeNull();
     });
     it("keeps intake out of new account exports and still checks older intake manifests", async () => {
       const { startUserExport, loadUserExportArtifact } = await import(

@@ -2,6 +2,7 @@ import type {
   IntakeMessage,
   IntakeState,
 } from "@mike/contracts";
+import { PERSONAL_WORKSPACE } from "@/app/contexts/WorkspaceContext";
 
 /** Stored states keep their original names; these are what Legal sees. */
 export const INTAKE_STATE_LABELS: Record<IntakeState, string> = {
@@ -57,6 +58,14 @@ function todayIn(timezone: string, now: Date) {
   } catch {
     return now.toISOString().slice(0, 10);
   }
+}
+
+/** What deleting requests takes, and from whom: an organization's members, or only you. */
+export function intakeDeleteMessage(orgId: string, many: boolean) {
+  const what = `${many ? "Their" : "Its"} notes, history and documents are deleted`;
+  return orgId === PERSONAL_WORKSPACE
+    ? `${what}. This can't be undone.`
+    : `${what} for everyone in your organization. This can't be undone.`;
 }
 
 /** An open request is overdue once its target day has passed where it was set. */

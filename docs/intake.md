@@ -3,12 +3,86 @@
 Intake is the Legal team's internal tracker for contract reviews and legal
 questions from the business. MikeGC is used only by the Legal team, so every
 member of an organization is on the Legal team and works one shared queue.
-Business colleagues never use MikeGC: a lawyer records the request that arrived
+Business colleagues never use MikeGC: a lawyer creates the request that arrived
 by email, chat, phone or in a meeting, and the business person appears only as
 the named requester on that record.
 
-Intake is always on in every organization; there is no setting to switch it
-off. Personal workspaces do not have an intake queue.
+Intake is always on in every organization and in Personal; there is no
+setting to switch it off. In Personal it tracks the person's own requests,
+which nobody else can see.
+
+## The requests list's URL
+
+`/intake/requests` keeps what it shows in its query, so a link, a reload or
+Back from a request opens the same list. Defaults are left out, so the plain
+list is `/intake/requests`; `/intake` redirects there with its query.
+
+| Parameter | Values |
+| --- | --- |
+| `tab` | `resolved` or `cancelled` (**Outstanding** when absent) |
+| `scope` | `open`, `unassigned`, `overdue`, `recorded_30d` or `resolved_30d`: what a dashboard count opened |
+| `status` | `submitted`, `in_review` or `needs_information` |
+| `assignee` | a member's user ID |
+| `requester` | one requester's name, matched without case |
+| `sort` | `updated_asc` or `target` (most recently updated first when absent) |
+| `q` | the search text |
+
+For example, the **Overdue** count opens
+`/intake/requests?scope=overdue&sort=target`. Changing tab adds a step that
+Back returns from; filters, sorting and search replace the current URL. Values the page does not recognise are ignored.
+`frontend/src/app/components/intake/intakeQuery.ts` reads and writes them.
+
+## Personal intake
+
+Every account has a personal organization behind the scenes, with the account
+as its only member (see `backend/src/lib/personalOrgs.ts`). Personal intake
+keeps its requests there, so it works exactly like an organization's queue
+with one member. Clients never learn that organization's id: intake paths and
+uploads name it `personal` (`/intake/personal/requests`, an upload destination
+of `{ scope: "intake", org_id: "personal" }`), and the backend resolves it to
+the caller's own personal organization, creating it for an account that
+predates it. Attachments are filed under it, so only their uploader can open
+them. The dashboard leaves out the unassigned count and the workload table,
+since everything belongs to the owner. Deleting the account deletes its
+personal organization and every request in it.
+
+## Dashboard
+
+Intake has two pages, `/intake/requests` (the list; plain `/intake` opens it)
+and `/intake/dashboard`, and the **Requests** and **Dashboard** buttons in
+their header switch between them. The dashboard shows where the workspace's
+requests stand and loads afresh each time it is opened:
+
+- Counts of open, unassigned and overdue requests; requests created and
+  requests resolved, each over the last 7, 30 (the default) or 90 days or 12
+  months; and the median time from creation to resolution over the last 30
+  (the default) or 90 days or 12 months. Each of these three figures has its own
+  period menu in its caption. **Open**, **Unassigned** and **Overdue**
+  link to the requests they count: **Open** to the plain **Outstanding** tab,
+  the other two to **Outstanding** with a filter named like the count, removed
+  by choosing it or another tab, and overdue requests sorted by target date.
+  The other counts are read-only.
+- Open requests by status, as a pie in the queue's status colors beside a
+  legend with each count and share. A status with open requests links, with a
+  chevron, to the **Outstanding** list filtered to it
+  (`/intake/requests?status=in_review`).
+- Requests created and resolved in each of the last 4, 8 (the default), 12
+  or 26 weeks, chosen from the menu under the chart's title. Weeks start
+  on Monday in the viewer's timezone; each week's counts are in its tooltip
+  and its accessible name.
+- Workload: each assigned member's open, waiting and overdue requests, busiest
+  first. Each row links to that member's outstanding requests
+  (`/intake/requests?assignee=<user ID>`).
+
+`intake_dashboard` computes all of it in one call, and any member may read it.
+The list's `scope` filter (`intake_list_in_scope`: `open`, `unassigned`,
+`overdue`, `recorded_30d`, `resolved_30d`) uses the same definitions, so a
+count and its list always agree.
+A request is overdue once its target day has passed in its own timezone, as in
+the queue. A request reopened and resolved again counts as resolved again in
+its week; its time to resolve runs to its latest resolution. Chart colors are
+the `--chart-*` tokens in `frontend/src/app/globals.css`, each theme's step
+validated against that theme's card surface.
 
 ## Working with a request
 
@@ -20,19 +94,20 @@ off. Personal workspaces do not have an intake queue.
    include a timezone; it is a planning aid, not a verified legal deadline.
    The requester's team is not asked for yet; requests keep any team recorded
    earlier, and search still matches it.
-   The **Assigned lawyer** menu lists **Unassigned** and every member with
-   their avatar, the creator first and marked "(you)"; it starts on the
+   The **Reviewer** menu lists **Unassigned** and every member with
+   their avatar, the creator first as **Myself**; it starts on the
    creator. The request page's assignee menu offers the same list.
-2. The queue lists every request in the organization. Search covers the
-   subject, description and requester. Filters narrow by status and by
-   assigned lawyer, including **Unassigned** and **Assigned to me**, and the
-   list can be sorted by target date. Open requests past their target date
-   are marked overdue.
+2. The queue's **Outstanding** tab, which it opens on, lists the
+   organization's open requests (New, In progress and Waiting on requester);
+   the **Resolved** and **Cancelled** tabs list the closed ones. Search covers
+   the subject, description and requester. Filters narrow by status and by
+   reviewer, and the list can be sorted by target date. Open requests
+   past their target date are marked overdue.
 3. Any member can assign or reassign a request, add notes at any time, mark
    it **Waiting on requester** and resume it, edit its details while it is
-   open, resolve it with a required resolution, cancel it with a required
-   reason, reopen it, and delete it. The resolution or cancellation reason is
-   pinned to the request.
+   open, resolve it with an optional resolution, cancel it with a required
+   reason, reopen it, and delete it. A resolution or cancellation reason
+   reads in the timeline beside the change.
 
 The request page centres the request beside a **Details** sidebar. The page
 header shows the subject in its breadcrumb, with a **Copy link** button
@@ -40,19 +115,20 @@ and a **More actions** menu holding **Delete request**. Above the request, the s
 is the page title in a serif heading, edited in place where the request can be
 edited. On wide screens the
 sidebar stays in place while the page scrolls; on narrow
-screens it comes first. It shows the status, the assigned lawyer,
+screens it comes first. It shows the status, the reviewer,
 the requester's name and email, the target date with its timezone, who created the request
 (**Created by**) and when (**Created**).
 
 The status is a menu in the sidebar. While a request is open it lists every
 status: **In progress** and **Waiting on requester** apply at once, **Resolved**
-and **Cancelled** open a dialog for the required resolution or reason, and
+brings **Add comment** into view for the resolution, **Cancelled** opens a dialog for the
+required reason, and
 **New** cannot be chosen. A resolved or cancelled request's status menu offers
 **Reopen** instead.
 
 Details are edited in place; there is no edit dialog. While a request is open,
 each sidebar field saves when it is left or Enter is pressed (Escape puts the
-saved value back), the assigned lawyer saves as soon as it is chosen
+saved value back), the reviewer saves as soon as it is chosen
 from its menu, the title saves the same way as a field, and the description
 has a pen button that opens it with **Submit** and **Cancel**. Every edit sends the request's whole
 details at its loaded version, so an edit made while another change is saving
@@ -61,8 +137,12 @@ request shows its details as text.
 
 A **Request** panel holds the description and the documents, and an
 **Activity** panel holds the timeline. Notes and every change appear together
-in one **Activity** timeline, oldest first, and a grey **Add a note** field
-sits at its end. Each entry puts the avatar of the person who made it on the
+in one **Activity** timeline, oldest first, and the **Add comment** box is
+always open at its end; a resolved or cancelled request has **Reopen** there
+instead. **Resolve request** beside **Submit** resolves the request with the
+comment as its
+resolution, if one was typed; it can also resolve with the box empty. The resolution then reads under the "resolved
+this" entry rather than as a separate one. Each entry puts the avatar of the person who made it on the
 timeline's line and reads as one small line of who did what and when, such as
 "Sam Colleague marked this waiting on the requester · 30 Oct 2026, 19:05". A
 note, resolution or cancellation reason shows its text below that line, and a
@@ -90,15 +170,18 @@ made each change and, for assignments, to whom.
 
 ## Documents
 
-Every request can carry documents. The New request page shows a drop zone: drag files onto it or click it to browse. PDF, Word, Excel and PowerPoint files are accepted. The
-files upload after the request is saved. If an upload fails, the request is
+Every request can carry documents. The New request page shows a drop zone:
+drag files onto it, or click it to open the app's **Add documents** modal and
+pick files from the library or upload new ones. PDF, Word, Excel and
+PowerPoint files are accepted. The files upload, and library files are
+copied, after the request is saved. If an upload fails, the request is
 still saved and a notice says which documents to add again from the request.
 On the request page, **Documents** lists the files in rows like the file
 directory's (name, who added it, when and size); a ready file opens in the
-document viewer. Below the list, a grey field like the playbook run's browses
-for more, and files dropped anywhere on the page are added to the request.
-The note field has **Add documents** too, and files dropped on it wait with
-the note's draft. They upload once the note is saved, are tagged on the note
+document viewer. Below the list, a grey field like the playbook run's opens
+**Add documents**, and files dropped anywhere on the page are added to the
+request. The note field's **Add documents** opens the same modal, and files
+picked there or dropped on the field wait with the note's draft. They upload once the note is saved, are tagged on the note
 (opening in the viewer once ready) and are listed with the request's other
 documents. If an upload fails, the note is still saved and a notice says to
 add the documents to the request instead.
@@ -108,10 +191,21 @@ request's organization and linked to the request in `intake_request_documents`.
 The upload worker links each document to its request as soon as the document
 row exists, before any bytes are copied, so a closed tab never leaves a file
 that belongs to no request. If the request is gone by then, the document is
-removed and the upload stops. Documents added with a note name it in the
-upload, and the link records it in `message_id`. The note must be the
-uploader's own note on the same request. The note stands for those documents
-in the timeline, so they get no separate `document_added` event.
+removed and the upload stops. Documents added with a note, or with a
+resolution written in the note form, name that message in the upload, and the
+link records it in `message_id`. The message must be the uploader's own note or
+resolution on the same request. It stands for those documents in the timeline,
+so they get no separate `document_added` event.
+
+A library file picked in **Add documents** is copied, never moved:
+`POST /intake/:org/requests/:id/documents/copy` takes up to 20 document IDs
+and an optional note or resolution ID. Each source must be readable by the
+member, come from the request's workspace, as a project's documents must,
+and have finished processing. The copy becomes its own `intake_attachment`,
+linked before its bytes are copied and processing until its version exists,
+so the library original and the request's copy change independently.
+Uploading in the modal files the new document in the member's library first,
+then copies it to the request.
 
 - Attachments never appear in the Library or in Library search.
 - Every current member of the organization can open, preview, download and use
@@ -131,7 +225,7 @@ automatic legal decisions.
 ## Access and retention
 
 - Every current member of a team organization can read and work every
-  request, regardless of role. There is no separate Legal roster. This shared
+  request, regardless of role. Personal requests are their owner's alone. There is no separate Legal roster. This shared
   queue is unsuitable for matters that need separate access restrictions
   between members.
 - Requester names, emails and teams are business records typed by Legal, not
@@ -176,7 +270,7 @@ conflict. Conflicts refresh the current request while retaining unsent text. An
 uncertain network result locks editing and offers **Check again** for the same
 command. A later access denial hides request content immediately.
 
-The queue pages by keyset cursor, so a request recorded or updated while
+The queue pages by keyset cursor, so a request created or updated while
 someone scrolls is never shown twice. Returning to the window refreshes the
 queue and the open request in place, at most every 30 seconds, without dropping
 rows already loaded or discarding drafts.
@@ -225,6 +319,24 @@ Apply migrations before starting the new application build:
   review or legal question) and redefines the functions that used it.
 - `20261101_01_intake_note_documents.sql` links documents to the note they were
   added with (`intake_request_documents.message_id`) and lists that link.
+- `20261101_02_intake_personal_workspace.sql` lets each account's personal
+  organization hold intake requests.
+- `20261101_03_intake_dashboard.sql` adds `intake_dashboard`.
+- `20261101_04_intake_list_scopes.sql` adds the list's `scope` filter, so each
+  dashboard count opens its requests.
+- `20261101_05_intake_requester_filter.sql` adds the list's `requester`
+  filter and `intake_list_requesters`, which lists each requester once for
+  the Requester filter.
+- `20261101_06_intake_member_photos.sql` returns profile photos with the
+  member list and the dashboard's workload rows, and names who acted on each
+  history entry by ID, so intake avatars show photos without repeating them.
+- `20261101_07_intake_resolution_documents.sql` lets documents added with a
+  resolution link to it, as they do to a note.
+- `20261101_08_intake_dashboard_periods.sql` lets the dashboard read its
+  created, resolved and median figures over chosen periods, and says which
+  periods it used.
+- `20261102_01_intake_resolve_optional_text.sql` lets a request be resolved
+  without a resolution; cancelling still needs a reason.
 
 Use the existing migration runner documented in [deployment.md](deployment.md).
 Do not replay historical migrations over a fresh schema. Fresh installations use
@@ -257,7 +369,7 @@ Keep the schema and stored records; do not drop the tables as rollback.
   attachments. Schema-drift CI explicitly runs these tests and
   the existing organization lifecycle suites.
 - `npm run test:e2e -- e2e/intake.spec.ts --project=chromium` against the documented
-  local stack. The browser journey attaches a contract while recording the
+  local stack. The browser journey attaches a contract while creating the
   request, keeps it across Back/Forward, and has a second lawyer open it once
   the upload is processed. It restores drafts across Back/Forward, drops a
   submission response after commit, then injects a rate limit and checks the

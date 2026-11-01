@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, Loader2 } from "lucide-react";
+import { Check, ChevronDown, Loader2, X } from "lucide-react";
 import {
   Popover,
   PopoverContent,
@@ -89,14 +89,23 @@ export function PersonFilter({
   loadPeople,
   label = "Filter by person",
   selectedTitle = (name) => `Performed by ${name}`,
+  selfId,
+  removable = false,
 }: {
   value: PersonOption | null;
   onChange: (value: PersonOption | null) => void;
   /** Read through a ref: a new function on each render does not reload. */
   loadPeople: LoadPeople;
   label?: string;
-  selectedTitle?: (name: string) => string;
+  /** `self` is true when the chosen person is the signed-in one. */
+  selectedTitle?: (name: string, self: boolean) => string;
+  /** The signed-in person, listed first as "Myself". */
+  selfId?: string;
+  /** The chosen person's row has a button that removes them from the filter. */
+  removable?: boolean;
 }) {
+  const nameOf = (person: PersonOption) =>
+    person.user_id === selfId ? "Myself" : personName(person);
   const loadPeopleRef = useRef(loadPeople);
   useEffect(() => {
     loadPeopleRef.current = loadPeople;
@@ -183,7 +192,11 @@ export function PersonFilter({
           type="button"
           aria-label={label}
           aria-pressed={Boolean(value)}
-          title={value ? selectedTitle(personName(value)) : label}
+          title={
+            value
+              ? selectedTitle(nameOf(value), value.user_id === selfId)
+              : label
+          }
           className={textButtonUIClassName({
             className: `h-[18px] w-[22px] p-0 ${value ? "text-blue-600" : "text-gray-400"}`,
           })}
@@ -271,32 +284,62 @@ export function PersonFilter({
               All people{" "}
               {!value && <Check aria-hidden className="h-3.5 w-3.5" />}
             </DropdownButton>
-            {users.map((user) => (
-              <DropdownButton
-                key={user.user_id}
-                data-person
-                aria-pressed={value?.user_id === user.user_id}
-                className="flex w-full items-start gap-2 rounded-lg px-3 py-2 text-left"
-                onClick={() => choose(user)}
-              >
-                <UserAvatar
-                  name={user.display_name}
-                  email={user.email}
-                  photo={user.profile_photo}
-                />
-                <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
-                  <span className="block text-gray-800">
-                    {personName(user)}
-                  </span>
-                  {user.display_name && user.email && (
-                    <span className="block text-gray-500">{user.email}</span>
+            {(selfId
+              ? [
+                  ...users.filter((user) => user.user_id === selfId),
+                  ...users.filter((user) => user.user_id !== selfId),
+                ]
+              : users
+            ).map((user) => {
+              const chosen = value?.user_id === user.user_id;
+              const removes = chosen && removable;
+              return (
+                // The remove button sits over the row, where the tick would
+                // be, rather than inside it: a button cannot hold another.
+                <div key={user.user_id} className="relative">
+                  <DropdownButton
+                    data-person
+                    aria-pressed={chosen}
+                    className={`flex w-full items-start gap-2 rounded-lg px-3 py-2 text-left ${removes ? "pr-9" : ""}`}
+                    onClick={() => choose(user)}
+                  >
+                    <UserAvatar
+                      name={user.display_name}
+                      email={user.email}
+                      photo={user.profile_photo}
+                    />
+                    <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
+                      <span className="block text-gray-800">
+                        {nameOf(user)}
+                      </span>
+                      {user.display_name && user.email && (
+                        <span className="block text-gray-500">
+                          {user.email}
+                        </span>
+                      )}
+                    </span>
+                    {chosen && !removes && (
+                      <Check aria-hidden className="h-3.5 w-3.5 shrink-0" />
+                    )}
+                  </DropdownButton>
+                  {removes && (
+                    <button
+                      type="button"
+                      aria-label={
+                        user.user_id === selfId
+                          ? "Remove yourself from the filter"
+                          : `Remove ${personName(user)} from the filter`
+                      }
+                      title="Remove from the filter"
+                      onClick={() => choose(null)}
+                      className="absolute right-2 top-2 rounded-full p-0.5 text-gray-500 transition-colors hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+                    >
+                      <X aria-hidden="true" className="h-3.5 w-3.5" />
+                    </button>
                   )}
-                </span>
-                {value?.user_id === user.user_id && (
-                  <Check aria-hidden className="h-3.5 w-3.5 shrink-0" />
-                )}
-              </DropdownButton>
-            ))}
+                </div>
+              );
+            })}
             {loading && !users.length ? (
               <div
                 role="status"

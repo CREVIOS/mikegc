@@ -58,4 +58,69 @@ describe("PersonFilter", () => {
     expect(trigger).toHaveAttribute("title", "Created by Ada");
     expect(trigger).toHaveAttribute("aria-pressed", "true");
   });
+
+  it("removes the chosen person with the button on their row, where the tick was", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const people = distinctPeople([
+      { user_id: "a", display_name: "Ada Lovelace" },
+      { user_id: "g", display_name: "Grace Hopper" },
+    ]);
+    render(
+      <PersonFilter
+        label="Filter by lawyer"
+        removable
+        value={people[0]}
+        onChange={onChange}
+        loadPeople={localPeople(people)}
+      />,
+    );
+    await user.click(screen.getAllByRole("button", { name: "Filter by lawyer" })[0]);
+    const remove = await screen.findByRole("button", {
+      name: "Remove Ada Lovelace from the filter",
+    });
+    expect(remove).toHaveClass("focus-visible:ring-2");
+    // Only the chosen row offers it, and it has no tick beside it.
+    expect(screen.getAllByRole("button", { name: /from the filter/ })).toHaveLength(1);
+    expect(remove.closest("div")?.querySelector(".lucide-check")).toBeNull();
+    await user.click(remove);
+    expect(onChange).toHaveBeenCalledExactlyOnceWith(null);
+  });
+
+  it("lists the signed-in person first, as Myself", async () => {
+    const user = userEvent.setup();
+    const people = distinctPeople([
+      { user_id: "a", display_name: "Ada Lovelace" },
+      { user_id: "g", display_name: "Grace Hopper" },
+    ]);
+    const { rerender } = render(
+      <PersonFilter
+        label="Filter by lawyer"
+        selectedTitle={(name, self) => (self ? "Assigned to me" : `Assigned to ${name}`)}
+        selfId="g"
+        value={null}
+        onChange={vi.fn()}
+        loadPeople={localPeople(people)}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Filter by lawyer" }));
+    await screen.findByRole("button", { name: /Myself/ });
+    expect(
+      Array.from(document.querySelectorAll("[data-person]"), (row) => row.textContent),
+    ).toEqual(["All people ", "GHMyself", "ALAda Lovelace"]);
+    expect(screen.queryByText("Grace Hopper")).not.toBeInTheDocument();
+    rerender(
+      <PersonFilter
+        label="Filter by lawyer"
+        selectedTitle={(name, self) => (self ? "Assigned to me" : `Assigned to ${name}`)}
+        selfId="g"
+        value={people[1]}
+        onChange={vi.fn()}
+        loadPeople={localPeople(people)}
+      />,
+    );
+    expect(
+      screen.getAllByRole("button", { name: "Filter by lawyer" })[0],
+    ).toHaveAttribute("title", "Assigned to me");
+  });
 });

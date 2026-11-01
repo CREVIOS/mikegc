@@ -446,6 +446,34 @@ describe("upload processing", () => {
     expect(linkedBeforeCopy).toBe(true);
   });
 
+  it("files a Personal intake attachment under the uploader's own organization", async () => {
+    const personalOrg = "99999999-9999-4999-8999-999999999999";
+    const db = fakeDb({
+      organizations: [{ data: { id: personalOrg }, error: null }],
+      documents: [{ data: { id: baseFile.resource_id }, error: null }],
+    });
+    await processUploadFile(
+      db as never,
+      {
+        ...baseSession,
+        purpose: "document_create",
+        destination: {
+          scope: "intake",
+          org_id: "personal",
+          request_id: "77777777-7777-4777-8777-777777777777",
+        },
+      },
+      baseFile,
+    );
+    expect(db.rpc).toHaveBeenCalledWith(
+      "intake_attach_document",
+      expect.objectContaining({
+        p_org: personalOrg,
+        p_actor: baseSession.user_id,
+      }),
+    );
+  });
+
   it("links an intake attachment added with a note to that note", async () => {
     const db = fakeDb({
       documents: [{ data: { id: baseFile.resource_id }, error: null }],

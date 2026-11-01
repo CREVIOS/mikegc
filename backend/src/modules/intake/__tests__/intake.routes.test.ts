@@ -1,9 +1,17 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ rpc: vi.fn() }));
+const mocks = vi.hoisted(() => ({ rpc: vi.fn(), personalOrg: vi.fn() }));
 vi.mock("../../../lib/supabase", () => ({
-  createServerSupabase: () => ({ rpc: mocks.rpc }),
+  createServerSupabase: () => ({
+    rpc: mocks.rpc,
+    // The caller's personal organization, looked up for "personal" paths.
+    from: () => ({
+      select: () => ({
+        eq: () => ({ eq: () => ({ maybeSingle: mocks.personalOrg }) }),
+      }),
+    }),
+  }),
 }));
 vi.mock("../../../middleware/auth", () => ({
   requireAuth: (
@@ -33,7 +41,97 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.rpc.mockResolvedValue({ data: receipt, error: null });
 });
+describe("intake workspaces and the dashboard", () => {
+  const personalOrg = "00000000-0000-4000-8000-000000000009";
+  it("resolves Personal to the caller's own organization", async () => {
+    mocks.personalOrg.mockResolvedValue({ data: { id: personalOrg }, error: null });
+    mocks.rpc.mockResolvedValue({
+      data: { requests: [], next_cursor: null },
+      error: null,
+    });
+    const res = await request(app).get("/intake/personal/requests");
+    expect(res.status).toBe(200);
+    expect(mocks.rpc).toHaveBeenCalledWith(
+      "intake_list_requests",
+      expect.objectContaining({ p_org: personalOrg, p_actor: "signed-in-user" }),
+    );
+  });
+  it("makes a missing personal organization before using it", async () => {
+    mocks.personalOrg.mockResolvedValue({ data: null, error: null });
+    mocks.rpc.mockImplementation(async (name: string) =>
+      name === "ensure_personal_organization"
+        ? { data: personalOrg, error: null }
+        : { data: [], error: null },
+    );
+    const res = await request(app).get("/intake/personal/members");
+    expect(res.status).toBe(200);
+    expect(mocks.rpc).toHaveBeenCalledWith("ensure_personal_organization", {
+      p_user_id: "signed-in-user",
+    });
+    expect(mocks.rpc).toHaveBeenCalledWith("intake_members", {
+      p_org: personalOrg,
+      p_actor: "signed-in-user",
+    });
+  });
+  it("rejects anything else in place of an organization", async () => {
+    expect((await request(app).get("/intake/team/requests")).status).toBe(400);
+    expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+  it("reads the dashboard in the viewer's timezone", async () => {
+    mocks.rpc.mockResolvedValue({ data: { open: 0 }, error: null });
+    const res = await request(app).get(
+      `${path}/dashboard?timezone=Europe%2FStockholm`,
+    );
+    expect(res.status).toBe(200);
+    expect(mocks.rpc).toHaveBeenCalledWith("intake_dashboard", {
+      p_org: org,
+      p_actor: "signed-in-user",
+      p_timezone: "Europe/Stockholm",
+      p_weeks: 8,
+      p_created_days: 30,
+      p_resolved_days: 30,
+      p_median_days: 30,
+    });
+    await request(app).get(
+      `${path}/dashboard?weeks=26&created_days=365&resolved_days=7&median_days=30`,
+    );
+    expect(mocks.rpc.mock.calls.at(-1)?.[1]).toMatchObject({
+      p_weeks: 26,
+      p_created_days: 365,
+      p_resolved_days: 7,
+      p_median_days: 30,
+    });
+    // Only the periods the menus offer are accepted.
+    for (const query of ["weeks=52", "created_days=14", "median_days=7"])
+      expect(
+        (await request(app).get(`${path}/dashboard?${query}`)).status,
+        query,
+      ).toBe(400);
+  });
+});
 describe("intake route contracts", () => {
+  it("copies readable documents onto a request, refusing bad input before the database", async () => {
+    const copy = `${path}/requests/${id}/documents/copy`;
+    for (const body of [
+      {},
+      { document_ids: [] },
+      { document_ids: ["not-a-uuid"] },
+      { document_ids: [id], message_id: "nope" },
+      { document_ids: [id], extra: true },
+    ])
+      expect((await request(app).post(copy).send(body)).status).toBe(400);
+    expect(mocks.rpc).not.toHaveBeenCalled();
+    // A request the member cannot read is not found, and nothing is copied.
+    mocks.rpc.mockResolvedValueOnce({ data: false, error: null });
+    expect(
+      (await request(app).post(copy).send({ document_ids: [id] })).status,
+    ).toBe(404);
+    expect(mocks.rpc).toHaveBeenCalledWith("intake_can_read", {
+      p_org: org,
+      p_actor: "signed-in-user",
+      p_request: id,
+    });
+  });
   it("takes identity from authentication and rejects client-supplied actor fields", async () => {
     const body = { ...details, id, command_id };
     expect(
@@ -87,6 +185,7 @@ describe("intake route contracts", () => {
     mocks.rpc.mockResolvedValue({ data: [], error: null });
     for (const suffix of [
       "/members",
+      "/requesters",
       `/requests/${id}`,
       `/requests/${id}/messages`,
       `/requests/${id}/events?offset=100&limit=100`,
@@ -118,7 +217,7 @@ describe("intake route contracts", () => {
       error: null,
     });
     const first = await request(app).get(
-      `${path}/requests?assignee=unassigned&search=nda&sort=updated&limit=1`,
+      `${path}/requests?assignee=unassigned&scope=open&search=nda&sort=updated&limit=1`,
     );
     expect(first.status).toBe(200);
     expect(first.body.requests).toEqual([{ id }]);
@@ -132,6 +231,12 @@ describe("intake route contracts", () => {
       p_after_key: null,
       p_after_id: null,
       p_limit: 1,
+      p_scope: "open",
+      p_requester: null,
+    });
+    await request(app).get(`${path}/requests?requester=%20Jane%20Business%20`);
+    expect(mocks.rpc.mock.calls.at(-1)?.[1]).toMatchObject({
+      p_requester: "Jane Business",
     });
     mocks.rpc.mockResolvedValueOnce({
       data: { requests: [], next: null },
@@ -141,13 +246,17 @@ describe("intake route contracts", () => {
       `${path}/requests?cursor=${first.body.next_cursor}&limit=1`,
     );
     expect(second.body).toEqual({ requests: [], next_cursor: null });
+    // A scope the dashboard does not count is refused before the database.
+    expect(
+      (await request(app).get(`${path}/requests?scope=late`)).status,
+    ).toBe(400);
     expect(mocks.rpc.mock.calls.at(-1)?.[1]).toMatchObject({
       p_after_key: "2026-10-30T12:00:00+00:00",
       p_after_id: id,
     });
     const tampered = await request(app).get(`${path}/requests?cursor=abc`);
     expect(tampered.status).toBe(400);
-    expect(mocks.rpc).toHaveBeenCalledTimes(2);
+    expect(mocks.rpc).toHaveBeenCalledTimes(3);
   });
   it("accepts any email the database accepts, such as a single-label domain", async () => {
     for (const requester_email of ["jane@localhost", "a@b"]) {
@@ -199,6 +308,8 @@ describe("intake route contracts", () => {
     ["wait", "intake_wait_request", { expected_version: 2 }, { p_version: 2 }],
     ["resume", "intake_resume_request", { expected_version: 2, body: "Jane replied." }, { p_version: 2, p_body: "Jane replied." }],
     ["resolve", "intake_resolve_request", { expected_version: 2, body: "Approved." }, { p_version: 2, p_body: "Approved." }],
+    // Without a resolution, p_body is still sent, as null, to match the function.
+    ["resolve", "intake_resolve_request", { expected_version: 2 }, { p_version: 2, p_body: null }],
     ["cancel", "intake_cancel_request", { expected_version: 2, body: "Duplicate." }, { p_version: 2, p_body: "Duplicate." }],
     ["reopen", "intake_reopen_request", { expected_version: 2 }, { p_version: 2 }],
     ["delete", "intake_delete_request", { expected_version: 2 }, { p_version: 2 }],
@@ -233,7 +344,7 @@ describe("intake route contracts", () => {
     },
   );
   it.each([
-    ["resolve", { expected_version: 2 }],
+    ["resolve", { expected_version: 2, body: "  " }],
     ["cancel", { expected_version: 2, body: "  " }],
     ["notes", { body: "Note", expected_version: 2 }],
     ["reopen", { expected_version: 2, body: "Why" }],

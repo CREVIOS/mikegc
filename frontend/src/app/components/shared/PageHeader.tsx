@@ -48,6 +48,12 @@ type PageHeaderButtonAction = {
     title?: string;
     iconOnly?: boolean;
     tooltip?: ReactNode;
+    /**
+     * Set on each of a group of buttons that switch between views, such as
+     * Requests and Dashboard: the chosen one is pressed and drawn selected.
+     * They are named by their text, shown at every width.
+     */
+    pressed?: boolean;
 };
 
 type PageHeaderSearchAction = {
@@ -250,7 +256,14 @@ function PageHeaderButtonActionControl({
                 disabled={disabled || action.disabled}
                 title={action.title}
                 aria-label={action.title}
+                aria-pressed={action.pressed}
                 iconOnly={iconOnly}
+                labelled={action.pressed !== undefined}
+                className={
+                    action.pressed
+                        ? `${LIQUID_GLASS_SELECTED_CLASS} text-gray-900 hover:text-gray-900`
+                        : undefined
+                }
             >
                 {action.icon}
                 {action.label}
