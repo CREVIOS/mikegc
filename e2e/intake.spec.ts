@@ -210,7 +210,8 @@ test("Legal records a business request, works it and resolves it exactly once", 
     const noteDocuments = activity.getByRole("list", {
       name: "Documents added with the note",
     });
-    await expect(noteDocuments.getByTitle(/^test\.pdf/)).toBeVisible();
+    // The saved file and its upload placeholder can show together for a moment.
+    await expect(noteDocuments.getByTitle(/^test\.pdf/).first()).toBeVisible();
     await expect(noteDocuments.getByTitle("test.pdf · Uploading")).toHaveCount(
       0,
       { timeout: 60000 },
