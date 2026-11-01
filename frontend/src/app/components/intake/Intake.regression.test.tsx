@@ -1176,6 +1176,26 @@ describe("request detail", () => {
     ]);
   });
 
+  it("puts a note before the change saved with it at the same time", async () => {
+    const at = "2026-10-27T10:00:00Z";
+    mocks.messages.mockResolvedValue([
+      message({ id: "m1", body: "Waiting on the draft", created_at: at }),
+    ]);
+    mocks.events.mockResolvedValue([
+      event({ id: 1, created_at: "2026-10-26T10:00:00Z" }),
+      event({ id: 2, kind: "wait", created_at: at }),
+    ]);
+    render(detail());
+    const activity = await screen.findByRole("region", { name: "Activity" });
+    expect(
+      within(activity).getAllByRole("listitem").map((entry) => entry.textContent),
+    ).toEqual([
+      expect.stringContaining("recorded this"),
+      expect.stringContaining("added a note"),
+      expect.stringContaining("marked this waiting on the requester"),
+    ]);
+  });
+
   it("deletes the request only after confirmation and returns to the queue", async () => {
     mocks.command.mockResolvedValue(receipt);
     const user = userEvent.setup();

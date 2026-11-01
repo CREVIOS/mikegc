@@ -374,7 +374,13 @@ export function Detail({
       at: message.created_at,
       message,
     })),
-  ].sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+  ].sort(
+    (a, b) =>
+      Date.parse(a.at) - Date.parse(b.at) ||
+      // A resolution or reason is saved with its change in one transaction,
+      // so they share a time; the text that caused the change reads first.
+      Number("event" in a) - Number("event" in b),
+  );
   const assign = (assigneeId: string | null) =>
     command("assignment", "assign the request", { assignee_id: assigneeId });
   // An unresolved save stays retryable even while the request is hidden.
