@@ -455,6 +455,7 @@ async function processCreatedDocument(
       { orgId: orgId as string, actorId: session.user_id },
       destination.request_id as string,
       documentId,
+      (destination.message_id as string | undefined) ?? null,
     );
     if (!attached.ok) {
       if (attached.kind === "error") throw attached.error;

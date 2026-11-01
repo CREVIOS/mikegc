@@ -23,7 +23,6 @@ const scoped = (scope: IntakeScope) => ({
   p_actor: scope.actorId,
 });
 const detailArgs = (d: IntakeDetails) => ({
-  p_category: d.category,
   p_subject: d.subject,
   p_description: d.description,
   p_requester_name: d.requester_name,
@@ -70,10 +69,9 @@ export async function listIntakeRequests(
   scope: IntakeScope,
   filters: {
     state?: string;
-    category?: "nda" | "general";
     assignee?: string;
     search: string;
-    sort: "updated" | "target";
+    sort: "updated" | "updated_asc" | "target";
     cursor?: string;
     limit: number;
   },
@@ -93,7 +91,6 @@ export async function listIntakeRequests(
     p_after_key: after?.key ?? null,
     p_after_id: after?.id ?? null,
     p_limit: filters.limit,
-    p_category: filters.category ?? null,
   });
   if (!result.ok) return result;
   return ok({
@@ -173,6 +170,7 @@ const COMMAND_RPC: Record<IntakeCommandAction, string> = {
   resolve: "intake_resolve_request",
   cancel: "intake_cancel_request",
   reopen: "intake_reopen_request",
+  delete: "intake_delete_request",
 };
 
 /** Run one request command; each SQL wrapper takes only the arguments it declares. */

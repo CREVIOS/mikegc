@@ -1015,6 +1015,20 @@ describe("direct upload sessions", () => {
             },
         },
         {
+            name: "documents added with an intake note",
+            run: (file: File) =>
+                uploadIntakeDocuments("org-1", "request-1", [{ file }], {
+                    messageId: "note-1",
+                }),
+            purpose: "document_create",
+            destination: {
+                scope: "intake",
+                org_id: "org-1",
+                request_id: "request-1",
+                message_id: "note-1",
+            },
+        },
+        {
             name: "editor save with a content precondition and no PDF generation",
             run: (file: File) => replaceDocumentVersionFile("document-1", "version-1", file, undefined, { expectedContentSha256: "a".repeat(64), generatePdf: false }),
             purpose: "document_version_replace",

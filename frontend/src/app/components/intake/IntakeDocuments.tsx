@@ -1,6 +1,7 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
+import { Loader2 } from "lucide-react";
 import type { IntakeDocument } from "@mike/contracts";
 import type { Document } from "@/app/components/shared/types";
 import {
@@ -9,56 +10,99 @@ import {
   uploadIntakeDocuments,
 } from "@/app/lib/mikeApi";
 import { notifyError, notifyPartialFailure } from "@/app/lib/userFacingError";
+import {
+  SUPPORTED_DOCUMENT_ACCEPT,
+  formatUnsupportedDocumentWarning,
+  partitionSupportedDocumentFiles,
+} from "@/app/lib/documentUploadValidation";
+import { FileTypeIcon } from "@/app/components/shared/FileTypeIcon";
+import { IntakeUploadPrompt } from "./IntakeDocumentDropZone";
+import { LIQUID_GLASS_MODAL_ROW_HOVER_CLASS } from "@/app/components/ui/liquid-surface";
 import { DocumentSidePanel } from "@/app/components/shared/DocumentSidePanel";
-import { GlassCardUI } from "@/shared/ui/GlassCardUI";
-import { IntakeDocumentDropZone } from "./IntakeDocumentDropZone";
-import { formatIntakeDateTime } from "./intakeLabels";
 
 const noop = () => {};
 
 /**
- * A request's documents. Every member of the organization can open them in
- * the document viewer and add more; uploads are linked to the request by the
- * upload worker, so the list is simply reloaded afterwards.
+ * The file directory's columns. Narrow cards keep the name and size; the
+ * date and who added the file join as the card widens.
  */
-export function IntakeDocuments({
-  orgId,
-  requestId,
-  documents,
-  onChanged,
-}: {
-  orgId: string;
-  requestId: string;
-  documents: IntakeDocument[];
-  onChanged: () => void;
-}) {
-  const [uploading, setUploading] = useState<File[]>([]);
-  const [viewing, setViewing] = useState<Document | null>(null);
-  const addLabel = useId();
+const DOCUMENT_GRID_CLASS =
+  "grid grid-cols-[14px_minmax(0,1fr)_64px] items-center gap-2 @[30rem]:grid-cols-[14px_minmax(0,1fr)_84px_64px] @[40rem]:grid-cols-[14px_minmax(0,1fr)_minmax(0,8rem)_84px_64px]";
+const ADDED_BY_CELL_CLASS = "hidden truncate @[40rem]:block";
+const ADDED_CELL_CLASS = "hidden truncate @[30rem]:block";
 
-  async function add(files: File[]) {
-    setUploading(files);
+function formatSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatAdded(iso: string) {
+  return new Date(iso).toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+/** A file on its way to a request, and the note it was added with, if any. */
+export type IntakeUpload = { file: File; messageId: string | null };
+
+/**
+ * Uploads files to a request. The upload worker links each document to the
+ * request, and to the note it was added with, so the caller only reloads the
+ * list afterwards. Uploads from the documents field and from notes can run at
+ * the same time.
+ */
+export function useIntakeDocumentUpload(
+  orgId: string,
+  requestId: string,
+  onChanged: () => void,
+) {
+  const [uploading, setUploading] = useState<IntakeUpload[]>([]);
+  const [warning, setWarning] = useState<string | null>(null);
+
+  async function add(candidates: File[], messageId: string | null = null) {
+    const { supported, unsupported } =
+      partitionSupportedDocumentFiles(candidates);
+    if (!messageId) setWarning(formatUnsupportedDocumentWarning(unsupported));
+    if (!supported.length) return;
+    const batch = supported.map((file) => ({ file, messageId }));
+    setUploading((current) => [...current, ...batch]);
     try {
-      const outcomes = await uploadIntakeDocuments(
-        orgId,
-        requestId,
-        files.map((file) => ({ file })),
-      );
+      const files = supported.map((file) => ({ file }));
+      const outcomes = await (messageId
+        ? uploadIntakeDocuments(orgId, requestId, files, { messageId })
+        : uploadIntakeDocuments(orgId, requestId, files));
       const failed = outcomes.filter(
         (outcome) => outcome.status !== "completed",
       ).length;
       if (failed)
         notifyPartialFailure(
-          `${failed} of ${files.length} documents couldn't be uploaded. Try adding them again.`,
+          messageId
+            ? `The note was added, but ${failed} of ${supported.length} documents couldn't be uploaded. Add them to the request's documents instead.`
+            : `${failed} of ${supported.length} documents couldn't be uploaded. Try adding them again.`,
           { action: "upload the documents" },
         );
     } catch (error) {
       notifyError(error, { action: "upload the documents" });
     } finally {
-      setUploading([]);
+      setUploading((current) =>
+        current.filter((upload) => !batch.includes(upload)),
+      );
       onChanged();
     }
   }
+
+  return { uploading, warning, add };
+}
+
+/**
+ * Opens a request's documents in the document viewer. The documents section
+ * and the notes they were added with share one viewer.
+ */
+export function useIntakeDocumentViewer() {
+  const [viewing, setViewing] = useState<Document | null>(null);
 
   async function open(documentId: string) {
     try {
@@ -80,74 +124,215 @@ export function IntakeDocuments({
     }
   }
 
+  const panel = (
+    <DocumentSidePanel
+      doc={viewing}
+      readOnly
+      versions={[]}
+      versionsLoading={false}
+      canDelete={false}
+      onClose={() => setViewing(null)}
+      onLoadVersions={noop}
+      onSelectVersion={noop}
+      onDownloadDocument={(documentId) => download(documentId)}
+      onDownloadVersion={(documentId, versionId) =>
+        download(documentId, versionId)
+      }
+      onRenameVersion={noop}
+      onDeleteVersion={noop}
+      onUploadNewVersion={async () => {}}
+      onReplaceVersion={noop}
+      onDelete={noop}
+    />
+  );
+
+  return { open, panel };
+}
+
+/**
+ * A request's documents as rows like the file directory's, above a grey field
+ * that adds more; files can also be dropped anywhere on the page. Every member
+ * of the organization can open them in the document viewer and add more.
+ */
+export function IntakeDocuments({
+  documents,
+  uploading,
+  warning,
+  onAdd,
+  onOpen,
+}: {
+  documents: IntakeDocument[];
+  uploading: File[];
+  warning: string | null;
+  onAdd: (files: File[]) => void;
+  onOpen: (documentId: string) => void;
+}) {
+  const heading = useId();
+  const input = useRef<HTMLInputElement>(null);
+  const busy = uploading.length > 0;
+  const spinner = <IntakeDocumentSpinner />;
+  const rows = documents.length + uploading.length;
+
   return (
-    <section aria-labelledby="intake-documents" className="space-y-2">
-      <h2 id="intake-documents" className="text-sm font-medium text-gray-900">
+    <section aria-labelledby={heading} className="@container">
+      <h2 id={heading} className="mb-2 text-sm font-medium text-gray-900">
         Documents
       </h2>
-      {documents.length > 0 && (
-        <GlassCardUI>
+      <input
+        ref={input}
+        type="file"
+        multiple
+        hidden
+        accept={SUPPORTED_DOCUMENT_ACCEPT}
+        aria-hidden="true"
+        tabIndex={-1}
+        onChange={(event) => {
+          onAdd(Array.from(event.target.files ?? []));
+          event.target.value = "";
+        }}
+      />
+      {rows > 0 && (
+        <div className="-mx-2 mb-3 text-xs">
+          <div
+            aria-hidden="true"
+            className={`${DOCUMENT_GRID_CLASS} px-2 pb-1 pt-0.5 text-[11px] font-medium text-gray-400`}
+          >
+            <span className="col-span-2">Name</span>
+            <span className={ADDED_BY_CELL_CLASS}>Added by</span>
+            <span className={ADDED_CELL_CLASS}>Added</span>
+            <span className="text-right">Size</span>
+          </div>
           <ul>
-            {documents.map((document) => (
+            {documents.map((document) => {
+              const ready = document.status === "ready";
+              const cells = (
+                <>
+                  <FileTypeIcon fileType={document.file_type} />
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="min-w-0 truncate text-gray-700">
+                      {document.filename}
+                    </span>
+                    {!ready && (
+                      <span
+                        className={`inline-flex shrink-0 items-center gap-1 ${document.status === "error" ? "text-red-600" : "text-gray-400"}`}
+                      >
+                        {document.status === "error" ? null : spinner}
+                        {document.status === "error"
+                          ? "Couldn't process"
+                          : "Processing"}
+                      </span>
+                    )}
+                  </span>
+                  <span className={`${ADDED_BY_CELL_CLASS} text-gray-400`}>
+                    {document.added_by_name}
+                  </span>
+                  <span className={`${ADDED_CELL_CLASS} text-gray-400`}>
+                    {formatAdded(document.created_at)}
+                  </span>
+                  <span className="truncate text-right text-gray-400">
+                    {document.size_bytes == null
+                      ? "--"
+                      : formatSize(document.size_bytes)}
+                  </span>
+                </>
+              );
+              return (
+                <li key={document.document_id}>
+                  {ready ? (
+                    <button
+                      type="button"
+                      aria-label={`Open ${document.filename}`}
+                      title={document.filename}
+                      onClick={() => onOpen(document.document_id)}
+                      className={`w-full rounded-md ${DOCUMENT_GRID_CLASS} px-2 py-2 text-left transition-all ${LIQUID_GLASS_MODAL_ROW_HOVER_CLASS} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40`}
+                    >
+                      {cells}
+                    </button>
+                  ) : (
+                    <div
+                      title={document.filename}
+                      className={`${DOCUMENT_GRID_CLASS} px-2 py-2`}
+                    >
+                      {cells}
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+            {uploading.map((file, index) => (
               <li
-                key={document.document_id}
-                className="space-y-0.5 border-t border-gray-100 px-4 py-2.5 first:border-t-0"
+                key={`${file.name}:${index}`}
+                title={file.name}
+                className={`${DOCUMENT_GRID_CLASS} px-2 py-2`}
               >
-                {document.status === "ready" ? (
-                  <button
-                    type="button"
-                    onClick={() => void open(document.document_id)}
-                    className="rounded-md text-left text-sm font-medium text-gray-900 [overflow-wrap:anywhere] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
-                  >
-                    {document.filename}
-                  </button>
-                ) : (
-                  <p className="text-sm text-gray-700 [overflow-wrap:anywhere]">
-                    {document.filename}
-                  </p>
-                )}
-                <p className="text-xs text-gray-500">
-                  {document.status === "ready"
-                    ? `${document.added_by_name} · ${formatIntakeDateTime(document.created_at)}`
-                    : document.status === "error"
-                      ? "Couldn't process this file. Upload it again."
-                      : "Processing…"}
-                </p>
+                <FileTypeIcon fileType={file.name} />
+                <span className="flex min-w-0 items-center gap-2">
+                  <span className="min-w-0 truncate text-gray-700">
+                    {file.name}
+                  </span>
+                  <span className="inline-flex shrink-0 items-center gap-1 text-gray-400">
+                    {spinner}
+                    Uploading
+                  </span>
+                </span>
+                <span className={`${ADDED_BY_CELL_CLASS} text-gray-400`}>
+                  --
+                </span>
+                <span className={`${ADDED_CELL_CLASS} text-gray-400`}>--</span>
+                <span className="truncate text-right text-gray-400">
+                  {formatSize(file.size)}
+                </span>
               </li>
             ))}
           </ul>
-        </GlassCardUI>
+        </div>
       )}
-      <p id={addLabel} className="sr-only">
-        Add documents
-      </p>
-      <IntakeDocumentDropZone
-        files={uploading}
-        disabled={uploading.length > 0}
-        labelledBy={addLabel}
-        emptyPrompt="Drag and drop documents here, or click to browse."
-        onAdd={(files) => void add(files)}
-        onRemove={noop}
-      />
-      <DocumentSidePanel
-        doc={viewing}
-        readOnly
-        versions={[]}
-        versionsLoading={false}
-        canDelete={false}
-        onClose={() => setViewing(null)}
-        onLoadVersions={noop}
-        onSelectVersion={noop}
-        onDownloadDocument={(documentId) => download(documentId)}
-        onDownloadVersion={(documentId, versionId) =>
-          download(documentId, versionId)
-        }
-        onRenameVersion={noop}
-        onDeleteVersion={noop}
-        onUploadNewVersion={async () => {}}
-        onReplaceVersion={noop}
-        onDelete={noop}
-      />
+      <div
+        aria-busy={busy}
+        className={`rounded-xl bg-gray-100 ${rows ? "p-2" : "p-4"}`}
+      >
+        {busy ? (
+          <p
+            className="py-1.5 text-center text-xs text-gray-500"
+            aria-live="polite"
+          >
+            {uploading.length === 1
+              ? "Uploading 1 document…"
+              : `Uploading ${uploading.length} documents…`}
+          </p>
+        ) : rows ? (
+          <button
+            type="button"
+            onClick={() => input.current?.click()}
+            className="w-full rounded-lg py-1.5 text-center text-xs text-gray-500 transition-colors hover:text-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+          >
+            Drop more documents here, or click to add more.
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => input.current?.click()}
+            className="w-full rounded-lg py-4 text-center text-sm text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+          >
+            <IntakeUploadPrompt />
+          </button>
+        )}
+        {warning && (
+          <p role="alert" className="mt-2 text-xs text-red-600">
+            {warning}
+          </p>
+        )}
+      </div>
     </section>
+  );
+}
+
+/** A document still uploading or being processed. */
+export function IntakeDocumentSpinner() {
+  return (
+    <Loader2
+      aria-hidden="true"
+      className="h-3 w-3 animate-spin motion-reduce:animate-none"
+    />
   );
 }

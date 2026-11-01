@@ -7,11 +7,14 @@ import {
   type ReactNode,
 } from "react";
 import { useRouter } from "next/navigation";
+import { Link2, MoreHorizontal } from "lucide-react";
 import { useIntakeMemory, useIntakeDraft } from "./useIntakeMemory";
 import type {
   IntakeAction,
   IntakeCommand,
+  IntakeDetails,
   IntakeDocument,
+  IntakeEdit,
   IntakeEvent,
   IntakeMember,
   IntakeMessage,
@@ -21,6 +24,7 @@ import { useWorkspace } from "@/app/contexts/WorkspaceContext";
 import { useItemWorkspace } from "@/app/hooks/useItemWorkspace";
 import {
   commandIntakeRequest,
+  editIntakeRequest,
   getIntakeDocuments,
   getIntakeEvents,
   getIntakeMembers,
@@ -29,18 +33,28 @@ import {
 } from "@/app/lib/mikeApi";
 import { notifyError } from "@/app/lib/userFacingError";
 import { notifySuccess } from "@/shared/lib/errorNotifier";
+import {
+  formatUnsupportedDocumentWarning,
+  partitionSupportedDocumentFiles,
+} from "@/app/lib/documentUploadValidation";
 import { PageHeader } from "@/app/components/shared/PageHeader";
 import {
   SkeletonLine,
   TableEmptyState,
 } from "@/app/components/shared/TablePrimitive";
-import { ModalSelect } from "@/app/components/modals/ModalSelect";
-import { ModalTextarea } from "@/app/components/modals/ModalTextarea";
 import { EmptyState } from "@/app/components/ui/empty-state";
-import { FieldLabel } from "@/app/components/ui/form-field";
-import { UserAvatar } from "@/app/components/ui/user-avatar";
 import { IntakeSkeuoIcon } from "@/app/components/shared/AppSidebarSkeuoIcons";
 import { GlassCardUI } from "@/shared/ui/GlassCardUI";
+import { HeaderButtonUI } from "@/shared/ui/HeaderButtonsUI";
+import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
+import {
+  Dropdown,
+  DropdownContent,
+  DropdownItem,
+  DropdownTrigger,
+} from "@/shared/ui/dropdown";
+import { discardIntakeDraft } from "@/app/lib/intakeMemory";
+import { LIQUID_GLASS_FLAT_CLASS } from "@/app/components/ui/liquid-surface";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { TextSlabUI } from "@/shared/ui/TextSlabUI";
 import {
@@ -48,19 +62,24 @@ import {
   useIntakeDraftWarning,
   useIntakeOperation,
 } from "./useIntakeOperation";
-import { IntakeDocuments } from "./IntakeDocuments";
-import { IntakeReasonModal } from "./IntakeReasonModal";
-import { IntakeRequestModal } from "./IntakeRequestModal";
+import { IntakeActorAvatar } from "./IntakeActorAvatar";
 import {
-  INTAKE_CATEGORY_LABELS,
-  INTAKE_MESSAGE_LABELS,
-  INTAKE_STATE_LABELS,
-  formatIntakeDate,
-  formatIntakeDateTime,
-  intakeMemberName,
-  isIntakeOverdue,
-} from "./intakeLabels";
+  IntakeDocuments,
+  useIntakeDocumentUpload,
+  useIntakeDocumentViewer,
+} from "./IntakeDocuments";
+import { IntakeNoteDocuments, IntakeNoteForm } from "./IntakeNoteForm";
+import { IntakeReasonModal } from "./IntakeReasonModal";
+import {
+  IntakeDescription,
+  IntakeDetailsPanel,
+  IntakeSubjectInput,
+} from "./IntakeDetailsPanel";
+import { formatIntakeDateTime } from "./intakeLabels";
+import { describeIntakeEvent, describeIntakeMessage } from "./intakeActivity";
 
+/** Every section on the request page is introduced the same way. */
+const SECTION_HEADING = "text-sm font-medium text-gray-900";
 /** Quiet refreshes when the window regains focus are at most this frequent. */
 const FOCUS_REFRESH_MS = 30_000;
 
@@ -106,7 +125,8 @@ async function allPages<T>(read: (offset: number) => Promise<T[]>) {
 }
 type Closing = "resolve" | "cancel";
 /** Which retained draft a successful command has consumed. */
-type Consumed = "note" | "reason" | null;
+/** "request" means the request itself is gone, so the page leaves it. */
+type Consumed = "note" | "reason" | "request" | null;
 /** Show the current request and gate commands on its server-provided capabilities. */
 export function Detail({
   orgId,
@@ -126,6 +146,16 @@ export function Detail({
   const [members, setMembers] = useState<IntakeMember[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useIntakeDraft(memory, "note", "");
+  // Documents to upload with the note once it is saved, kept with its text.
+  const [noteFiles, setNoteFiles] = useIntakeDraft<File[]>(
+    memory,
+    "noteFiles",
+    [],
+  );
+  const [noteWarning, setNoteWarning] = useState<string | null>(null);
+  // The note form stays closed until asked for, or while a draft is kept.
+  const [noteOpen, setNoteOpen] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [reason, setReason] = useIntakeDraft(memory, "reason", "");
   const [closing, setClosing] = useIntakeDraft<Closing | null>(
     memory,
@@ -137,8 +167,6 @@ export function Detail({
     "consumes",
     null,
   );
-  const [editing, setEditing] = useState(false);
-  const [assignee, setAssignee] = useState("");
   const epoch = useRef(0);
   const refresh = useCallback(async () => {
     const generation = ++epoch.current;
@@ -156,7 +184,6 @@ export function Detail({
       setEvents(e);
       setDocuments(d);
       setMembers(roster);
-      setAssignee(r.assignee_id ?? "");
       setError(null);
     } catch (e) {
       if (generation === epoch.current) {
@@ -189,9 +216,36 @@ export function Detail({
     window.addEventListener("focus", focus);
     return () => window.removeEventListener("focus", focus);
   }, [refresh]);
+  // Detail edits replace every field at the request's version, so one made
+  // while another change is saving waits for the refreshed request.
+  const queuedDetails = useRef<Partial<IntakeDetails> | null>(null);
+  const savedVersion = useRef(0);
+  // Remounting the sidebar after a rejected change drops unsaved field text.
+  const [detailsEpoch, setDetailsEpoch] = useState(0);
+  const upload = useIntakeDocumentUpload(
+    orgId,
+    requestId,
+    () => void refresh(),
+  );
+  const viewer = useIntakeDocumentViewer();
   const operation = useIntakeOperation(
-    () => {
-      if (consumes === "note") setNote("");
+    (receipt) => {
+      if (consumes === "request") {
+        discardIntakeDraft(memory);
+        notifySuccess("Request deleted");
+        router.push("/intake");
+        return;
+      }
+      savedVersion.current = receipt.applied_version;
+      if (consumes === "note") {
+        // The note exists now, so its documents can be added with it.
+        if (noteFiles.length && receipt.message_id)
+          void upload.add(noteFiles, receipt.message_id);
+        setNote("");
+        setNoteFiles([]);
+        setNoteWarning(null);
+        setNoteOpen(false);
+      }
       if (consumes === "reason") {
         setReason("");
         setClosing(null);
@@ -206,6 +260,8 @@ export function Detail({
           : 0;
       // Hide what this account may no longer read until the reload decides.
       // Other failures refresh in place, keeping any open dialog and draft.
+      queuedDetails.current = null;
+      setDetailsEpoch((epoch) => epoch + 1);
       if ([401, 403, 404].includes(status)) {
         setRequest(null);
         setMessages([]);
@@ -217,7 +273,9 @@ export function Detail({
     },
     memory,
   );
-  useIntakeDraftWarning(!!note || !!reason || operation.locked);
+  useIntakeDraftWarning(
+    !!note || noteFiles.length > 0 || !!reason || operation.locked,
+  );
   /** Capture the displayed request version; recovery reuses the same command. */
   function command(
     action: IntakeAction,
@@ -245,7 +303,56 @@ export function Detail({
       return receipt;
     }, label);
   }
+  function sendDetails(patch: Partial<IntakeDetails>) {
+    if (!request) return;
+    const input: IntakeEdit = {
+      subject: request.subject,
+      description: request.description,
+      requester_name: request.requester_name,
+      requester_email: request.requester_email,
+      requester_team: request.requester_team,
+      requested_by_date: request.requested_by_date,
+      timezone: request.timezone,
+      ...patch,
+      command_id: crypto.randomUUID(),
+      expected_version: request.version,
+    };
+    setConsumes(null);
+    void operation.execute(async () => {
+      const receipt = await editIntakeRequest(orgId, requestId, input);
+      if (receipt.request_id !== requestId)
+        throw new Error("Mismatched intake receipt");
+      return receipt;
+    }, "save the details");
+  }
+  function saveDetails(patch: Partial<IntakeDetails>) {
+    if (!request) return;
+    if (operation.locked || request.version < savedVersion.current) {
+      queuedDetails.current = { ...queuedDetails.current, ...patch };
+      return;
+    }
+    sendDetails(patch);
+  }
+  useEffect(() => {
+    const queued = queuedDetails.current;
+    if (!queued || !request || operation.locked) return;
+    if (request.version < savedVersion.current) return;
+    queuedDetails.current = null;
+    sendDetails(queued);
+  });
   const caps = request?.capabilities;
+  // Files dropped anywhere on the page are added to the request; dropped on
+  // the note form, they wait to be added with the note.
+  const dragDepth = useRef(0);
+  const [dragging, setDragging] = useState(false);
+  const noteBox = useRef<HTMLDivElement>(null);
+  const [overNote, setOverNote] = useState(false);
+  const addNoteFiles = (candidates: File[]) => {
+    const { supported, unsupported } =
+      partitionSupportedDocumentFiles(candidates);
+    setNoteWarning(formatUnsupportedDocumentWarning(unsupported));
+    if (supported.length) setNoteFiles((current) => [...current, ...supported]);
+  };
   const pinned = request
     ? [...messages]
         .reverse()
@@ -255,17 +362,93 @@ export function Detail({
             : request.state === "cancelled" && m.kind === "cancel_reason",
         )
     : undefined;
-  const memberOptions = [
-    { value: "", label: "Unassigned" },
-    ...members.map((m) => ({
-      value: m.user_id,
-      label: m.user_id === accountId ? `${intakeMemberName(m)} (you)` : intakeMemberName(m),
+  // Notes and changes read as one story, oldest first.
+  const timeline = [
+    ...events.map((event) => ({
+      key: `e${event.id}`,
+      at: event.created_at,
+      event,
     })),
-  ];
+    ...messages.map((message) => ({
+      key: `m${message.id}`,
+      at: message.created_at,
+      message,
+    })),
+  ].sort(
+    (a, b) =>
+      Date.parse(a.at) - Date.parse(b.at) ||
+      // A resolution or reason is saved with its change in one transaction,
+      // so they share a time; the text that caused the change reads first.
+      Number("event" in a) - Number("event" in b),
+  );
+  const assign = (assigneeId: string | null) =>
+    command("assignment", "assign the request", { assignee_id: assigneeId });
+  // An unresolved save stays retryable even while the request is hidden.
+  const recheck = operation.uncertain && !closing && (
+    <div className="flex flex-wrap items-center gap-3" role="status">
+      <span className="text-sm text-gray-500">
+        Checking whether it was saved. Your text is kept here.
+      </span>
+      <PillButtonUI
+        tone="white"
+        size="sm"
+        disabled={operation.busy}
+        onClick={() => void operation.execute()}
+      >
+        Check again
+      </PillButtonUI>
+    </div>
+  );
   return (
     <div className="flex h-full min-h-0 flex-col">
       <PageHeader
         shrink
+        actions={
+          request
+            ? [
+                {
+                  title: "Copy link",
+                  iconOnly: true,
+                  icon: <Link2 aria-hidden="true" className="h-4 w-4" />,
+                  onClick: () => {
+                    const link = new URL(
+                      `/intake/${requestId}?org=${orgId}`,
+                      window.location.origin,
+                    ).href;
+                    navigator.clipboard.writeText(link).then(
+                      () => notifySuccess("Link copied"),
+                      (e) => notifyError(e, { action: "copy the link" }),
+                    );
+                  },
+                },
+                caps?.delete &&
+                  !operation.locked && {
+                    type: "custom",
+                    render: (
+                      // A round trigger to match the other header buttons.
+                      <Dropdown>
+                        <DropdownTrigger asChild>
+                          <HeaderButtonUI iconOnly aria-label="More actions">
+                            <MoreHorizontal
+                              aria-hidden="true"
+                              className="h-4 w-4"
+                            />
+                          </HeaderButtonUI>
+                        </DropdownTrigger>
+                        <DropdownContent align="end">
+                          <DropdownItem
+                            variant="destructive"
+                            onSelect={() => setConfirmingDelete(true)}
+                          >
+                            Delete request
+                          </DropdownItem>
+                        </DropdownContent>
+                      </Dropdown>
+                    ),
+                  },
+              ]
+            : undefined
+        }
         breadcrumbs={[
           {
             label: "Intake",
@@ -274,14 +457,55 @@ export function Detail({
           },
           {
             label: request?.subject,
+            title: request?.subject,
             loading: !request && !error,
-            cursor: "text",
           },
         ]}
       />
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-3 pb-6 md:mx-6.5 [overflow-wrap:anywhere]">
-          {error ? (
+      <div
+        className="@container relative flex min-h-0 flex-1 flex-col"
+        onDragEnter={(event) => {
+          if (!request || !event.dataTransfer.types.includes("Files")) return;
+          event.preventDefault();
+          dragDepth.current += 1;
+          setDragging(true);
+        }}
+        onDragOver={(event) => {
+          if (!request || !event.dataTransfer.types.includes("Files")) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "copy";
+          setOverNote(!!noteBox.current?.contains(event.target as Node));
+        }}
+        onDragLeave={() => {
+          dragDepth.current = Math.max(0, dragDepth.current - 1);
+          if (!dragDepth.current) {
+            setDragging(false);
+            setOverNote(false);
+          }
+        }}
+        onDrop={(event) => {
+          // Text dragged into a field drops as usual; only files are taken.
+          if (!request || !event.dataTransfer.types.includes("Files")) return;
+          event.preventDefault();
+          dragDepth.current = 0;
+          setDragging(false);
+          setOverNote(false);
+          const files = Array.from(event.dataTransfer.files);
+          if (noteBox.current?.contains(event.target as Node))
+            addNoteFiles(files);
+          else void upload.add(files);
+        }}
+      >
+        {dragging && !overNote && (
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-2 z-10 flex items-center justify-center rounded-xl bg-white/70 text-sm text-gray-700 ring-2 ring-inset ring-blue-500/40"
+          >
+            Drop documents to add them to this request
+          </div>
+        )}
+        {error ? (
+          <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-8 md:px-6.5">
             <TableEmptyState>
               <EmptyState
                 tone="error"
@@ -298,364 +522,224 @@ export function Detail({
                 }
               />
             </TableEmptyState>
-          ) : !request || !caps ? (
-            <DetailSkeleton />
-          ) : (
-            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_18rem]">
-              <div className="min-w-0 space-y-4">
-                <GlassCardUI>
-                  <div className="space-y-3 p-5">
-                    <h1 className="font-serif text-2xl text-gray-900">
-                      {request.subject}
-                    </h1>
-                    <p className="text-xs text-gray-500">
-                      Recorded by {request.created_by_name} ·{" "}
-                      {formatIntakeDateTime(request.created_at)}
-                    </p>
-                    <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700">
-                      {request.description}
-                    </p>
-                  </div>
-                </GlassCardUI>
-
-                {pinned && (
-                  <GlassCardUI>
-                    <section
-                      aria-labelledby="intake-outcome"
-                      className="space-y-3 p-4"
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <h2
-                          id="intake-outcome"
-                          className="text-sm font-medium text-gray-900"
-                        >
-                          {request.state === "resolved"
-                            ? "Resolution"
-                            : "Cancellation reason"}
-                        </h2>
-                        <PillButtonUI
-                          tone="white"
-                          size="sm"
-                          onClick={() =>
-                            navigator.clipboard.writeText(pinned.body).then(
-                              () => notifySuccess("Copied"),
-                              (e) => notifyError(e, { action: "copy the text" }),
-                            )
-                          }
-                        >
-                          Copy
-                        </PillButtonUI>
-                      </div>
-                      <TextSlabUI className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700">
-                        {pinned.body}
-                      </TextSlabUI>
-                      <p className="text-xs text-gray-500">
-                        {pinned.author_name} ·{" "}
-                        {formatIntakeDateTime(pinned.created_at)}
-                      </p>
-                    </section>
-                  </GlassCardUI>
-                )}
-
-                <IntakeDocuments
-                  orgId={orgId}
-                  requestId={requestId}
-                  documents={documents}
-                  onChanged={() => void refresh()}
-                />
-
-                <section aria-labelledby="intake-activity" className="space-y-2">
-                  <h2
-                    id="intake-activity"
-                    className="text-sm font-medium text-gray-900"
-                  >
-                    Notes
-                  </h2>
-                  {messages.length === 0 ? (
-                    <p className="text-sm text-gray-500">No notes yet.</p>
-                  ) : (
-                    messages.map((m) => (
-                      <GlassCardUI key={m.id}>
-                        <div className="space-y-2 p-4">
-                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-500">
-                            <UserAvatar size="sm" name={m.author_name} />
-                            <span className="font-medium text-gray-700">
-                              {m.author_name}
-                            </span>
-                            <span>{INTAKE_MESSAGE_LABELS[m.kind]}</span>
-                            <time dateTime={m.created_at}>
-                              {formatIntakeDateTime(m.created_at)}
-                            </time>
-                          </div>
-                          <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700">
-                            {m.body}
-                          </p>
-                        </div>
-                      </GlassCardUI>
-                    ))
-                  )}
-                </section>
-
-                {caps.note && (
-                  <GlassCardUI>
-                    <div className="space-y-3 p-4">
-                      <FieldLabel htmlFor="intake-note">Add a note</FieldLabel>
-                      <ModalTextarea
-                        id="intake-note"
-                        className="min-h-24"
-                        maxLength={20000}
-                        placeholder="What happened, what the requester said, what was sent"
-                        value={note}
-                        disabled={operation.locked}
-                        onChange={(e) => setNote(e.target.value)}
-                      />
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <p className="text-xs text-gray-500">
-                          Notes are visible to everyone in your organization.
-                        </p>
-                        <PillButtonUI
-                          tone="black"
-                          size="sm"
-                          disabled={!note.trim() || operation.locked}
-                          onClick={() =>
-                            command("notes", "add the note", { body: note }, "note")
-                          }
-                        >
-                          Add note
-                        </PillButtonUI>
-                      </div>
-                    </div>
-                  </GlassCardUI>
-                )}
-              </div>
-
-              <aside className="min-w-0 space-y-4" aria-label="Request details">
-                <GlassCardUI>
-                  <dl>
-                    <DetailRow label="Status">
-                      {INTAKE_STATE_LABELS[request.state]}
-                    </DetailRow>
-                    <DetailRow label="Type">
-                      {INTAKE_CATEGORY_LABELS[request.category]}
-                    </DetailRow>
-                    <DetailRow label="Requester">
-                      <span className="block">{request.requester_name}</span>
-                      {request.requester_email && (
-                        <span className="block text-xs text-gray-500">
-                          {request.requester_email}
-                        </span>
-                      )}
-                      {request.requester_team && (
-                        <span className="block text-xs text-gray-500">
-                          {request.requester_team}
-                        </span>
-                      )}
-                    </DetailRow>
-                    <DetailRow
-                      label={
-                        caps.assign ? (
-                          <label htmlFor="intake-assignee">Assigned lawyer</label>
-                        ) : (
-                          "Assigned lawyer"
+            {recheck}
+          </div>
+        ) : !request || !caps ? (
+          <DetailSkeleton>{recheck}</DetailSkeleton>
+        ) : (
+          <DetailColumns
+            title={
+              caps.edit ? (
+                <>
+                  {/* The title edits in place; this names the page for assistive technology. */}
+                  <h1 className="sr-only">{request.subject}</h1>
+                  <IntakeSubjectInput
+                    key={detailsEpoch}
+                    value={request.subject}
+                    onSave={(subject) => saveDetails({ subject })}
+                    className="font-serif text-2xl font-medium"
+                  />
+                </>
+              ) : (
+                <h1 className="font-serif text-2xl font-medium text-gray-900 [overflow-wrap:anywhere]">
+                  {request.subject}
+                </h1>
+              )
+            }
+            details={
+              <IntakeDetailsPanel
+                key={detailsEpoch}
+                request={request}
+                members={members}
+                accountId={accountId}
+                locked={operation.locked}
+                onSave={saveDetails}
+                onAssign={assign}
+                onStatus={(action) => {
+                  if (action === "resolve" || action === "cancel")
+                    setClosing(action);
+                  else
+                    command(
+                      action,
+                      action === "wait"
+                        ? "mark the request as waiting"
+                        : action === "resume"
+                          ? "resume the request"
+                          : "reopen the request",
+                    );
+                }}
+              />
+            }
+          >
+            {pinned && (
+              <GlassCardUI>
+                <section
+                  aria-labelledby="intake-outcome"
+                  className="space-y-3 p-5"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h2 id="intake-outcome" className={SECTION_HEADING}>
+                      {request.state === "resolved"
+                        ? "Resolution"
+                        : "Cancellation reason"}
+                    </h2>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        navigator.clipboard.writeText(pinned.body).then(
+                          () => notifySuccess("Copied"),
+                          (e) => notifyError(e, { action: "copy the text" }),
                         )
                       }
+                      className="rounded-md text-xs text-gray-500 transition-colors hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
                     >
-                      {caps.assign ? (
-                        <div className="space-y-2">
-                          <ModalSelect
-                            id="intake-assignee"
-                            variant="flat"
-                            value={assignee}
-                            placeholder="Unassigned"
-                            disabled={operation.locked}
-                            options={memberOptions}
-                            onChange={setAssignee}
-                          />
-                          <div className="flex flex-wrap gap-2">
-                            {assignee !== (request.assignee_id ?? "") && (
-                              <PillButtonUI
-                                tone="black"
-                                size="sm"
-                                disabled={operation.locked}
-                                onClick={() =>
-                                  command("assignment", "assign the request", {
-                                    assignee_id: assignee || null,
-                                  })
-                                }
-                              >
-                                Save assignment
-                              </PillButtonUI>
-                            )}
-                            {request.assignee_id !== accountId &&
-                              assignee === (request.assignee_id ?? "") && (
-                                <PillButtonUI
-                                  tone="white"
-                                  size="sm"
-                                  disabled={operation.locked}
-                                  onClick={() =>
-                                    command("assignment", "assign the request", {
-                                      assignee_id: accountId,
-                                    })
-                                  }
-                                >
-                                  Assign to me
-                                </PillButtonUI>
-                              )}
-                          </div>
-                        </div>
-                      ) : (
-                        (request.assignee_name ?? (
-                          <span className="text-gray-400">Unassigned</span>
-                        ))
-                      )}
-                    </DetailRow>
-                    {request.requested_by_date && (
-                      <DetailRow label="Target date">
-                        <span className="block">
-                          {formatIntakeDate(request.requested_by_date)}
-                        </span>
-                        {isIntakeOverdue(request) && (
-                          <span className="block text-xs text-red-600">
-                            Overdue
-                          </span>
-                        )}
-                        {request.timezone && (
-                          <span className="block text-xs text-gray-500">
-                            {request.timezone} · not a legal deadline
-                          </span>
-                        )}
-                      </DetailRow>
-                    )}
-                    <DetailRow label="Updated">
-                      {formatIntakeDateTime(request.updated_at)}
-                    </DetailRow>
-                  </dl>
-                  {(caps.edit ||
-                    caps.wait ||
-                    caps.resume ||
-                    caps.resolve ||
-                    caps.cancel ||
-                    caps.reopen) && (
-                    <div className="flex flex-wrap gap-2 border-t border-gray-100 p-4">
-                      {caps.resolve && (
-                        <PillButtonUI
-                          tone="black"
-                          size="sm"
-                          disabled={operation.locked}
-                          onClick={() => setClosing("resolve")}
-                        >
-                          Resolve
-                        </PillButtonUI>
-                      )}
-                      {caps.wait && (
-                        <PillButtonUI
-                          tone="white"
-                          size="sm"
-                          disabled={operation.locked}
-                          onClick={() =>
-                            command("wait", "mark the request as waiting")
-                          }
-                        >
-                          Mark waiting on requester
-                        </PillButtonUI>
-                      )}
-                      {caps.resume && (
-                        <PillButtonUI
-                          tone="white"
-                          size="sm"
-                          disabled={operation.locked}
-                          onClick={() => command("resume", "resume the request")}
-                        >
-                          Resume
-                        </PillButtonUI>
-                      )}
-                      {caps.reopen && (
-                        <PillButtonUI
-                          tone="white"
-                          size="sm"
-                          disabled={operation.locked}
-                          onClick={() => command("reopen", "reopen the request")}
-                        >
-                          Reopen
-                        </PillButtonUI>
-                      )}
-                      {caps.edit && (
-                        <PillButtonUI
-                          tone="white"
-                          size="sm"
-                          disabled={operation.locked}
-                          onClick={() => setEditing(true)}
-                        >
-                          Edit details
-                        </PillButtonUI>
-                      )}
-                      {caps.cancel && (
-                        <PillButtonUI
-                          tone="danger"
-                          size="sm"
-                          disabled={operation.locked}
-                          onClick={() => setClosing("cancel")}
-                        >
-                          Cancel request
-                        </PillButtonUI>
-                      )}
-                    </div>
-                  )}
-                </GlassCardUI>
+                      Copy
+                    </button>
+                  </div>
+                  <TextSlabUI className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700">
+                    {pinned.body}
+                  </TextSlabUI>
+                  <p className="text-xs text-gray-500">
+                    {pinned.author_name} ·{" "}
+                    {formatIntakeDateTime(pinned.created_at)}
+                  </p>
+                </section>
+              </GlassCardUI>
+            )}
 
-                {events.length > 0 && (
-                  <section aria-labelledby="intake-history" className="space-y-2">
-                    <h2
-                      id="intake-history"
-                      className="text-sm font-medium text-gray-900"
+            <GlassCardUI>
+              <div className="divide-y divide-gray-100">
+                <IntakeDescription
+                  value={request.description}
+                  editable={caps.edit}
+                  locked={operation.locked}
+                  onSave={(description) => saveDetails({ description })}
+                />
+                <div className="p-5">
+                  <IntakeDocuments
+                    documents={documents}
+                    uploading={upload.uploading.map((u) => u.file)}
+                    warning={upload.warning}
+                    onAdd={(files) => void upload.add(files)}
+                    onOpen={(documentId) => void viewer.open(documentId)}
+                  />
+                </div>
+              </div>
+            </GlassCardUI>
+
+            <GlassCardUI>
+              <section aria-labelledby="intake-activity">
+                <h2
+                  id="intake-activity"
+                  className={`${SECTION_HEADING} px-5 pt-5`}
+                >
+                  Activity
+                </h2>
+                <ol className="relative space-y-4 p-5 pt-3 before:absolute before:bottom-7 before:left-[31px] before:top-6 before:w-px before:bg-gray-200">
+                  {timeline.map((entry) => {
+                    const line =
+                      "event" in entry
+                        ? describeIntakeEvent(entry.event)
+                        : describeIntakeMessage(entry.message);
+                    return (
+                      <li key={entry.key} className="relative flex gap-3">
+                        <IntakeActorAvatar name={line.actor} />
+                        <div className="min-w-0 flex-1 space-y-1.5">
+                          <p className="pt-0.5 text-xs leading-5 text-gray-500">
+                            {line.actor && (
+                              <>
+                                <span className="font-medium text-gray-900">
+                                  {line.actor}
+                                </span>{" "}
+                              </>
+                            )}
+                            {line.action} ·{" "}
+                            <time dateTime={entry.at}>
+                              {formatIntakeDateTime(entry.at)}
+                            </time>
+                          </p>
+                          {"message" in entry && (
+                            <>
+                              <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700">
+                                {entry.message.body}
+                              </p>
+                              <IntakeNoteDocuments
+                                documents={documents.filter(
+                                  (d) => d.message_id === entry.message.id,
+                                )}
+                                uploading={upload.uploading.filter(
+                                  (u) => u.messageId === entry.message.id,
+                                )}
+                                onOpen={(documentId) =>
+                                  void viewer.open(documentId)
+                                }
+                              />
+                            </>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ol>
+                {caps.note && !noteOpen && !note && !noteFiles.length && (
+                  <div className="border-t border-gray-100 px-5 py-4">
+                    <button
+                      type="button"
+                      disabled={operation.locked}
+                      onClick={() => setNoteOpen(true)}
+                      className="rounded-md text-sm text-gray-500 transition-colors hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:opacity-60"
                     >
-                      History
-                    </h2>
-                    <GlassCardUI>
-                      <ol>
-                        {events.map((e) => (
-                          <li
-                            key={e.id}
-                            className="border-t border-gray-100 px-4 py-2.5 first:border-t-0"
-                          >
-                            <p className="text-sm text-gray-700">
-                              {describeEvent(e)}
-                            </p>
-                            <p className="text-xs text-gray-500">
-                              {e.actor_name ?? "Automatically"} ·{" "}
-                              <time dateTime={e.created_at}>
-                                {formatIntakeDateTime(e.created_at)}
-                              </time>
-                            </p>
-                          </li>
-                        ))}
-                      </ol>
-                    </GlassCardUI>
-                  </section>
+                      Add note
+                    </button>
+                  </div>
                 )}
-              </aside>
-            </div>
-          )}
-          {operation.uncertain && !closing && (
-            <div
-              className="mt-4 flex flex-wrap items-center gap-3"
-              role="status"
-            >
-              <span className="text-sm text-gray-500">
-                Checking whether it was saved. Your text is kept here.
-              </span>
-              <PillButtonUI
-                tone="white"
-                size="sm"
-                disabled={operation.busy}
-                onClick={() => void operation.execute()}
-              >
-                Check again
-              </PillButtonUI>
-            </div>
-          )}
-        </div>
+                {caps.note && (noteOpen || !!note || noteFiles.length > 0) && (
+                  <IntakeNoteForm
+                    boxRef={noteBox}
+                    note={note}
+                    files={noteFiles}
+                    warning={noteWarning}
+                    dropping={dragging && overNote}
+                    locked={operation.locked}
+                    autoFocus={noteOpen}
+                    onNoteChange={setNote}
+                    onAddFiles={addNoteFiles}
+                    onRemoveFile={(index) =>
+                      setNoteFiles((current) =>
+                        current.filter((_, i) => i !== index),
+                      )
+                    }
+                    onCancel={() => {
+                      setNote("");
+                      setNoteFiles([]);
+                      setNoteWarning(null);
+                      setNoteOpen(false);
+                    }}
+                    onSubmit={() =>
+                      command("notes", "add the note", { body: note }, "note")
+                    }
+                  />
+                )}
+              </section>
+            </GlassCardUI>
+            {recheck}
+          </DetailColumns>
+        )}
       </div>
+      {viewer.panel}
+      <ConfirmPopup
+        open={confirmingDelete}
+        title="Delete this request?"
+        message="Its notes, history and documents are deleted for everyone in your organization. This can't be undone."
+        confirmLabel="Delete request"
+        confirmVariant="danger"
+        cancelLabel="Keep request"
+        onCancel={() => setConfirmingDelete(false)}
+        onConfirm={() => {
+          setConfirmingDelete(false);
+          command("delete", "delete the request", {}, "request");
+        }}
+      />
       {closing && request && (
         <IntakeReasonModal
           title={closing === "resolve" ? "Resolve request" : "Cancel request"}
@@ -692,7 +776,9 @@ export function Detail({
           onConfirm={() =>
             command(
               closing,
-              closing === "resolve" ? "resolve the request" : "cancel the request",
+              closing === "resolve"
+                ? "resolve the request"
+                : "cancel the request",
               { body: reason },
               "reason",
             )
@@ -700,112 +786,100 @@ export function Detail({
           onClose={() => setClosing(null)}
         />
       )}
-      {editing && request && (
-        <IntakeRequestModal
-          mode="edit"
-          orgId={orgId}
-          requestId={request.id}
-          version={request.version}
-          initial={request}
-          onClose={() => setEditing(false)}
-          onSaved={() => {
-            setEditing(false);
-            void refresh();
-          }}
-        />
-      )}
     </div>
   );
 }
 
-/** One line of history; automatic changes name who left rather than an actor. */
-function describeEvent(e: IntakeEvent): string {
-  switch (e.kind) {
-    case "submitted":
-      return e.assignee_name
-        ? `Recorded and assigned to ${e.assignee_name}`
-        : "Recorded";
-    case "assign":
-      return e.assignee_name ? `Assigned to ${e.assignee_name}` : "Unassigned";
-    case "wait":
-      return "Marked waiting on requester";
-    case "resume":
-      return "Resumed";
-    case "resolve":
-      return "Resolved";
-    case "cancel":
-      return "Cancelled";
-    case "reopen":
-      return "Reopened";
-    case "edited":
-      return "Details edited";
-    case "document_added":
-      return "Document added";
-    case "assignee_left":
-      return `Unassigned because ${e.assignee_name ?? "the assigned lawyer"} left the organization`;
-    // Events recorded before intake became an internal tracker.
-    case "ask":
-      return "Asked for information";
-    case "reply":
-      return "Requester replied";
-    case "publish":
-      return "Answered and resolved";
-    case "reviewer_removed":
-      return "Unassigned when the lawyer left the Legal team";
-    default:
-      return e.kind.replaceAll("_", " ");
-  }
-}
-
-function DetailRow({
-  label,
+/**
+ * The request and its details, centred together. Details come first on narrow
+ * screens; on wide ones they sit on the right and stay in place while the
+ * page scrolls, scrolling on their own only when taller than the window.
+ */
+export function DetailColumns({
+  title,
+  details,
   children,
 }: {
-  label: ReactNode;
+  /** Sits above the request, so the sidebar's top lines up with the first card. */
+  title?: ReactNode;
+  details: ReactNode;
   children: ReactNode;
 }) {
   return (
-    <div className="space-y-1 border-t border-gray-100 px-4 py-3 first:border-t-0">
-      <dt className="text-xs font-medium text-gray-500">{label}</dt>
-      <dd className="text-sm text-gray-900">{children}</dd>
+    <div className="min-h-0 flex-1 overflow-y-auto [overflow-wrap:anywhere]">
+      <div className="mx-auto grid w-full max-w-[68rem] gap-5 px-3 pb-8 pt-2 md:px-6.5 @[52rem]:grid-cols-[minmax(0,1fr)_18rem] @[52rem]:items-start">
+        {title && (
+          <div className="min-w-0 @[52rem]:col-start-1 @[52rem]:row-start-1">
+            {title}
+          </div>
+        )}
+        {/* The panel is the flat glass surface itself, so scrolling its
+            content never clips the surface's shadow. */}
+        <div
+          className={`min-w-0 rounded-xl ${LIQUID_GLASS_FLAT_CLASS} @[52rem]:sticky @[52rem]:top-2 @[52rem]:col-start-2 @[52rem]:row-start-2 @[52rem]:max-h-[calc(100dvh-8rem)] @[52rem]:overflow-y-auto`}
+        >
+          {details}
+        </div>
+        <div className="min-w-0 space-y-5 @[52rem]:col-start-1 @[52rem]:row-start-2">
+          {children}
+        </div>
+      </div>
     </div>
   );
 }
 
-function DetailSkeleton() {
+/** Matches the loaded page: details beside the request and its activity. */
+function DetailSkeleton({ children }: { children?: ReactNode }) {
   return (
-    <>
+    <DetailColumns
+      title={<SkeletonLine className="h-7 w-2/3 rounded-lg" />}
+      details={
+        <div className="space-y-4 p-5" aria-hidden="true">
+          {[
+            "w-28",
+            "h-9 w-full",
+            "h-9 w-full",
+            "h-9 w-full",
+            "h-9 w-full",
+            "h-9 w-full",
+            "w-28",
+          ].map((width, index) => (
+            <div key={index} className="space-y-2">
+              <SkeletonLine className="w-20" />
+              <SkeletonLine className={`${width} rounded-lg`} />
+            </div>
+          ))}
+        </div>
+      }
+    >
       <span role="status" className="sr-only">
         Loading request…
       </span>
-      <div
-        className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_18rem]"
-        aria-hidden="true"
-      >
+      <div className="space-y-5" aria-hidden="true">
         <GlassCardUI>
-          <div className="space-y-3 p-5">
-            <SkeletonLine className="h-5 w-64" />
-            <SkeletonLine className="w-32" />
+          <div className="space-y-2 p-5">
+            <SkeletonLine className="w-16" />
             <SkeletonLine className="w-full" />
             <SkeletonLine className="w-5/6" />
           </div>
+          <div className="space-y-2 border-t border-gray-100 p-5">
+            <SkeletonLine className="w-20" />
+            <SkeletonLine className="h-[5.25rem] w-full rounded-xl" />
+          </div>
         </GlassCardUI>
         <GlassCardUI>
-          {["w-20", "w-24", "w-28", "w-24", "w-20"].map((width, row) => (
-            <div
-              key={row}
-              className="space-y-2 border-t border-gray-100 px-4 py-3 first:border-t-0"
-            >
-              <SkeletonLine className="w-16" />
-              <SkeletonLine className={width} />
-            </div>
-          ))}
-          <div className="flex gap-2 border-t border-gray-100 p-4">
-            <SkeletonLine className="h-7 w-20" />
-            <SkeletonLine className="h-7 w-24" />
+          <div className="space-y-4 p-5">
+            <SkeletonLine className="w-16" />
+            <SkeletonLine className="w-64" />
+            <SkeletonLine className="w-3/4" />
+          </div>
+          <div className="space-y-2 border-t border-gray-100 p-5">
+            <SkeletonLine className="w-20" />
+            <SkeletonLine className="h-32 w-full rounded-lg" />
           </div>
         </GlassCardUI>
       </div>
-    </>
+      {children}
+    </DetailColumns>
   );
 }

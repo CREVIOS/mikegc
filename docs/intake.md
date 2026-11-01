@@ -12,11 +12,17 @@ off. Personal workspaces do not have an intake queue.
 
 ## Working with a request
 
-1. A member opens **Intake** and selects **New request**. They choose the type
-   and enter the subject, the requester's name (with an optional email and
-   team) and what the requester needs. A target date is optional and must
+1. A member opens **Intake** and selects **New request**, which opens a page
+   laid out like a request: the subject as its title, the request text and
+   documents on the left, and the details on the right. They enter the
+   subject, the requester's name (with an optional email) and what the
+   requester needs. A target date is optional and must
    include a timezone; it is a planning aid, not a verified legal deadline.
-   **Assign to me** is checked by default.
+   The requester's team is not asked for yet; requests keep any team recorded
+   earlier, and search still matches it.
+   The **Assigned lawyer** menu lists **Unassigned** and every member with
+   their avatar, the creator first and marked "(you)"; it starts on the
+   creator. The request page's assignee menu offers the same list.
 2. The queue lists every request in the organization. Search covers the
    subject, description and requester. Filters narrow by status and by
    assigned lawyer, including **Unassigned** and **Assigned to me**, and the
@@ -25,8 +31,55 @@ off. Personal workspaces do not have an intake queue.
 3. Any member can assign or reassign a request, add notes at any time, mark
    it **Waiting on requester** and resume it, edit its details while it is
    open, resolve it with a required resolution, cancel it with a required
-   reason, and reopen it. The resolution or cancellation reason is pinned to
-   the request.
+   reason, reopen it, and delete it. The resolution or cancellation reason is
+   pinned to the request.
+
+The request page centres the request beside a **Details** sidebar. The page
+header shows the subject in its breadcrumb, with a **Copy link** button
+and a **More actions** menu holding **Delete request**. Above the request, the subject
+is the page title in a serif heading, edited in place where the request can be
+edited. On wide screens the
+sidebar stays in place while the page scrolls; on narrow
+screens it comes first. It shows the status, the assigned lawyer,
+the requester's name and email, the target date with its timezone, who created the request
+(**Created by**) and when (**Created**).
+
+The status is a menu in the sidebar. While a request is open it lists every
+status: **In progress** and **Waiting on requester** apply at once, **Resolved**
+and **Cancelled** open a dialog for the required resolution or reason, and
+**New** cannot be chosen. A resolved or cancelled request's status menu offers
+**Reopen** instead.
+
+Details are edited in place; there is no edit dialog. While a request is open,
+each sidebar field saves when it is left or Enter is pressed (Escape puts the
+saved value back), the assigned lawyer saves as soon as it is chosen
+from its menu, the title saves the same way as a field, and the description
+has a pen button that opens it with **Submit** and **Cancel**. Every edit sends the request's whole
+details at its loaded version, so an edit made while another change is saving
+waits for the refreshed request before it is sent. A resolved or cancelled
+request shows its details as text.
+
+A **Request** panel holds the description and the documents, and an
+**Activity** panel holds the timeline. Notes and every change appear together
+in one **Activity** timeline, oldest first, and a grey **Add a note** field
+sits at its end. Each entry puts the avatar of the person who made it on the
+timeline's line and reads as one small line of who did what and when, such as
+"Sam Colleague marked this waiting on the requester · 30 Oct 2026, 19:05". A
+note, resolution or cancellation reason shows its text below that line, and a
+note's documents are tagged under its text. An
+automatic change, such as unassigning someone who left, gets a neutral mark
+and reads "Automatically unassigned …".
+
+Any member can delete a request, in any state, after confirming it. Its notes,
+history and attached documents are deleted with it, and the documents' files
+are queued for storage cleanup. The organization keeps a content-free
+`request_deleted` event recording who deleted a request and when. A retried
+delete returns its original receipt, and the command IDs that touched the
+request become tombstones, so a lost retry of the command that recorded it
+cannot bring it back. In the queue, a row's menu and the **Actions** menu for
+selected rows offer **Cancel request** for open requests and **Delete
+request** for any request. Deleting several deletes each in turn and reports
+the ones that changed in the meantime.
 
 Statuses are **New**, **In progress**, **Waiting on requester**, **Resolved**
 and **Cancelled** (stored as `submitted`, `in_review`, `needs_information`,
@@ -37,20 +90,28 @@ made each change and, for assignments, to whom.
 
 ## Documents
 
-Every request can carry documents, whether it is a **Contract review**
-(stored as category `nda`) or a **Legal question** (`general`). The New request
-form shows a drop zone: drag files onto it or click it to browse. PDF, Word, Excel and PowerPoint files are accepted. The
+Every request can carry documents. The New request page shows a drop zone: drag files onto it or click it to browse. PDF, Word, Excel and PowerPoint files are accepted. The
 files upload after the request is saved. If an upload fails, the request is
 still saved and a notice says which documents to add again from the request.
-Any request's **Documents** section lists its attachments, opens them in the
-document viewer, and accepts more by drag and drop or browsing.
+On the request page, **Documents** lists the files in rows like the file
+directory's (name, who added it, when and size); a ready file opens in the
+document viewer. Below the list, a grey field like the playbook run's browses
+for more, and files dropped anywhere on the page are added to the request.
+The note field has **Add documents** too, and files dropped on it wait with
+the note's draft. They upload once the note is saved, are tagged on the note
+(opening in the viewer once ready) and are listed with the request's other
+documents. If an upload fails, the note is still saved and a notice says to
+add the documents to the request instead.
 
 Attachments are documents of library kind `intake_attachment`, owned by the
 request's organization and linked to the request in `intake_request_documents`.
 The upload worker links each document to its request as soon as the document
 row exists, before any bytes are copied, so a closed tab never leaves a file
 that belongs to no request. If the request is gone by then, the document is
-removed and the upload stops.
+removed and the upload stops. Documents added with a note name it in the
+upload, and the link records it in `message_id`. The note must be the
+uploader's own note on the same request. The note stands for those documents
+in the timeline, so they get no separate `document_added` event.
 
 - Attachments never appear in the Library or in Library search.
 - Every current member of the organization can open, preview, download and use
@@ -156,6 +217,14 @@ Apply migrations before starting the new application build:
   functions, the trigger that deletes a document when its link goes, member
   read access through `org_private_document_access`, and the exclusions that
   keep attachments out of departure handover and private-content listings.
+- `20261030_04_intake_delete_request.sql` adds `intake_delete_request` and the
+  `delete` capability on the request view and queue rows.
+- `20261030_05_intake_sort_updated_asc.sql` lets the queue list the least
+  recently updated requests first.
+- `20261031_01_intake_remove_category.sql` drops the request type (contract
+  review or legal question) and redefines the functions that used it.
+- `20261101_01_intake_note_documents.sql` links documents to the note they were
+  added with (`intake_request_documents.message_id`) and lists that link.
 
 Use the existing migration runner documented in [deployment.md](deployment.md).
 Do not replay historical migrations over a fresh schema. Fresh installations use

@@ -441,8 +441,33 @@ describe("upload processing", () => {
       p_actor: baseSession.user_id,
       p_request: destination.request_id,
       p_document: baseFile.resource_id,
+      p_message: null,
     });
     expect(linkedBeforeCopy).toBe(true);
+  });
+
+  it("links an intake attachment added with a note to that note", async () => {
+    const db = fakeDb({
+      documents: [{ data: { id: baseFile.resource_id }, error: null }],
+    });
+    const destination = {
+      scope: "intake",
+      org_id: "66666666-6666-4666-8666-666666666666",
+      request_id: "77777777-7777-4777-8777-777777777777",
+      message_id: "88888888-8888-4888-8888-888888888888",
+    };
+    await processUploadFile(
+      db as never,
+      { ...baseSession, purpose: "document_create", destination },
+      baseFile,
+    );
+    expect(db.rpc).toHaveBeenCalledWith(
+      "intake_attach_document",
+      expect.objectContaining({
+        p_request: destination.request_id,
+        p_message: destination.message_id,
+      }),
+    );
   });
 
   it("drops an intake attachment whose request disappeared before it was linked", async () => {

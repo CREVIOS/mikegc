@@ -10843,7 +10843,6 @@ create table if not exists public.intake_requests (
   org_id uuid not null references public.intake_settings(org_id) on delete cascade,
   requester_id uuid references auth.users(id) on delete set null,
   assignee_id uuid references auth.users(id) on delete set null,
-  category text not null check(category in ('nda','general')),
   subject text not null check(char_length(subject) between 1 and 200 and btrim(subject) <> ''),
   description text not null check(char_length(description) between 1 and 20000 and btrim(description) <> ''),
   requested_by_date date,
@@ -11012,12 +11011,11 @@ exception when invalid_parameter_value then
   return false;
 end $$;
 
-create or replace function public.intake_check_details(p_category text, p_subject text, p_description text,
+create or replace function public.intake_check_details(p_subject text, p_description text,
   p_requester_name text, p_requester_email text, p_requester_team text, p_date date, p_timezone text)
 returns void language plpgsql stable set search_path = public, pg_temp as $$
 begin
-  if p_category is null or p_category not in ('nda', 'general')
-    or p_subject is null or char_length(p_subject) not between 1 and 200 or btrim(p_subject) = ''
+  if p_subject is null or char_length(p_subject) not between 1 and 200 or btrim(p_subject) = ''
     or p_description is null or char_length(p_description) not between 1 and 20000 or btrim(p_description) = ''
     or p_requester_name is null or char_length(p_requester_name) not between 1 and 200 or btrim(p_requester_name) = ''
     or (p_requester_email is not null and (char_length(p_requester_email) not between 3 and 320
@@ -11069,13 +11067,13 @@ begin
 end $$;
 
 create or replace function public.intake_submit_request(p_org uuid, p_actor uuid, p_command uuid, p_request uuid,
-  p_category text, p_subject text, p_description text, p_requester_name text, p_requester_email text default null,
+  p_subject text, p_description text, p_requester_name text, p_requester_email text default null,
   p_requester_team text default null, p_date date default null, p_timezone text default null, p_assignee uuid default null)
 returns jsonb language plpgsql set search_path = public, pg_temp as $$
 declare input jsonb; replay jsonb; next_state text;
 begin
   perform public.intake_lock_org(p_org, p_actor);
-  input := jsonb_build_object('id', p_request, 'category', p_category, 'subject', p_subject,
+  input := jsonb_build_object('id', p_request, 'subject', p_subject,
     'description', p_description, 'requester_name', p_requester_name, 'requester_email', p_requester_email,
     'requester_team', p_requester_team, 'date', p_date, 'timezone', p_timezone, 'assignee', p_assignee);
   replay := public.intake_replay(p_org, p_actor, p_command, 'submit', input);
@@ -11086,7 +11084,7 @@ begin
     return replay;
   end if;
   if p_request is null then raise exception 'Invalid request details' using errcode = '22023'; end if;
-  perform public.intake_check_details(p_category, p_subject, p_description, p_requester_name,
+  perform public.intake_check_details(p_subject, p_description, p_requester_name,
     p_requester_email, p_requester_team, p_date, p_timezone);
   if p_assignee is not null and public.intake_member_role(p_org, p_assignee) is null then
     raise exception 'Choose a current member of your organization' using errcode = '22023';
@@ -11098,9 +11096,9 @@ begin
   insert into public.intake_settings(org_id) values(p_org) on conflict do nothing;
   next_state := case when p_assignee is null then 'submitted' else 'in_review' end;
   insert into public.intake_requests(id, org_id, created_by, requester_name, requester_email, requester_team,
-      assignee_id, category, subject, description, requested_by_date, timezone, state)
+      assignee_id, subject, description, requested_by_date, timezone, state)
     values(p_request, p_org, p_actor, p_requester_name, p_requester_email, p_requester_team,
-      p_assignee, p_category, p_subject, p_description, p_date, p_timezone, next_state);
+      p_assignee, p_subject, p_description, p_date, p_timezone, next_state);
   insert into public.intake_events(org_id, request_id, actor_id, kind, to_state, assignee_id)
     values(p_org, p_request, p_actor, 'submitted', next_state, p_assignee);
   return public.intake_record_command(p_org, p_actor, p_command, p_request, 'submit', input, 1);
@@ -11222,7 +11220,7 @@ returns jsonb language sql set search_path = public, pg_temp as $$
 $$;
 
 create or replace function public.intake_edit_request(p_org uuid, p_actor uuid, p_command uuid, p_request uuid, p_version integer,
-  p_category text, p_subject text, p_description text, p_requester_name text, p_requester_email text default null,
+  p_subject text, p_description text, p_requester_name text, p_requester_email text default null,
   p_requester_team text default null, p_date date default null, p_timezone text default null)
 returns jsonb language plpgsql set search_path = public, pg_temp as $$
 declare r public.intake_requests; input jsonb; replay jsonb;
@@ -11231,7 +11229,7 @@ begin
   if not public.intake_can_read(p_org, p_actor, p_request) then
     raise exception 'Request not found' using errcode = 'P0002';
   end if;
-  input := jsonb_build_object('id', p_request, 'version', p_version, 'category', p_category, 'subject', p_subject,
+  input := jsonb_build_object('id', p_request, 'version', p_version, 'subject', p_subject,
     'description', p_description, 'requester_name', p_requester_name, 'requester_email', p_requester_email,
     'requester_team', p_requester_team, 'date', p_date, 'timezone', p_timezone);
   replay := public.intake_replay(p_org, p_actor, p_command, 'edit', input);
@@ -11240,9 +11238,9 @@ begin
   if p_version is null or r.version <> p_version or r.state in ('resolved', 'cancelled') then
     raise exception 'Request changed; reload it' using errcode = 'P0001';
   end if;
-  perform public.intake_check_details(p_category, p_subject, p_description, p_requester_name,
+  perform public.intake_check_details(p_subject, p_description, p_requester_name,
     p_requester_email, p_requester_team, p_date, p_timezone);
-  update public.intake_requests set category = p_category, subject = p_subject, description = p_description,
+  update public.intake_requests set subject = p_subject, description = p_description,
     requester_name = p_requester_name, requester_email = p_requester_email, requester_team = p_requester_team,
     requested_by_date = p_date, timezone = p_timezone, version = version + 1, updated_at = now()
     where id = p_request;
@@ -11251,10 +11249,43 @@ begin
   return public.intake_record_command(p_org, p_actor, p_command, p_request, 'edit', input, r.version + 1);
 end $$;
 
+-- Any member can delete one request, in any state. Its notes, history,
+-- receipts and attachments go with it. Command IDs that touched it become
+-- identity-only tombstones, so a lost submit or command retry cannot recreate
+-- it. The organization keeps a content-free event naming who deleted a request.
+create or replace function public.intake_delete_request(p_org uuid, p_actor uuid, p_command uuid, p_request uuid, p_version integer)
+returns jsonb language plpgsql set search_path = public, pg_temp as $$
+declare r public.intake_requests; input jsonb; replay jsonb; result jsonb;
+begin
+  perform public.intake_lock_org(p_org, p_actor);
+  input := jsonb_build_object('id', p_request, 'version', p_version);
+  -- A retry after the request is gone still finds its own receipt.
+  replay := public.intake_replay(p_org, p_actor, p_command, 'delete', input);
+  if replay is not null then return replay; end if;
+  if not public.intake_can_read(p_org, p_actor, p_request) then
+    raise exception 'Request not found' using errcode = 'P0002';
+  end if;
+  select * into r from public.intake_requests where org_id = p_org and id = p_request for update;
+  if p_version is null or r.version <> p_version then
+    raise exception 'Request changed; reload it' using errcode = 'P0001';
+  end if;
+  insert into public.intake_purged_commands(org_id, actor_id, command_id)
+    select org_id, actor_id, command_id from public.intake_commands
+    where org_id = p_org and request_id = p_request on conflict do nothing;
+  delete from public.intake_requests where org_id = p_org and id = p_request;
+  insert into public.intake_events(org_id, actor_id, kind) values(p_org, p_actor, 'request_deleted');
+  -- The receipt names no request row, so it outlives the request it deleted.
+  result := jsonb_build_object('request_id', p_request, 'applied_version', r.version + 1,
+    'message_id', null, 'replayed', false);
+  insert into public.intake_commands(org_id, actor_id, command_id, request_id, action, input, result)
+    values(p_org, p_actor, p_command, null, 'delete', input, result);
+  return result;
+end $$;
+
 create or replace function public.intake_request_view(p_org uuid, p_actor uuid, p_request uuid)
 returns jsonb language sql stable set search_path = public, pg_temp as $$
   select jsonb_build_object(
-    'id', r.id, 'org_id', r.org_id, 'category', r.category, 'subject', r.subject, 'description', r.description,
+    'id', r.id, 'org_id', r.org_id, 'subject', r.subject, 'description', r.description,
     'requester_name', r.requester_name, 'requester_email', r.requester_email, 'requester_team', r.requester_team,
     'requested_by_date', r.requested_by_date, 'timezone', r.timezone, 'state', r.state, 'version', r.version,
     'assignee_id', r.assignee_id,
@@ -11269,7 +11300,8 @@ returns jsonb language sql stable set search_path = public, pg_temp as $$
       'resume', r.state = 'needs_information',
       'resolve', r.state not in ('resolved', 'cancelled'),
       'cancel', r.state not in ('resolved', 'cancelled'),
-      'reopen', r.state in ('resolved', 'cancelled')))
+      'reopen', r.state in ('resolved', 'cancelled'),
+      'delete', true))
   from public.intake_requests r
   left join public.user_profiles c on c.user_id = r.created_by
   left join public.user_profiles a on a.user_id = r.assignee_id
@@ -11280,7 +11312,7 @@ $$;
 create or replace function public.intake_list_item(r public.intake_requests)
 returns jsonb language sql stable set search_path = public, pg_temp as $$
   select jsonb_build_object(
-    'id', r.id, 'category', r.category, 'subject', r.subject,
+    'id', r.id, 'subject', r.subject,
     'requester_name', r.requester_name, 'requester_email', r.requester_email, 'requester_team', r.requester_team,
     'requested_by_date', r.requested_by_date, 'timezone', r.timezone, 'state', r.state, 'version', r.version,
     'assignee_id', r.assignee_id,
@@ -11290,14 +11322,14 @@ returns jsonb language sql stable set search_path = public, pg_temp as $$
     'created_at', r.created_at, 'updated_at', r.updated_at,
     'capabilities', jsonb_build_object(
       'assign', r.state not in ('resolved', 'cancelled'),
-      'cancel', r.state not in ('resolved', 'cancelled')))
+      'cancel', r.state not in ('resolved', 'cancelled'),
+      'delete', true))
 $$;
 
 create or replace function public.intake_list_matches(r public.intake_requests, p_state text,
-  p_unassigned boolean, p_assignee uuid, p_search text, p_category text)
+  p_unassigned boolean, p_assignee uuid, p_search text)
 returns boolean language sql stable set search_path = public, pg_temp as $$
   select (p_state is null or r.state = p_state)
-    and (p_category is null or r.category = p_category)
     and (not p_unassigned or r.assignee_id is null)
     and (p_assignee is null or r.assignee_id = p_assignee)
     and (p_search = ''
@@ -11310,11 +11342,9 @@ $$;
 
 -- Keyset pages: a request created or updated between pages is never repeated.
 -- p_assignee is null (everyone), 'unassigned', 'me' or a member's user ID.
--- p_category is null (every type), 'nda' (contract review) or 'general'.
 create or replace function public.intake_list_requests(p_org uuid, p_actor uuid, p_state text default null,
   p_assignee text default null, p_search text default '', p_sort text default 'updated',
-  p_after_key text default null, p_after_id uuid default null, p_limit integer default 50,
-  p_category text default null)
+  p_after_key text default null, p_after_id uuid default null, p_limit integer default 50)
 returns jsonb language plpgsql set search_path = public, pg_temp as $$
 declare unassigned boolean; assignee uuid; after_at timestamptz; after_date date;
   page jsonb; more boolean; last jsonb;
@@ -11323,13 +11353,12 @@ begin
   if public.intake_member_role(p_org, p_actor) is null then
     raise exception 'Intake not found' using errcode = 'P0002';
   end if;
-  if p_sort is null or p_sort not in ('updated', 'target')
+  if p_sort is null or p_sort not in ('updated', 'updated_asc', 'target')
     or p_limit is null or p_limit not between 1 and 100
     or p_search is null or char_length(p_search) > 200
     or (p_state is not null and p_state not in ('submitted', 'in_review', 'needs_information', 'resolved', 'cancelled'))
-    or (p_category is not null and p_category not in ('nda', 'general'))
     or (p_after_id is null and p_after_key is not null)
-    or (p_sort = 'updated' and p_after_id is not null and p_after_key is null)
+    or (p_sort in ('updated', 'updated_asc') and p_after_id is not null and p_after_key is null)
   then
     raise exception 'Invalid request filter' using errcode = '22023';
   end if;
@@ -11343,9 +11372,19 @@ begin
       from (select public.intake_list_item(r) as item,
           row_number() over (order by r.updated_at desc, r.id desc) as n
         from public.intake_requests r
-        where r.org_id = p_org and public.intake_list_matches(r, p_state, unassigned, assignee, p_search, p_category)
+        where r.org_id = p_org and public.intake_list_matches(r, p_state, unassigned, assignee, p_search)
           and (p_after_id is null or (r.updated_at, r.id) < (after_at, p_after_id))
         order by r.updated_at desc, r.id desc limit p_limit + 1) x;
+  elsif p_sort = 'updated_asc' then
+    after_at := p_after_key::timestamptz;
+    select coalesce(jsonb_agg(x.item order by x.n) filter (where x.n <= p_limit), '[]'), coalesce(max(x.n), 0) > p_limit
+      into page, more
+      from (select public.intake_list_item(r) as item,
+          row_number() over (order by r.updated_at asc, r.id asc) as n
+        from public.intake_requests r
+        where r.org_id = p_org and public.intake_list_matches(r, p_state, unassigned, assignee, p_search)
+          and (p_after_id is null or (r.updated_at, r.id) > (after_at, p_after_id))
+        order by r.updated_at asc, r.id asc limit p_limit + 1) x;
   else
     after_date := p_after_key::date;
     select coalesce(jsonb_agg(x.item order by x.n) filter (where x.n <= p_limit), '[]'), coalesce(max(x.n), 0) > p_limit
@@ -11353,7 +11392,7 @@ begin
       from (select public.intake_list_item(r) as item,
           row_number() over (order by r.requested_by_date asc nulls last, r.id asc) as n
         from public.intake_requests r
-        where r.org_id = p_org and public.intake_list_matches(r, p_state, unassigned, assignee, p_search, p_category)
+        where r.org_id = p_org and public.intake_list_matches(r, p_state, unassigned, assignee, p_search)
           and (p_after_id is null
             or (after_date is null and r.requested_by_date is null and r.id > p_after_id)
             or (after_date is not null and (r.requested_by_date is null or r.requested_by_date > after_date
@@ -11362,7 +11401,7 @@ begin
   end if;
   last := page -> -1;
   return jsonb_build_object('requests', page, 'next', case when more then jsonb_build_object(
-    'key', last ->> (case when p_sort = 'updated' then 'updated_at' else 'requested_by_date' end),
+    'key', last ->> (case when p_sort = 'target' then 'requested_by_date' else 'updated_at' end),
     'id', last ->> 'id') end);
 end $$;
 
@@ -11490,12 +11529,16 @@ create table if not exists public.intake_request_documents (
   document_id uuid not null references public.documents(id) on delete cascade,
   added_by uuid references auth.users(id) on delete set null,
   created_at timestamptz not null default now(),
+  -- The note the document was added with, if any.
+  message_id uuid references public.intake_messages(id) on delete set null,
   primary key (request_id, document_id),
   unique (document_id),
   foreign key (org_id, request_id) references public.intake_requests(org_id, id) on delete cascade
 );
 create index if not exists intake_request_documents_org on public.intake_request_documents(org_id, request_id);
 create index if not exists intake_request_documents_added_by on public.intake_request_documents(added_by);
+create index if not exists intake_request_documents_message
+  on public.intake_request_documents(message_id) where message_id is not null;
 
 -- An attachment's file belongs to its request. Removing the link (deleting
 -- the request, an intake purge or organization purge) deletes the document,
@@ -11511,8 +11554,11 @@ create trigger intake_attachment_detached after delete on public.intake_request_
   for each row execute function public.intake_attachment_detached();
 
 -- The upload worker links each new document as soon as its row exists, so an
--- interrupted browser never leaves a file that belongs to no request.
-create or replace function public.intake_attach_document(p_org uuid, p_actor uuid, p_request uuid, p_document uuid)
+-- interrupted browser never leaves a file that belongs to no request. A
+-- document added with a note links to that note, which must be the uploader's
+-- own note on the same request. The note records it, so it gets no event.
+create or replace function public.intake_attach_document(p_org uuid, p_actor uuid, p_request uuid, p_document uuid,
+  p_message uuid default null)
 returns void language plpgsql set search_path = public, pg_temp as $$
 begin
   perform public.intake_lock_org(p_org, p_actor);
@@ -11524,14 +11570,20 @@ begin
       and project_id is null and workflow_id is null) then
     raise exception 'Document not found' using errcode = 'P0002';
   end if;
+  if p_message is not null and not exists(select 1 from public.intake_messages where id = p_message
+      and org_id = p_org and request_id = p_request and author_id = p_actor and kind = 'note') then
+    raise exception 'Note not found' using errcode = 'P0002';
+  end if;
   if exists(select 1 from public.intake_request_documents where document_id = p_document and request_id <> p_request) then
     raise exception 'The document belongs to another request' using errcode = '22023';
   end if;
-  insert into public.intake_request_documents(org_id, request_id, document_id, added_by)
-    values(p_org, p_request, p_document, p_actor) on conflict do nothing;
+  insert into public.intake_request_documents(org_id, request_id, document_id, added_by, message_id)
+    values(p_org, p_request, p_document, p_actor, p_message) on conflict do nothing;
   if found then
-    insert into public.intake_events(org_id, request_id, actor_id, kind)
-      values(p_org, p_request, p_actor, 'document_added');
+    if p_message is null then
+      insert into public.intake_events(org_id, request_id, actor_id, kind)
+        values(p_org, p_request, p_actor, 'document_added');
+    end if;
     update public.intake_requests set updated_at = now() where id = p_request;
   end if;
 end $$;
@@ -11546,7 +11598,8 @@ begin
   return (select coalesce(jsonb_agg(jsonb_build_object(
       'document_id', d.id, 'filename', coalesce(v.filename, 'Untitled document'),
       'file_type', v.file_type, 'size_bytes', v.size_bytes, 'status', d.status,
-      'added_by_name', coalesce(u.display_name, u.email, 'Former member'), 'created_at', l.created_at)
+      'added_by_name', coalesce(u.display_name, u.email, 'Former member'), 'created_at', l.created_at,
+      'message_id', l.message_id)
       order by l.created_at, d.id), '[]')
     from public.intake_request_documents l
     join public.documents d on d.id = l.document_id
@@ -11756,5 +11809,9 @@ insert into public.schema_migrations (filename) values
   ('20261029_01_intake_on_by_default.sql'),
   ('20261030_01_private_access_cleanup_auth_role.sql'),
   ('20261030_02_intake_internal_tracker.sql'),
-  ('20261030_03_intake_attachments.sql')
+  ('20261030_03_intake_attachments.sql'),
+  ('20261030_04_intake_delete_request.sql'),
+  ('20261030_05_intake_sort_updated_asc.sql'),
+  ('20261031_01_intake_remove_category.sql'),
+  ('20261101_01_intake_note_documents.sql')
 on conflict (filename) do nothing;

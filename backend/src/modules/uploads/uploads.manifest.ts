@@ -81,6 +81,8 @@ const documentDestinationSchema = z.discriminatedUnion("scope", [
       scope: z.literal("intake"),
       org_id: z.string().uuid(),
       request_id: z.string().uuid(),
+      // The uploader's note the documents are added with, if any.
+      message_id: z.string().uuid().optional(),
     })
     .strict(),
 ]);

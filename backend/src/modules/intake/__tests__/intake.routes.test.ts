@@ -24,7 +24,6 @@ const id = "00000000-0000-4000-8000-000000000002";
 const command_id = "00000000-0000-4000-8000-000000000003";
 const path = `/intake/${org}`;
 const details = {
-  category: "general",
   subject: "Subject",
   description: "Exact  text.\n",
   requester_name: "Jane Business",
@@ -53,7 +52,6 @@ describe("intake route contracts", () => {
       p_actor: "signed-in-user",
       p_request: id,
       p_command: command_id,
-      p_category: "general",
       p_subject: "Subject",
       p_description: body.description,
       p_requester_name: "Jane Business",
@@ -104,7 +102,6 @@ describe("intake route contracts", () => {
       "/requests?assignee=someone",
       "/requests?sort=oldest",
       "/requests?state=open",
-      "/requests?category=nda,general",
       `/requests/${id}/messages?limit=101`,
       `/requests/${id}/events?offset=-1`,
       "/requests/not-a-uuid",
@@ -135,11 +132,6 @@ describe("intake route contracts", () => {
       p_after_key: null,
       p_after_id: null,
       p_limit: 1,
-      p_category: null,
-    });
-    await request(app).get(`${path}/requests?category=nda`);
-    expect(mocks.rpc.mock.calls.at(-1)?.[1]).toMatchObject({
-      p_category: "nda",
     });
     mocks.rpc.mockResolvedValueOnce({
       data: { requests: [], next: null },
@@ -155,7 +147,7 @@ describe("intake route contracts", () => {
     });
     const tampered = await request(app).get(`${path}/requests?cursor=abc`);
     expect(tampered.status).toBe(400);
-    expect(mocks.rpc).toHaveBeenCalledTimes(3);
+    expect(mocks.rpc).toHaveBeenCalledTimes(2);
   });
   it("accepts any email the database accepts, such as a single-label domain", async () => {
     for (const requester_email of ["jane@localhost", "a@b"]) {
@@ -209,6 +201,7 @@ describe("intake route contracts", () => {
     ["resolve", "intake_resolve_request", { expected_version: 2, body: "Approved." }, { p_version: 2, p_body: "Approved." }],
     ["cancel", "intake_cancel_request", { expected_version: 2, body: "Duplicate." }, { p_version: 2, p_body: "Duplicate." }],
     ["reopen", "intake_reopen_request", { expected_version: 2 }, { p_version: 2 }],
+    ["delete", "intake_delete_request", { expected_version: 2 }, { p_version: 2 }],
   ])(
     "forwards a %s command with only its declared arguments",
     async (action, rpc, fields, args) => {
@@ -244,6 +237,8 @@ describe("intake route contracts", () => {
     ["cancel", { expected_version: 2, body: "  " }],
     ["notes", { body: "Note", expected_version: 2 }],
     ["reopen", { expected_version: 2, body: "Why" }],
+    ["delete", {}],
+    ["delete", { expected_version: 2, body: "Why" }],
   ])("rejects a malformed %s command", async (action, fields) => {
     expect(
       (

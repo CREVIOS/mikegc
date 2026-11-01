@@ -714,12 +714,11 @@ export interface AuditActorPage {
  * contacts, not accounts. Dates are business targets, not legal deadlines.
  */
 export type IntakeState = "submitted" | "in_review" | "needs_information" | "resolved" | "cancelled";
-export type IntakeCategory = "nda" | "general";
-export type IntakeAction = "assignment" | "notes" | "wait" | "resume" | "resolve" | "cancel" | "reopen";
+export type IntakeAction = "assignment" | "notes" | "wait" | "resume" | "resolve" | "cancel" | "reopen" | "delete";
 export interface IntakeMember { user_id: string; display_name: string | null; email: string | null }
 /** The editable description of a request. */
 export interface IntakeDetails {
-  category: IntakeCategory; subject: string; description: string;
+  subject: string; description: string;
   requester_name: string; requester_email: string | null; requester_team: string | null;
   requested_by_date: string | null; timezone: string | null;
 }
@@ -728,7 +727,7 @@ export interface IntakeRequestSummary extends Omit<IntakeDetails, "description">
   id: string; state: IntakeState; version: number;
   assignee_id: string | null; assignee_name: string | null;
   created_at: string; updated_at: string;
-  capabilities: { assign: boolean; cancel: boolean };
+  capabilities: { assign: boolean; cancel: boolean; delete: boolean };
 }
 export interface IntakeRequestPage { requests: IntakeRequestSummary[]; next_cursor: string | null }
 export interface IntakeRequest extends Omit<IntakeRequestSummary, "capabilities">, IntakeDetails {
@@ -736,6 +735,8 @@ export interface IntakeRequest extends Omit<IntakeRequestSummary, "capabilities"
   capabilities: {
     edit: boolean; assign: boolean; note: boolean; wait: boolean;
     resume: boolean; resolve: boolean; cancel: boolean; reopen: boolean;
+    /** Any member may delete a request, in any state. */
+    delete: boolean;
   };
 }
 /** Legacy question, reply and answer messages are shown as notes. */
@@ -752,6 +753,8 @@ export interface IntakeEvent {
 export interface IntakeDocument {
   document_id: string; filename: string; file_type: string | null; size_bytes: number | null;
   status: string; added_by_name: string; created_at: string;
+  /** The note the document was added with, if any. */
+  message_id: string | null;
 }
 export interface IntakeReceipt { request_id: string | null; applied_version: number; message_id: string | null; replayed: boolean }
 export interface IntakeSubmission extends IntakeDetails { id: string; command_id: string; assignee_id: string | null }

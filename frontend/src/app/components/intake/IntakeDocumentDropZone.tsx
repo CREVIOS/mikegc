@@ -8,6 +8,20 @@ import {
   partitionSupportedDocumentFiles,
 } from "@/app/lib/documentUploadValidation";
 
+/** What an empty upload field asks for: the action, then the accepted files. */
+export function IntakeUploadPrompt() {
+  return (
+    <>
+      <span className="block">
+        Drag and drop documents here, or click to browse.
+      </span>
+      <span className="mt-0.5 block text-xs text-gray-500">
+        PDF, Word, Excel and PowerPoint files are supported.
+      </span>
+    </>
+  );
+}
+
 /**
  * Collects files for a request: drop them on the area, or click it to browse.
  * Files only wait here; the caller uploads them to the request.
@@ -18,7 +32,6 @@ export function IntakeDocumentDropZone({
   onRemove,
   disabled = false,
   labelledBy,
-  emptyPrompt = "Drag and drop documents here, or click to browse. PDF, Word, Excel and PowerPoint files are supported.",
 }: {
   files: File[];
   onAdd: (files: File[]) => void;
@@ -26,7 +39,6 @@ export function IntakeDocumentDropZone({
   disabled?: boolean;
   /** The field label that names the area. */
   labelledBy: string;
-  emptyPrompt?: string;
 }) {
   const input = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
@@ -40,22 +52,11 @@ export function IntakeDocumentDropZone({
     if (supported.length) onAdd(supported);
   }
 
-  const browse = (label: string) => (
-    <button
-      type="button"
-      onClick={() => input.current?.click()}
-      disabled={disabled}
-      className="w-full rounded-lg py-4 text-center text-sm text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:cursor-not-allowed"
-    >
-      {dragging ? "Drop documents to add them" : label}
-    </button>
-  );
-
   return (
     <section
       aria-labelledby={labelledBy}
       aria-busy={disabled}
-      className={`rounded-xl bg-gray-100 p-3 transition-colors ${dragging && !disabled ? "ring-2 ring-inset ring-blue-500/40" : ""}`}
+      className={`rounded-xl bg-gray-100 p-4 transition-colors ${dragging && !disabled ? "ring-2 ring-inset ring-blue-500/40" : ""}`}
       onDragEnter={(event) => {
         if (!event.dataTransfer.types.includes("Files")) return;
         event.preventDefault();
@@ -94,7 +95,17 @@ export function IntakeDocumentDropZone({
       />
       {files.length ? (
         <>
-          <ul className="flex flex-wrap gap-1.5 px-1 pt-1">
+          <button
+            type="button"
+            onClick={() => input.current?.click()}
+            disabled={disabled}
+            className="mb-3 block rounded-md text-left text-xs text-gray-500 transition-colors hover:text-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:cursor-not-allowed"
+          >
+            {dragging
+              ? "Drop documents to add them"
+              : "Drop more documents here, or click to add more."}
+          </button>
+          <ul className="flex flex-wrap gap-1.5">
             {files.map((file, index) => (
               <li key={`${file.name}:${index}`} className="min-w-0">
                 <DocumentPill
@@ -105,13 +116,19 @@ export function IntakeDocumentDropZone({
               </li>
             ))}
           </ul>
-          {browse("Drop more documents here, or click to browse.")}
         </>
       ) : (
-        browse(emptyPrompt)
+        <button
+          type="button"
+          onClick={() => input.current?.click()}
+          disabled={disabled}
+          className="w-full rounded-lg py-4 text-center text-sm text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:cursor-not-allowed"
+        >
+          {dragging ? "Drop documents to add them" : <IntakeUploadPrompt />}
+        </button>
       )}
       {warning && (
-        <p role="alert" className="px-1 pb-1 text-xs text-red-600">
+        <p role="alert" className="mt-2 text-xs text-red-600">
           {warning}
         </p>
       )}

@@ -55,7 +55,7 @@ const submit = (
     assignee = "null",
   } = {},
 ) =>
-  `select public.intake_submit_request(${q(10)},${q(actor)},${q(command)},${q(request)},'nda','${subject}','Please review',` +
+  `select public.intake_submit_request(${q(10)},${q(actor)},${q(command)},${q(request)},'${subject}','Please review',` +
   `'${requester}','jane@acme.test',${team},${date},${timezone},${assignee});`;
 const state = (request = 20) =>
   sql(
@@ -90,11 +90,20 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
       "create schema auth; create table auth.users(id uuid primary key,email text,raw_user_meta_data jsonb default '{}',created_at timestamptz default now());",
     );
     sql(readFileSync(resolve("schema.sql"), "utf8"));
-    // The tracker migration is safe to re-run over the final shape.
+    // The tracker migrations are safe to re-run. Those before the type was
+    // removed expect its column, so it comes back for them and goes again.
+    sql("alter table public.intake_requests add column category text not null default 'general'");
     sql(migration("20261030_02_intake_internal_tracker.sql"));
     sql(migration("20261030_02_intake_internal_tracker.sql"));
     sql(migration("20261030_03_intake_attachments.sql"));
     sql(migration("20261030_03_intake_attachments.sql"));
+    sql(migration("20261030_04_intake_delete_request.sql"));
+    sql(migration("20261030_04_intake_delete_request.sql"));
+    sql(migration("20261030_05_intake_sort_updated_asc.sql"));
+    sql(migration("20261031_01_intake_remove_category.sql"));
+    sql(migration("20261031_01_intake_remove_category.sql"));
+    sql(migration("20261101_01_intake_note_documents.sql"));
+    sql(migration("20261101_01_intake_note_documents.sql"));
   }, 60000);
   afterAll(() => {
     execFileSync("docker", [
@@ -283,7 +292,7 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
     ).toBe("0");
     expect(
       json(
-        `select public.intake_submit_request(${q(11)},${q(6)},${q(130)},${q(31)},'general','Question','Please help','Sam');`,
+        `select public.intake_submit_request(${q(11)},${q(6)},${q(130)},${q(31)},'Question','Please help','Sam');`,
       ).request_id,
     ).toBe(uid(31));
     expect(
@@ -296,12 +305,11 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
   it("edits open requests with history and validates details", () => {
     sql(submit());
     const edit = (command: number, version: number, email = "'sam@acme.test'", date = "'2026-12-01'", timezone = "'Europe/London'") =>
-      `select public.intake_edit_request(${q(10)},${q(3)},${q(command)},${q(20)},${version},'general','Renamed','Updated text','Sam Business',${email},null,${date},${timezone});`;
+      `select public.intake_edit_request(${q(10)},${q(3)},${q(command)},${q(20)},${version},'Renamed','Updated text','Sam Business',${email},null,${date},${timezone});`;
     expect(json(edit(101, 1)).applied_version).toBe(2);
     expect(
       json(`select public.intake_get_request(${q(10)},${q(4)},${q(20)});`),
     ).toMatchObject({
-      category: "general",
       subject: "Renamed",
       requester_name: "Sam Business",
       requester_email: "sam@acme.test",
@@ -327,10 +335,6 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
     expect(ids(list(3, ",null,'me'"))).toEqual([uid(21)]);
     expect(ids(list(2, `,null,'${uid(4)}'`))).toEqual([uid(22)]);
     expect(ids(list(2, ",'in_review'"))).toEqual([22, 21].map(uid));
-    sql(`update public.intake_requests set category='general' where id=${q(21)}`);
-    expect(ids(list(2, ",null,null,'','updated',null,null,50,'general'"))).toEqual([uid(21)]);
-    expect(ids(list(2, ",null,null,'','updated',null,null,50,'nda'"))).toEqual([22, 20].map(uid));
-    expect(() => list(2, ",null,null,'','updated',null,null,50,'contract'")).toThrow(/22023/);
     expect(ids(list(2, ",null,null,'marketing'"))).toEqual([uid(21)]);
     expect(ids(list(2, ",null,null,'jane@acme'"))).toHaveLength(3);
     expect(ids(list(2, ",null,null,'','target'"))).toEqual([22, 20, 21].map(uid));
@@ -682,6 +686,27 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
       sql(`select public.intake_list_documents(${q(10)},${q(6)},${q(20)});`),
     ).toThrow(/P0002/);
   });
+  it("links a document added with a note to the uploader's own note, without a separate event", () => {
+    sql(submit());
+    sql(submit(101, { request: 21, subject: "Second" }));
+    const mine = json(note(2, 102, "Signed copy attached")).message_id;
+    const theirs = json(note(3, 103, "Called Jane")).message_id;
+    const elsewhere = json(note(2, 104, "Other request", 21)).message_id;
+    upload(50);
+    const withNote = (message: string) =>
+      `select public.intake_attach_document(${q(10)},${q(2)},${q(20)},${q(50)},'${message}');`;
+    expect(() => sql(withNote(theirs))).toThrow(/P0002/);
+    expect(() => sql(withNote(elsewhere))).toThrow(/P0002/);
+    sql(withNote(mine));
+    sql(withNote(mine));
+    expect(
+      json(`select public.intake_list_documents(${q(10)},${q(4)},${q(20)});`),
+    ).toEqual([expect.objectContaining({ document_id: uid(50), message_id: mine })]);
+    // The note records the document; the timeline gets no second entry.
+    expect(
+      sql("select count(*) from public.intake_events where kind='document_added'"),
+    ).toBe("0");
+  });
   it("links only the uploader's own intake documents in the same organization", () => {
     sql(submit());
     sql(submit(101, { request: 21, subject: "Second" }));
@@ -750,14 +775,69 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
       expect(() => sql(`set role ${role}; ${attach(50)}`)).toThrow();
     }
   });
+  const remove = (actor: number, command: number, version: number, request = 20) =>
+    `select public.intake_delete_request(${q(10)},${q(actor)},${q(command)},${q(request)},${version});`;
+  it("lets any member delete a request with its history and attachments, once", () => {
+    sql(submit());
+    sql(note(3, 101, "Called Jane"));
+    upload(50);
+    sql(attach(50));
+    expect(
+      json(`select public.intake_get_request(${q(10)},${q(4)},${q(20)})`)
+        .capabilities.delete,
+    ).toBe(true);
+    expect(list(4).requests[0].capabilities.delete).toBe(true);
+    sql("truncate public.db_jobs");
+    // Neither the creator nor the assignee: any member may delete.
+    expect(json(remove(4, 102, 1))).toEqual({
+      request_id: uid(20),
+      applied_version: 2,
+      message_id: null,
+      replayed: false,
+    });
+    expect(sql("select count(*) from public.intake_requests")).toBe("0");
+    expect(sql("select count(*) from public.intake_messages")).toBe("0");
+    expect(
+      sql("select count(*) from public.intake_events where request_id is not null"),
+    ).toBe("0");
+    expect(sql("select count(*) from public.intake_request_documents")).toBe("0");
+    expect(sql(`select count(*) from public.documents where id=${q(50)}`)).toBe("0");
+    expect(
+      sql("select count(*) from public.db_jobs where kind='document.cleanup'"),
+    ).toBe("1");
+    // The organization keeps who deleted a request, without its content.
+    expect(
+      json(
+        "select json_agg(json_build_object('kind',kind,'actor',actor_id,'request',request_id)) from public.intake_events",
+      ),
+    ).toEqual([{ kind: "request_deleted", actor: uid(4), request: null }]);
+    // A retried delete gets its receipt; a lost submit cannot recreate it.
+    expect(json(remove(4, 102, 1)).replayed).toBe(true);
+    expect(() => sql(submit())).toThrow(/purged request data/);
+    // Commands on the deleted request find nothing to act on.
+    expect(() => sql(note(3, 101, "Called Jane"))).toThrow(/P0002/);
+    expect(() => sql(note(3, 103, "Late note"))).toThrow(/P0002/);
+    expect(sql("select count(*) from public.intake_requests")).toBe("0");
+  });
+  it("deletes closed requests but refuses stale versions and outsiders", () => {
+    sql(submit());
+    expect(() => sql(remove(3, 101, 2))).toThrow(/P0001/);
+    expect(() => sql(remove(6, 102, 1))).toThrow(/Intake not found/);
+    expect(() => sql(remove(3, 103, 1, 21))).toThrow(/P0002/);
+    sql(cmd("resolve", 3, 104, 1, ",'Approved'"));
+    expect(json(remove(5, 105, 2)).replayed).toBe(false);
+    expect(sql("select count(*) from public.intake_requests")).toBe("0");
+  });
   it("backfills legacy requests from their creator's profile", () => {
     // Shape of a request recorded before the tracker migration.
-    sql(`alter table public.intake_requests drop constraint intake_requests_requester_check;
+    sql(`alter table public.intake_requests add column category text not null default 'general';
+      alter table public.intake_requests drop constraint intake_requests_requester_check;
       alter table public.intake_requests alter column requester_name drop not null;
       insert into public.intake_settings(org_id) values(${q(10)});
       insert into public.intake_requests(id,org_id,requester_id,category,subject,description)
         values(${q(40)},${q(10)},${q(2)},'general','Legacy','Old request'),(${q(41)},${q(10)},null,'general','Erased','Old request');`);
     sql(migration("20261030_02_intake_internal_tracker.sql"));
+    sql(migration("20261031_01_intake_remove_category.sql"));
     const profile = sql(
       `select coalesce(nullif(btrim(display_name),''),email) from public.user_profiles where user_id=${q(2)}`,
     );

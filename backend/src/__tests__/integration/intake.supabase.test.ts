@@ -35,7 +35,6 @@ describe.skipIf(!url || !key || !anon)(
     const input = () => ({
       id: randomUUID(),
       command_id: randomUUID(),
-      category: "nda",
       subject: "Synthetic NDA",
       description: "Please review this request.",
       requester_name: "Jane Business",
@@ -286,7 +285,6 @@ describe.skipIf(!url || !key || !anon)(
               p_actor: users[0].id,
               p_command: randomUUID(),
               p_request: requestId,
-              p_category: "general",
               p_subject: "Retained",
               p_description: "Synthetic retained text",
               p_requester_name: "Sam Business",
@@ -371,7 +369,6 @@ describe.skipIf(!url || !key || !anon)(
               p_actor: user.id,
               p_request: requestId,
               p_command: commandId,
-              p_category: "general",
               p_subject: "Retry erasure",
               p_description: "Retained organization text",
               p_requester_name: "Sam Business",
@@ -535,7 +532,6 @@ describe.skipIf(!url || !key || !anon)(
               requester_id: users[3].id,
               created_by: users[3].id,
               requester_name: users[3].email,
-              category: "general",
               subject: "Legacy export fixture",
               description: "Retained request",
             })
