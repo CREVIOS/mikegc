@@ -205,6 +205,16 @@ test("Legal records a business request, works it and resolves it exactly once", 
       lawyerA.getByRole("button", { name: "Add note" }),
     ).toBeVisible();
     const activity = lawyerA.getByRole("region", { name: "Activity" });
+    // The note's document uploads from this tab once the note is saved, and
+    // a reload would cancel it, so wait until it has finished first.
+    const noteDocuments = activity.getByRole("list", {
+      name: "Documents added with the note",
+    });
+    await expect(noteDocuments.getByTitle(/^test\.pdf/)).toBeVisible();
+    await expect(noteDocuments.getByTitle("test.pdf · Uploading")).toHaveCount(
+      0,
+      { timeout: 60000 },
+    );
     await expect(async () => {
       await lawyerA.reload();
       await expect(
