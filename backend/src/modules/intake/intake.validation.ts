@@ -1,5 +1,26 @@
 import { z } from "zod";
 export const intakeId = z.uuid();
+/** A team organization's id, or "personal" for the caller's own workspace. */
+export const intakeWorkspace = z.union([z.literal("personal"), intakeId]);
+/** One of a fixed set of whole-number periods, from the query string. */
+const period = <T extends number>(choices: readonly T[], fallback: T) =>
+  z.coerce
+    .number()
+    .refine((v): v is T => choices.includes(v as T))
+    .default(fallback);
+/**
+ * The viewer's timezone, which the dashboard counts its weeks in, and the
+ * periods its figures cover.
+ */
+export const intakeDashboardQuery = z
+  .object({
+    timezone: z.string().min(1).max(64).default("UTC"),
+    weeks: period([4, 8, 12, 26] as const, 8),
+    created_days: period([7, 30, 90, 365] as const, 30),
+    resolved_days: period([7, 30, 90, 365] as const, 30),
+    median_days: period([30, 90, 365] as const, 30),
+  })
+  .strict();
 /** Bound submitted text without changing the exact content later shown for review. */
 const text = (max: number) =>
   z
@@ -23,6 +44,12 @@ export const intakeList = z.object({
   assignee: z.union([z.enum(["unassigned", "me"]), intakeId]).optional(),
   search: z.string().max(200).default(""),
   sort: z.enum(["updated", "updated_asc", "target"]).default("updated"),
+  /** What a dashboard figure counted, so it can open those requests. */
+  scope: z
+    .enum(["open", "unassigned", "overdue", "recorded_30d", "resolved_30d"])
+    .optional(),
+  /** One requester's name, matched without case. */
+  requester: z.string().trim().min(1).max(200).optional(),
   cursor: z.string().max(200).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
@@ -81,6 +108,13 @@ const versioned = {
   expected_version: z.number().int().positive(),
 };
 /** Each command's body, keyed by its URL action. */
+/** Documents the actor can read, copied onto a request or their note. */
+export const intakeDocumentCopy = z
+  .object({
+    document_ids: z.array(intakeId).min(1).max(20),
+    message_id: intakeId.nullable().default(null),
+  })
+  .strict();
 export const intakeCommands = {
   assignment: z
     .object({ ...versioned, assignee_id: intakeId.nullable() })
@@ -88,7 +122,7 @@ export const intakeCommands = {
   notes: z.object({ command_id: intakeId, body: text(20000) }).strict(),
   wait: z.object({ ...versioned, body: text(20000).optional() }).strict(),
   resume: z.object({ ...versioned, body: text(20000).optional() }).strict(),
-  resolve: z.object({ ...versioned, body: text(20000) }).strict(),
+  resolve: z.object({ ...versioned, body: text(20000).optional() }).strict(),
   cancel: z.object({ ...versioned, body: text(20000) }).strict(),
   reopen: z.object(versioned).strict(),
   delete: z.object(versioned).strict(),

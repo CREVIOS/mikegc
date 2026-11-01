@@ -213,8 +213,8 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
         setWorkspace,
     } = useWorkspace();
     const workspaceParam = workspaceId ?? undefined;
-    // Intake is always on in every organization workspace.
-    const showIntake = !!activeOrganization;
+    // Intake is always on, in every organization workspace and in Personal.
+    const showIntake = workspaceId !== null;
     // The switcher is navigation: what was on screen belonged to the
     // workspace just left, so the new one opens at its home.
     //

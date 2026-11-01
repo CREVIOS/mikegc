@@ -7,6 +7,7 @@ const event = (overrides: Partial<IntakeEvent>): IntakeEvent => ({
   kind: "submitted",
   from_state: null,
   to_state: "submitted",
+  actor_id: "sam",
   actor_name: "Sam Colleague",
   assignee_name: null,
   created_at: "2026-10-26T10:00:00Z",
@@ -17,6 +18,7 @@ const message = (overrides: Partial<IntakeMessage>): IntakeMessage => ({
   id: "m1",
   kind: "note",
   body: "A note",
+  author_id: "sam",
   author_name: "Sam Colleague",
   created_at: "2026-10-27T10:00:00Z",
   ...overrides,
@@ -26,7 +28,7 @@ describe("describeIntakeEvent", () => {
   it("reads a change as the person, then what they did", () => {
     expect(describeIntakeEvent(event({ assignee_name: "Lawyer B" }))).toEqual({
       actor: "Sam Colleague",
-      action: "recorded this and assigned it to Lawyer B",
+      action: "created this and assigned it to Lawyer B",
     });
     expect(describeIntakeEvent(event({ kind: "wait" }))).toEqual({
       actor: "Sam Colleague",
@@ -67,7 +69,7 @@ describe("describeIntakeMessage", () => {
   it("names what the person wrote; the text goes below", () => {
     expect(describeIntakeMessage(message({}))).toEqual({
       actor: "Sam Colleague",
-      action: "added a note",
+      action: "commented",
     });
     expect(describeIntakeMessage(message({ kind: "resolution" })).action).toBe(
       "recorded the resolution",
@@ -76,7 +78,7 @@ describe("describeIntakeMessage", () => {
       describeIntakeMessage(message({ kind: "cancel_reason" })).action,
     ).toBe("gave the reason for cancelling");
     expect(describeIntakeMessage(message({ kind: "question" })).action).toBe(
-      "added a note",
+      "commented",
     );
   });
 });

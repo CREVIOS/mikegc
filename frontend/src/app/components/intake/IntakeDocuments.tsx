@@ -160,12 +160,15 @@ export function IntakeDocuments({
   warning,
   onAdd,
   onOpen,
+  onBrowse,
 }: {
   documents: IntakeDocument[];
   uploading: File[];
   warning: string | null;
   onAdd: (files: File[]) => void;
   onOpen: (documentId: string) => void;
+  /** Clicking the area opens this, such as the Add documents modal. */
+  onBrowse?: () => void;
 }) {
   const heading = useId();
   const input = useRef<HTMLInputElement>(null);
@@ -303,7 +306,7 @@ export function IntakeDocuments({
         ) : rows ? (
           <button
             type="button"
-            onClick={() => input.current?.click()}
+            onClick={() => (onBrowse ? onBrowse() : input.current?.click())}
             className="w-full rounded-lg py-1.5 text-center text-xs text-gray-500 transition-colors hover:text-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
           >
             Drop more documents here, or click to add more.
@@ -311,7 +314,7 @@ export function IntakeDocuments({
         ) : (
           <button
             type="button"
-            onClick={() => input.current?.click()}
+            onClick={() => (onBrowse ? onBrowse() : input.current?.click())}
             className="w-full rounded-lg py-4 text-center text-sm text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
           >
             <IntakeUploadPrompt />

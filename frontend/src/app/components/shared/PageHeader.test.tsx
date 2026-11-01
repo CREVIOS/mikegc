@@ -1,5 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { PageHeader } from "./PageHeader";
 import {
     PAGE_HEADER_ROW_CLASS,
@@ -82,5 +82,41 @@ describe("PageHeader title size", () => {
             "text-xl",
             "font-serif",
         );
+    });
+});
+
+describe("PageHeader view switch", () => {
+    it("draws the chosen view's button pressed and selected", () => {
+        render(
+            <PageHeader
+                actionGroups={[
+                    [
+                        {
+                            label: "Requests",
+                            title: "Requests",
+                            pressed: true,
+                            onClick: vi.fn(),
+                        },
+                        {
+                            label: "Dashboard",
+                            title: "Dashboard",
+                            pressed: false,
+                            onClick: vi.fn(),
+                        },
+                    ],
+                ]}
+            >
+                <h1>Intake</h1>
+            </PageHeader>,
+        );
+        const requests = screen.getByRole("button", { name: "Requests" });
+        const dashboard = screen.getByRole("button", { name: "Dashboard" });
+        expect(requests).toHaveAttribute("aria-pressed", "true");
+        expect(requests).toHaveClass("liquid-glass-selected", "text-gray-900");
+        // Text only, so it keeps its width on a narrow screen too.
+        expect(requests).toHaveClass("px-3");
+        expect(requests).not.toHaveClass("w-7");
+        expect(dashboard).toHaveAttribute("aria-pressed", "false");
+        expect(dashboard).not.toHaveClass("liquid-glass-selected");
     });
 });

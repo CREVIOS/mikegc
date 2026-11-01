@@ -7,7 +7,8 @@ import {
   type ReactNode,
 } from "react";
 import { useRouter } from "next/navigation";
-import { Link2, MoreHorizontal } from "lucide-react";
+import { Link2, MoreHorizontal, RotateCcw } from "lucide-react";
+import { cn } from "@/app/lib/utils";
 import { useIntakeMemory, useIntakeDraft } from "./useIntakeMemory";
 import type {
   IntakeAction,
@@ -20,10 +21,14 @@ import type {
   IntakeMessage,
   IntakeRequest,
 } from "@mike/contracts";
-import { useWorkspace } from "@/app/contexts/WorkspaceContext";
+import {
+  PERSONAL_WORKSPACE,
+  useWorkspace,
+} from "@/app/contexts/WorkspaceContext";
 import { useItemWorkspace } from "@/app/hooks/useItemWorkspace";
 import {
   commandIntakeRequest,
+  copyIntakeDocuments,
   editIntakeRequest,
   getIntakeDocuments,
   getIntakeEvents,
@@ -56,7 +61,6 @@ import {
 import { discardIntakeDraft } from "@/app/lib/intakeMemory";
 import { LIQUID_GLASS_FLAT_CLASS } from "@/app/components/ui/liquid-surface";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
-import { TextSlabUI } from "@/shared/ui/TextSlabUI";
 import {
   intakeError,
   useIntakeDraftWarning,
@@ -68,22 +72,32 @@ import {
   useIntakeDocumentUpload,
   useIntakeDocumentViewer,
 } from "./IntakeDocuments";
-import { IntakeNoteDocuments, IntakeNoteForm } from "./IntakeNoteForm";
+import {
+  IntakeNoteDocuments,
+  IntakeNoteForm,
+  NOTE_TITLE_CLASS,
+  NOTE_TITLE_ICON_CLASS,
+} from "./IntakeNoteForm";
 import { IntakeReasonModal } from "./IntakeReasonModal";
 import {
   IntakeDescription,
   IntakeDetailsPanel,
   IntakeSubjectInput,
 } from "./IntakeDetailsPanel";
-import { formatIntakeDateTime } from "./intakeLabels";
+import { formatIntakeDateTime, intakeDeleteMessage } from "./intakeLabels";
 import { describeIntakeEvent, describeIntakeMessage } from "./intakeActivity";
+import { INTAKE_REQUESTS_PATH } from "./intakeQuery";
+import {
+  IntakeDocumentPicker,
+  type IntakePickedDocument,
+} from "./IntakeDocumentPicker";
 
 /** Every section on the request page is introduced the same way. */
 const SECTION_HEADING = "text-sm font-medium text-gray-900";
 /** Quiet refreshes when the window regains focus are at most this frequent. */
 const FOCUS_REFRESH_MS = 30_000;
 
-/** Scope a deep-linked request to its organization before mounting retained drafts. */
+/** Scope a deep-linked request to its workspace before mounting retained drafts. */
 export function IntakeDetail({
   orgId,
   requestId,
@@ -92,7 +106,8 @@ export function IntakeDetail({
   requestId: string;
 }) {
   const { accountId, workspaceId } = useWorkspace();
-  useItemWorkspace(requestId, orgId);
+  // Personal is no organization to the workspace switcher.
+  useItemWorkspace(requestId, orgId === PERSONAL_WORKSPACE ? null : orgId);
   if (!accountId || workspaceId !== orgId)
     return (
       <div className="flex h-full min-h-0 flex-1 flex-col">
@@ -100,7 +115,7 @@ export function IntakeDetail({
           <EmptyState
             icon={<IntakeSkeuoIcon />}
             title="Intake"
-            description="Open this request in its organization's workspace."
+            description="Open this request in its workspace."
           />
         </TableEmptyState>
       </div>
@@ -152,9 +167,15 @@ export function Detail({
     "noteFiles",
     [],
   );
+  // Library documents chosen for the note, copied onto it once it is saved.
+  const [notePicked, setNotePicked] = useIntakeDraft<IntakePickedDocument[]>(
+    memory,
+    "notePicked",
+    [],
+  );
+  // Which Add documents modal is open: the request's, or the note's.
+  const [picking, setPicking] = useState<"request" | "note" | null>(null);
   const [noteWarning, setNoteWarning] = useState<string | null>(null);
-  // The note form stays closed until asked for, or while a draft is kept.
-  const [noteOpen, setNoteOpen] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [reason, setReason] = useIntakeDraft(memory, "reason", "");
   const [closing, setClosing] = useIntakeDraft<Closing | null>(
@@ -176,7 +197,12 @@ export function Detail({
         allPages((offset) => getIntakeMessages(orgId, requestId, offset)),
         allPages((offset) => getIntakeEvents(orgId, requestId, offset)),
         getIntakeDocuments(orgId, requestId),
-        r.capabilities.assign ? getIntakeMembers(orgId) : Promise.resolve([]),
+        // Members are who an open request can be assigned to, and every
+        // request's people take their photos from them. A closed request
+        // falls back to initials if they cannot be read.
+        r.capabilities.assign
+          ? getIntakeMembers(orgId)
+          : getIntakeMembers(orgId).catch(() => []),
       ]);
       if (generation !== epoch.current) return;
       setRequest(r);
@@ -228,23 +254,42 @@ export function Detail({
     () => void refresh(),
   );
   const viewer = useIntakeDocumentViewer();
+  /** Copy library documents onto the request, or onto a saved note. */
+  function addPicked(picked: IntakePickedDocument[], messageId: string | null) {
+    copyIntakeDocuments(
+      orgId,
+      requestId,
+      picked.map((document) => document.id),
+      messageId,
+    ).then(
+      () => void refresh(),
+      (e) => {
+        notifyError(e, { action: "add the documents" });
+        void refresh();
+      },
+    );
+  }
   const operation = useIntakeOperation(
     (receipt) => {
       if (consumes === "request") {
         discardIntakeDraft(memory);
         notifySuccess("Request deleted");
-        router.push("/intake");
+        router.push(INTAKE_REQUESTS_PATH);
         return;
       }
       savedVersion.current = receipt.applied_version;
       if (consumes === "note") {
         // The note exists now, so its documents can be added with it.
-        if (noteFiles.length && receipt.message_id)
-          void upload.add(noteFiles, receipt.message_id);
+        // A resolution without text has no message, so its documents go
+        // to the request itself rather than being lost.
+        if (noteFiles.length)
+          void upload.add(noteFiles, receipt.message_id ?? undefined);
+        if (notePicked.length)
+          addPicked(notePicked, receipt.message_id ?? null);
         setNote("");
         setNoteFiles([]);
+        setNotePicked([]);
         setNoteWarning(null);
-        setNoteOpen(false);
       }
       if (consumes === "reason") {
         setReason("");
@@ -274,8 +319,23 @@ export function Detail({
     memory,
   );
   useIntakeDraftWarning(
-    !!note || noteFiles.length > 0 || !!reason || operation.locked,
+    !!note ||
+      noteFiles.length > 0 ||
+      notePicked.length > 0 ||
+      !!reason ||
+      operation.locked,
   );
+  function openNoteForResolution() {
+    // The comment box is always there; bring it into view.
+    requestAnimationFrame(() =>
+      document
+        .getElementById("intake-note")
+        ?.scrollIntoView({ block: "center", behavior: "smooth" }),
+    );
+  }
+  function focusNote() {
+    document.getElementById("intake-note")?.focus({ preventScroll: true });
+  }
   /** Capture the displayed request version; recovery reuses the same command. */
   function command(
     action: IntakeAction,
@@ -353,27 +413,36 @@ export function Detail({
     setNoteWarning(formatUnsupportedDocumentWarning(unsupported));
     if (supported.length) setNoteFiles((current) => [...current, ...supported]);
   };
-  const pinned = request
-    ? [...messages]
-        .reverse()
-        .find((m) =>
-          request.state === "resolved"
-            ? m.kind === "resolution"
-            : request.state === "cancelled" && m.kind === "cancel_reason",
-        )
-    : undefined;
+  // A resolution or cancellation reason reads in the timeline beside the
+  // change, and a closed request is reopened where a note would be added.
+  const closed =
+    request?.state === "resolved" || request?.state === "cancelled";
+  // A resolution is saved with its "resolved" change in one transaction, so
+  // they share a time: the resolution reads under that change, not alone.
+  const resolutions = new Map<number, IntakeMessage>();
+  for (const event of events) {
+    if (event.kind !== "resolve") continue;
+    const text = messages.find(
+      (m) => m.kind === "resolution" && m.created_at === event.created_at,
+    );
+    if (text) resolutions.set(event.id, text);
+  }
+  const shown = new Set([...resolutions.values()].map((m) => m.id));
   // Notes and changes read as one story, oldest first.
   const timeline = [
     ...events.map((event) => ({
       key: `e${event.id}`,
       at: event.created_at,
       event,
+      text: resolutions.get(event.id),
     })),
-    ...messages.map((message) => ({
-      key: `m${message.id}`,
-      at: message.created_at,
-      message,
-    })),
+    ...messages
+      .filter((message) => !shown.has(message.id))
+      .map((message) => ({
+        key: `m${message.id}`,
+        at: message.created_at,
+        message,
+      })),
   ].sort(
     (a, b) =>
       Date.parse(a.at) - Date.parse(b.at) ||
@@ -452,7 +521,7 @@ export function Detail({
         breadcrumbs={[
           {
             label: "Intake",
-            onClick: () => router.push("/intake"),
+            onClick: () => router.push(INTAKE_REQUESTS_PATH),
             title: "Back to Intake",
           },
           {
@@ -555,9 +624,12 @@ export function Detail({
                 locked={operation.locked}
                 onSave={saveDetails}
                 onAssign={assign}
+                onStatusMenuClosed={focusNote}
                 onStatus={(action) => {
-                  if (action === "resolve" || action === "cancel")
-                    setClosing(action);
+                  // Resolving is written as a note: open the note form and
+                  // bring it into view; "Resolve request" there saves it.
+                  if (action === "resolve") openNoteForResolution();
+                  else if (action === "cancel") setClosing(action);
                   else
                     command(
                       action,
@@ -571,42 +643,6 @@ export function Detail({
               />
             }
           >
-            {pinned && (
-              <GlassCardUI>
-                <section
-                  aria-labelledby="intake-outcome"
-                  className="space-y-3 p-5"
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <h2 id="intake-outcome" className={SECTION_HEADING}>
-                      {request.state === "resolved"
-                        ? "Resolution"
-                        : "Cancellation reason"}
-                    </h2>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        navigator.clipboard.writeText(pinned.body).then(
-                          () => notifySuccess("Copied"),
-                          (e) => notifyError(e, { action: "copy the text" }),
-                        )
-                      }
-                      className="rounded-md text-xs text-gray-500 transition-colors hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
-                    >
-                      Copy
-                    </button>
-                  </div>
-                  <TextSlabUI className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700">
-                    {pinned.body}
-                  </TextSlabUI>
-                  <p className="text-xs text-gray-500">
-                    {pinned.author_name} ·{" "}
-                    {formatIntakeDateTime(pinned.created_at)}
-                  </p>
-                </section>
-              </GlassCardUI>
-            )}
-
             <GlassCardUI>
               <div className="divide-y divide-gray-100">
                 <IntakeDescription
@@ -622,6 +658,7 @@ export function Detail({
                     warning={upload.warning}
                     onAdd={(files) => void upload.add(files)}
                     onOpen={(documentId) => void viewer.open(documentId)}
+                    onBrowse={() => setPicking("request")}
                   />
                 </div>
               </div>
@@ -643,7 +680,18 @@ export function Detail({
                         : describeIntakeMessage(entry.message);
                     return (
                       <li key={entry.key} className="relative flex gap-3">
-                        <IntakeActorAvatar name={line.actor} />
+                        <IntakeActorAvatar
+                          name={line.actor}
+                          photo={
+                            members.find(
+                              (m) =>
+                                m.user_id ===
+                                ("event" in entry
+                                  ? entry.event.actor_id
+                                  : entry.message.author_id),
+                            )?.profile_photo
+                          }
+                        />
                         <div className="min-w-0 flex-1 space-y-1.5">
                           <p className="pt-0.5 text-xs leading-5 text-gray-500">
                             {line.actor && (
@@ -658,42 +706,59 @@ export function Detail({
                               {formatIntakeDateTime(entry.at)}
                             </time>
                           </p>
-                          {"message" in entry && (
-                            <>
-                              <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700">
-                                {entry.message.body}
-                              </p>
-                              <IntakeNoteDocuments
-                                documents={documents.filter(
-                                  (d) => d.message_id === entry.message.id,
-                                )}
-                                uploading={upload.uploading.filter(
-                                  (u) => u.messageId === entry.message.id,
-                                )}
-                                onOpen={(documentId) =>
-                                  void viewer.open(documentId)
-                                }
-                              />
-                            </>
-                          )}
+                          {(() => {
+                            // A note's text, or a resolution under its change.
+                            const text =
+                              "message" in entry ? entry.message : entry.text;
+                            if (!text) return null;
+                            return (
+                              <>
+                                <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700">
+                                  {text.body}
+                                </p>
+                                <IntakeNoteDocuments
+                                  documents={documents.filter(
+                                    (d) => d.message_id === text.id,
+                                  )}
+                                  uploading={upload.uploading.filter(
+                                    (u) => u.messageId === text.id,
+                                  )}
+                                  onOpen={(documentId) =>
+                                    void viewer.open(documentId)
+                                  }
+                                />
+                              </>
+                            );
+                          })()}
                         </div>
                       </li>
                     );
                   })}
                 </ol>
-                {caps.note && !noteOpen && !note && !noteFiles.length && (
-                  <div className="border-t border-gray-100 px-5 py-4">
+                {/* A closed request is reopened here rather than noted. */}
+                {closed && caps.reopen && (
+                  <div className="border-t border-gray-100 p-5">
                     <button
                       type="button"
                       disabled={operation.locked}
-                      onClick={() => setNoteOpen(true)}
-                      className="rounded-md text-sm text-gray-500 transition-colors hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:opacity-60"
+                      onClick={() => command("reopen", "reopen the request")}
+                      className={cn(
+                        "group flex items-center gap-1.5 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:opacity-60",
+                        NOTE_TITLE_CLASS,
+                      )}
                     >
-                      Add note
+                      <span
+                        aria-hidden="true"
+                        className={cn("-ml-1", NOTE_TITLE_ICON_CLASS)}
+                      >
+                        <RotateCcw className="h-4 w-4 group-hover:text-gray-900" />
+                      </span>
+                      Reopen
                     </button>
                   </div>
                 )}
-                {caps.note && (noteOpen || !!note || noteFiles.length > 0) && (
+                {/* An outstanding request always has its comment box open. */}
+                {!closed && caps.note && (
                   <IntakeNoteForm
                     boxRef={noteBox}
                     note={note}
@@ -701,7 +766,6 @@ export function Detail({
                     warning={noteWarning}
                     dropping={dragging && overNote}
                     locked={operation.locked}
-                    autoFocus={noteOpen}
                     onNoteChange={setNote}
                     onAddFiles={addNoteFiles}
                     onRemoveFile={(index) =>
@@ -709,12 +773,25 @@ export function Detail({
                         current.filter((_, i) => i !== index),
                       )
                     }
-                    onCancel={() => {
-                      setNote("");
-                      setNoteFiles([]);
-                      setNoteWarning(null);
-                      setNoteOpen(false);
-                    }}
+                    picked={notePicked}
+                    onBrowse={() => setPicking("note")}
+                    onRemovePicked={(id) =>
+                      setNotePicked((current) =>
+                        current.filter((document) => document.id !== id),
+                      )
+                    }
+                    onResolve={
+                      caps.resolve
+                        ? () =>
+                            command(
+                              "resolve",
+                              "resolve the request",
+                              // The comment, if any, is the resolution.
+                              note.trim() ? { body: note } : {},
+                              "note",
+                            )
+                        : undefined
+                    }
                     onSubmit={() =>
                       command("notes", "add the note", { body: note }, "note")
                     }
@@ -727,10 +804,22 @@ export function Detail({
         )}
       </div>
       {viewer.panel}
+      <IntakeDocumentPicker
+        open={picking !== null}
+        onClose={() => setPicking(null)}
+        onPick={(picked) => {
+          if (picking === "note")
+            setNotePicked((current) => [
+              ...current,
+              ...picked.filter((p) => !current.some((c) => c.id === p.id)),
+            ]);
+          else addPicked(picked, null);
+        }}
+      />
       <ConfirmPopup
         open={confirmingDelete}
         title="Delete this request?"
-        message="Its notes, history and documents are deleted for everyone in your organization. This can't be undone."
+        message={intakeDeleteMessage(orgId, false)}
         confirmLabel="Delete request"
         confirmVariant="danger"
         cancelLabel="Keep request"
@@ -740,21 +829,14 @@ export function Detail({
           command("delete", "delete the request", {}, "request");
         }}
       />
-      {closing && request && (
+      {/* Resolving happens in the note form; only cancelling asks here. */}
+      {closing === "cancel" && request && (
         <IntakeReasonModal
-          title={closing === "resolve" ? "Resolve request" : "Cancel request"}
-          label={
-            closing === "resolve"
-              ? "Resolution"
-              : "Why is this being cancelled?"
-          }
-          hint={
-            closing === "resolve"
-              ? "Record the advice given or the outcome. It is pinned to the request."
-              : "The reason is recorded on the request. Anyone can reopen it later."
-          }
-          confirmLabel={closing === "resolve" ? "Resolve" : "Cancel request"}
-          confirmVariant={closing === "resolve" ? "primary" : "danger"}
+          title="Cancel request"
+          label="Why is this being cancelled?"
+          hint="The reason is recorded on the request. Anyone can reopen it later."
+          confirmLabel="Cancel request"
+          confirmVariant="danger"
           value={reason}
           onChange={setReason}
           busy={operation.busy}
@@ -774,14 +856,7 @@ export function Detail({
               : undefined
           }
           onConfirm={() =>
-            command(
-              closing,
-              closing === "resolve"
-                ? "resolve the request"
-                : "cancel the request",
-              { body: reason },
-              "reason",
-            )
+            command("cancel", "cancel the request", { body: reason }, "reason")
           }
           onClose={() => setClosing(null)}
         />

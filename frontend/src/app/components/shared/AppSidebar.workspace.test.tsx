@@ -168,6 +168,16 @@ describe("AppSidebar workspace switcher", () => {
     expect(screen.queryByText("Workspace")).not.toBeInTheDocument();
   });
 
+  it("offers Intake in Personal as well as in an organization", () => {
+    const { unmount } = render(<AppSidebar isOpen onToggle={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "Intake" })).toBeInTheDocument();
+    unmount();
+    state.organizations = [ACME];
+    state.workspaceId = ACME.id;
+    render(<AppSidebar isOpen onToggle={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "Intake" })).toBeInTheDocument();
+  });
+
   it("heads the sidebar with the organization's name in its workspace", () => {
     state.organizations = [ACME, BETA];
     state.workspaceId = ACME.id;

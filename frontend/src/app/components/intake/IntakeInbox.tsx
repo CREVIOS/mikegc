@@ -1,26 +1,26 @@
 "use client";
 import { UserAvatar } from "@/app/components/ui/user-avatar";
-import { AlertCircle } from "lucide-react";
+import { AlertCircle, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import type {
   IntakeMember,
+  IntakeRequester,
   IntakeRequestSummary,
   IntakeState,
 } from "@mike/contracts";
 import { useWorkspace } from "@/app/contexts/WorkspaceContext";
 import { notifyPartialFailure, notifyError } from "@/app/lib/userFacingError";
 import { notifySuccess } from "@/shared/lib/errorNotifier";
-import { useDebouncedValue } from "@/app/hooks/useDebouncedValue";
 import {
   commandIntakeRequest,
   getIntakeMembers,
+  getIntakeRequesters,
   listIntakeRequests,
   type IntakeListQuery,
+  type IntakeListScope,
 } from "@/app/lib/mikeApi";
-import { PageHeader } from "@/app/components/shared/PageHeader";
-import { PAGE_HEADER_TITLE_CLASS } from "@/app/components/shared/pageHeaderStyles";
 import { TableToolbar } from "@/app/components/shared/TableToolbar";
 import {
   PersonFilter,
@@ -53,53 +53,89 @@ import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { DropdownItem, DropdownSeparator } from "@/shared/ui/dropdown";
 import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
 import { discardIntakeDraft, getIntakeMemory } from "@/app/lib/intakeMemory";
+import {
+  intakeFiltersQuery,
+  parseIntakeFilters,
+  type IntakeFilters,
+  type IntakeTab,
+} from "./intakeQuery";
+import { IntakePageHeader } from "./IntakePageHeader";
+import { TabPillButtonUI } from "@/shared/ui/TabPillButtonUI";
 import { IntakeReasonModal } from "./IntakeReasonModal";
 import { intakeError } from "./useIntakeOperation";
 import {
   INTAKE_STATE_DOT_CLASS,
   INTAKE_STATE_LABELS,
   formatIntakeDate,
+  intakeDeleteMessage,
   isIntakeOverdue,
 } from "./intakeLabels";
+import { IntakeUnassigned } from "./IntakeUnassigned";
 
-type IntakeView = "all" | "mine" | "resolved" | "cancelled";
-
-const VIEWS: { id: IntakeView; label: string }[] = [
-  { id: "all", label: "All" },
-  { id: "mine", label: "Assigned to me" },
+const TABS: { id: IntakeTab; label: string }[] = [
+  { id: "outstanding", label: "Outstanding" },
   { id: "resolved", label: "Resolved" },
   { id: "cancelled", label: "Cancelled" },
 ];
 
-/** The closed tabs show one status; the others leave the status filter free. */
-const isClosedView = (view: IntakeView): view is "resolved" | "cancelled" =>
-  view === "resolved" || view === "cancelled";
+/** The filter a dashboard figure opens the list with, named as on the dashboard. */
+const SCOPE_LABELS: Record<IntakeListScope, string> = {
+  open: "Open",
+  unassigned: "Unassigned",
+  overdue: "Overdue",
+  recorded_30d: "Created in the last 30 days",
+  resolved_30d: "Resolved in the last 30 days",
+};
 
+/** The closed tabs show one status; the others leave the status filter free. */
+const isClosedTab = (tab: IntakeTab): tab is "resolved" | "cancelled" =>
+  tab === "resolved" || tab === "cancelled";
+
+/** Each status with the colour dot its table cells show. */
 const STATE_OPTIONS = (Object.keys(INTAKE_STATE_LABELS) as IntakeState[]).map(
-  (value) => ({ value, label: INTAKE_STATE_LABELS[value] }),
+  (value) => ({
+    value,
+    label: INTAKE_STATE_LABELS[value],
+    dotClassName: INTAKE_STATE_DOT_CLASS[value],
+  }),
 );
+/** The statuses an outstanding request can have. */
+const OPEN_STATE_OPTIONS = STATE_OPTIONS.filter(
+  (option) => option.value !== "resolved" && option.value !== "cancelled",
+);
+/**
+ * Figures that count closed requests as well, so no tab describes their
+ * list: Outstanding holds only open requests.
+ */
+const SCOPES_BEYOND_OUTSTANDING: readonly IntakeListScope[] = [
+  "recorded_30d",
+  "resolved_30d",
+];
 /** Quiet refreshes when the window regains focus are at most this frequent. */
 const FOCUS_REFRESH_MS = 30_000;
 
-/** Mount the queue only for the signed-in account and its active organization. */
+/**
+ * Mount the queue for the signed-in account and its active workspace: an
+ * organization's shared queue, or the person's own requests in Personal.
+ */
 export function IntakeInbox() {
-  const { accountId, activeOrganization } = useWorkspace();
-  if (!accountId || !activeOrganization)
+  const { accountId, workspaceId } = useWorkspace();
+  if (!accountId || !workspaceId)
     return (
       <div className="flex h-full min-h-0 flex-1 flex-col">
         <TableEmptyState>
           <EmptyState
             icon={<IntakeSkeuoIcon />}
             title="Intake"
-            description="Switch to an organization workspace to track requests."
+            description="Sign in to track requests."
           />
         </TableEmptyState>
       </div>
     );
   return (
     <Inbox
-      key={`${accountId}:${activeOrganization.id}`}
-      orgId={activeOrganization.id}
+      key={`${accountId}:${workspaceId}`}
+      orgId={workspaceId}
       accountId={accountId}
     />
   );
@@ -123,14 +159,22 @@ export function Inbox({
 }) {
   const router = useRouter();
   const [members, setMembers] = useState<IntakeMember[]>([]);
-  const [search, setSearch] = useState("");
-  const debouncedSearch = useDebouncedValue(search, 250);
-  const [state, setState] = useState<IntakeState | null>(null);
-  const [view, setView] = useState<IntakeView>("all");
-  const [assignee, setAssignee] = useState<PersonOption | null>(null);
-  const [sort, setSort] = useState<"updated" | "updated_asc" | "target">(
-    "updated",
+  const [requesters, setRequesters] = useState<IntakeRequester[]>([]);
+  // What the page shows lives in its URL (see intakeQuery.ts), so a link, a
+  // reload or Back from a request opens the same list.
+  const searchParams = useSearchParams();
+  const urlQuery = searchParams.toString();
+  const [filters, setFilters] = useState(() =>
+    parseIntakeFilters(searchParams),
   );
+  const { tab, scope, status: state, sort } = filters;
+  // The box shows each keystroke; the list and URL follow once typing settles.
+  const [search, setSearch] = useState(filters.q);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The query string this page last wrote or adopted, and whether the next
+  // write adds a history entry: switching view or tab does, filters replace.
+  const written = useRef(urlQuery);
+  const nextHistory = useRef<"push" | "replace">("replace");
   const [reload, setReload] = useState(0);
   const [cancelTargets, setCancelTargets] = useState<
     IntakeRequestSummary[] | null
@@ -143,13 +187,59 @@ export function Inbox({
   const [deleting, setDeleting] = useState(false);
   const query = useMemo<IntakeListQuery>(
     () => ({
-      search: debouncedSearch,
-      state: isClosedView(view) ? view : (state ?? undefined),
-      assignee: view === "mine" ? "me" : assignee?.user_id,
-      sort,
+      search: filters.q,
+      state: isClosedTab(filters.tab)
+        ? filters.tab
+        : (filters.status ?? undefined),
+      assignee: filters.assignee ?? undefined,
+      requester: filters.requester ?? undefined,
+      sort: filters.sort,
+      // A dashboard figure's filter is already open, created or resolved.
+      scope:
+        filters.scope ?? (filters.tab === "outstanding" ? "open" : undefined),
     }),
-    [debouncedSearch, state, view, assignee, sort],
+    [filters],
   );
+
+  function update(
+    patch: Partial<IntakeFilters>,
+    history: "push" | "replace" = "replace",
+  ) {
+    nextHistory.current = history;
+    setFilters((current) => ({ ...current, ...patch }));
+  }
+  const filtersQuery = intakeFiltersQuery(filters);
+  // Write the URL when what the page shows changes.
+  useEffect(() => {
+    if (filtersQuery === written.current) return;
+    written.current = filtersQuery;
+    // Next.js keeps useSearchParams in step with the native history calls.
+    const href = filtersQuery ? `?${filtersQuery}` : window.location.pathname;
+    if (nextHistory.current === "push")
+      window.history.pushState(null, "", href);
+    else window.history.replaceState(null, "", href);
+    nextHistory.current = "replace";
+  }, [filtersQuery]);
+  // Back, Forward and links change the URL without this page: show what it says.
+  useEffect(() => {
+    if (urlQuery === written.current) return;
+    written.current = urlQuery;
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    const next = parseIntakeFilters(new URLSearchParams(urlQuery));
+    setFilters(next);
+    setSearch(next.q);
+  }, [urlQuery]);
+  useEffect(
+    () => () => {
+      if (searchTimer.current) clearTimeout(searchTimer.current);
+    },
+    [],
+  );
+  function changeSearch(value: string) {
+    setSearch(value);
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => update({ q: value }), 250);
+  }
   // Rows, errors and selection are stored against the query that produced
   // them, so a change shows the loading state at once and a late response
   // for an earlier query is never drawn.
@@ -183,10 +273,22 @@ export function Inbox({
         if (active) setMembers(m);
       })
       .catch(() => {
-        // The queue still works without names: the lawyer filter falls back
-        // to Unassigned and Assigned to me, and a failed list shows its own error.
+        // The queue still works without names: the reviewer filter lists
+        // nobody, and a failed list shows its own error.
         if (active) setMembers([]);
       });
+    return () => {
+      active = false;
+    };
+  }, [orgId, reload]);
+
+  useEffect(() => {
+    let active = true;
+    // Without the list, a requester from the URL still filters the queue.
+    getIntakeRequesters(orgId).then(
+      (list) => active && setRequesters(list),
+      () => active && setRequesters([]),
+    );
     return () => {
       active = false;
     };
@@ -264,14 +366,48 @@ export function Inbox({
   }
 
   const filtered =
-    !!debouncedSearch || !!state || view !== "all" || !!assignee;
+    !!filters.q ||
+    !!state ||
+    tab !== "outstanding" ||
+    !!filters.assignee ||
+    !!filters.requester ||
+    !!scope;
   const failure = error;
   const hrefFor = (request: IntakeRequestSummary) =>
     `/intake/${request.id}?org=${orgId}`;
-  const people: PersonOption[] = members.map((m) => ({
-    ...m,
+  const people: PersonOption[] = members;
+  // Requesters are business contacts, not members: their name is their key.
+  const requesterPeople: PersonOption[] = requesters.map((r) => ({
+    user_id: r.name,
+    display_name: r.name,
+    email: r.email,
     profile_photo: null,
   }));
+  const requester: PersonOption | null = filters.requester
+    ? (requesterPeople.find(
+        (person) =>
+          person.user_id.toLowerCase() === filters.requester!.toLowerCase(),
+      ) ?? {
+        user_id: filters.requester,
+        display_name: filters.requester,
+        email: null,
+        profile_photo: null,
+      })
+    : null;
+  // A reviewer from the URL is named once the member list arrives.
+  const assignee: PersonOption | null = filters.assignee
+    ? (people.find((person) => person.user_id === filters.assignee) ?? {
+        user_id: filters.assignee,
+        display_name: null,
+        email: null,
+        profile_photo: null,
+      })
+    : null;
+
+  /** A dashboard figure's filter goes with any other tab. */
+  function changeTab(next: IntakeTab) {
+    update({ tab: next, scope: null }, "push");
+  }
 
   async function assignToMe(request: IntakeRequestSummary) {
     try {
@@ -445,34 +581,48 @@ export function Inbox({
 
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
-      <PageHeader
+      <IntakePageHeader
+        page="requests"
         actions={[
           {
             type: "search",
             value: search,
-            onChange: setSearch,
+            onChange: changeSearch,
             placeholder: "Search requests or requesters…",
           },
-          {
-            type: "new",
-            onClick: () => router.push("/intake/new"),
-            title: "New request",
-          },
         ]}
-      >
-        <h1 className={`${PAGE_HEADER_TITLE_CLASS} text-gray-900`}>Intake</h1>
-      </PageHeader>
+      />
 
       <TableToolbar
-        items={VIEWS}
-        active={view}
-        onChange={setView}
+        items={TABS}
+        active={
+          scope &&
+          SCOPES_BEYOND_OUTSTANDING.includes(scope) &&
+          tab === "outstanding"
+            ? undefined
+            : tab
+        }
+        onChange={changeTab}
         actions={
-          selectedIds.length > 0 ? (
-            <SelectionActionsMenu
-              renderItems={(close) => renderActions(undefined, close)}
-            />
-          ) : undefined
+          <>
+            {scope && (
+              <TabPillButtonUI
+                active
+                data-icon-position="right"
+                title="Remove this filter"
+                onClick={() => update({ scope: null })}
+                className="pl-3 pr-2"
+              >
+                {SCOPE_LABELS[scope]}
+                <X aria-hidden="true" className="h-3.5 w-3.5" />
+              </TabPillButtonUI>
+            )}
+            {selectedIds.length > 0 && (
+              <SelectionActionsMenu
+                renderItems={(close) => renderActions(undefined, close)}
+              />
+            )}
+          </>
         }
       />
 
@@ -512,34 +662,52 @@ export function Inbox({
               <span>Request</span>
             </TableStickyCell>
             <TableHeaderCell className="ml-auto w-44">
-              Requester
+              <div className="flex items-center gap-1">
+                <span>Requester</span>
+                <PersonFilter
+                  label="Filter by requester"
+                  selectedTitle={(name) => `Requested by ${name}`}
+                  removable
+                  value={requester}
+                  onChange={(person) =>
+                    update({ requester: person?.user_id ?? null })
+                  }
+                  loadPeople={localPeople(requesterPeople)}
+                />
+              </div>
             </TableHeaderCell>
             <TableHeaderCell className="w-44">
               <div className="flex items-center gap-1">
                 <span>Status</span>
-                {!isClosedView(view) && (
+                {!isClosedTab(tab) && (
                   <TableFilters
                     label="Filter by status"
                     value={state}
                     allLabel="All statuses"
-                    options={STATE_OPTIONS}
-                    onChange={setState}
+                    options={
+                      tab === "outstanding" ? OPEN_STATE_OPTIONS : STATE_OPTIONS
+                    }
+                    onChange={(status) => update({ status })}
                   />
                 )}
               </div>
             </TableHeaderCell>
             <TableHeaderCell className="w-44">
               <div className="flex items-center gap-1">
-                <span>Assigned lawyer</span>
-                {view !== "mine" && (
-                  <PersonFilter
-                    label="Filter by assigned lawyer"
-                    selectedTitle={(name) => `Assigned to ${name}`}
-                    value={assignee}
-                    onChange={setAssignee}
-                    loadPeople={localPeople(people)}
-                  />
-                )}
+                <span>Reviewer</span>
+                <PersonFilter
+                  label="Filter by reviewer"
+                  selectedTitle={(name, self) =>
+                    self ? "Assigned to me" : `Assigned to ${name}`
+                  }
+                  selfId={accountId}
+                  removable
+                  value={assignee}
+                  onChange={(person) =>
+                    update({ assignee: person?.user_id ?? null })
+                  }
+                  loadPeople={localPeople(people)}
+                />
               </div>
             </TableHeaderCell>
             <TableHeaderCell className="w-32">
@@ -551,7 +719,9 @@ export function Inbox({
                   allLabel="Recently updated first"
                   options={[{ value: "target", label: "Soonest target first" }]}
                   onChange={(value) =>
-                    setSort(value === "target" ? "target" : "updated")
+                    update({
+                      sort: value === "target" ? "target" : "updated",
+                    })
                   }
                 />
               </div>
@@ -565,7 +735,9 @@ export function Inbox({
                   allLabel="Newest first"
                   options={[{ value: "updated_asc", label: "Oldest first" }]}
                   onChange={(value) =>
-                    setSort(value === "updated_asc" ? "updated_asc" : "updated")
+                    update({
+                      sort: value === "updated_asc" ? "updated_asc" : "updated",
+                    })
                   }
                 />
               </div>
@@ -603,8 +775,8 @@ export function Inbox({
             ) : (
               <EmptyState
                 icon={<IntakeSkeuoIcon />}
-                title="No requests yet"
-                description="Record an NDA request or legal question from the business to start tracking it."
+                title="No outstanding requests"
+                description="Create an NDA request or legal question from the business to start tracking it."
                 action={
                   <PillButtonUI
                     tone="black"
@@ -674,9 +846,13 @@ export function Inbox({
                           members.find((m) => m.user_id === request.assignee_id)
                             ?.email
                         }
+                        photo={
+                          members.find((m) => m.user_id === request.assignee_id)
+                            ?.profile_photo
+                        }
                       />
                     ) : (
-                      <span className="text-gray-400">Unassigned</span>
+                      <IntakeUnassigned className="text-gray-400" />
                     )}
                   </TableCell>
                   <TableCell className="w-32">
@@ -753,7 +929,7 @@ export function Inbox({
             ? `Delete ${deleteTargets.length} requests?`
             : "Delete this request?"
         }
-        message={`${deletingMany ? "Their" : "Its"} notes, history and documents are deleted for everyone in your organization. This can't be undone.`}
+        message={intakeDeleteMessage(orgId, deletingMany)}
         confirmLabel={deletingMany ? "Delete requests" : "Delete request"}
         confirmVariant="danger"
         confirmStatus={deleting ? "loading" : "idle"}
@@ -810,14 +986,16 @@ function IntakeLoadingRows() {
 function IntakePerson({
   name,
   email,
+  photo,
 }: {
   name: string;
   email?: string | null;
+  photo?: string | null;
 }) {
   return (
     <span className="flex min-w-0 items-center gap-2">
       <span aria-hidden="true" className="flex">
-        <UserAvatar size="sm" name={name} email={email} />
+        <UserAvatar size="sm" name={name} email={email} photo={photo} />
       </span>
       <span className="min-w-0">{name}</span>
     </span>

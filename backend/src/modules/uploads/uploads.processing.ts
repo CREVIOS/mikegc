@@ -22,7 +22,10 @@ import { pipeline } from "node:stream/promises";
 import { pathToFileURL } from "node:url";
 
 import { resolveContentOrgId } from "../../lib/access";
-import { attachIntakeDocument } from "../intake/intake.service";
+import {
+  attachIntakeDocument,
+  resolveIntakeOrg,
+} from "../intake/intake.service";
 import { recordAudit } from "../../lib/audit";
 import { enqueueStorageCleanup } from "../../lib/dbq/enqueue";
 import { convertedPdfKey, officeFileToPdf } from "../../lib/convert";
@@ -46,6 +49,7 @@ import {
   versionStorageKey,
 } from "../../lib/storage";
 import { createServerSupabase, type Db } from "../../lib/supabase";
+import { reportableServiceError } from "../../lib/serviceResult";
 import { UPLOAD_VERIFICATION_LEASE_SECONDS } from "./uploads.manifest";
 
 type UploadSessionRow = {
@@ -387,8 +391,15 @@ async function processCreatedDocument(
   }
   if (!orgId && scope === "intake") {
     // An intake attachment belongs to its request's organization, which the
-    // session's access check confirmed the uploader belongs to.
-    orgId = destination.org_id as string;
+    // session's access check confirmed the uploader belongs to. In Personal
+    // that is the uploader's own personal organization.
+    const org = await resolveIntakeOrg(
+      db,
+      session.user_id,
+      destination.org_id as string,
+    );
+    if (!org.ok) throw reportableServiceError(org);
+    orgId = org.data;
   }
   if (!orgId && (scope === "standalone" || scope === "library")) {
     // Uploaded on its own: the workspace the session named, which was

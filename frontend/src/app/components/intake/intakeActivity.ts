@@ -20,8 +20,8 @@ function eventAction(event: IntakeEvent): string {
   switch (event.kind) {
     case "submitted":
       return event.assignee_name
-        ? `recorded this and assigned it to ${event.assignee_name}`
-        : "recorded this";
+        ? `created this and assigned it to ${event.assignee_name}`
+        : "created this";
     case "assign":
       return event.assignee_name
         ? `assigned this to ${event.assignee_name}`
@@ -41,7 +41,7 @@ function eventAction(event: IntakeEvent): string {
     case "document_added":
       return "added a document";
     case "assignee_left":
-      return `unassigned ${event.assignee_name ?? "the assigned lawyer"} because they left the organization`;
+      return `unassigned ${event.assignee_name ?? "the reviewer"} because they left the organization`;
     // Events recorded before intake became an internal tracker.
     case "ask":
       return "asked for information";
@@ -50,20 +50,20 @@ function eventAction(event: IntakeEvent): string {
     case "publish":
       return "answered and resolved this";
     case "reviewer_removed":
-      return "unassigned the lawyer when they left the Legal team";
+      return "unassigned the reviewer when they left the Legal team";
     default:
       return event.kind.replaceAll("_", " ");
   }
 }
 
 const MESSAGE_ACTIONS: Record<IntakeMessage["kind"], string> = {
-  note: "added a note",
+  note: "commented",
   resolution: "recorded the resolution",
   cancel_reason: "gave the reason for cancelling",
-  // Legacy question, reply and answer messages are shown as notes.
-  question: "added a note",
-  reply: "added a note",
-  answer: "added a note",
+  // Legacy question, reply and answer messages read as comments.
+  question: "commented",
+  reply: "commented",
+  answer: "commented",
 };
 
 /** A message's line; its text is shown below it. */

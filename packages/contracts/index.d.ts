@@ -715,7 +715,13 @@ export interface AuditActorPage {
  */
 export type IntakeState = "submitted" | "in_review" | "needs_information" | "resolved" | "cancelled";
 export type IntakeAction = "assignment" | "notes" | "wait" | "resume" | "resolve" | "cancel" | "reopen" | "delete";
-export interface IntakeMember { user_id: string; display_name: string | null; email: string | null }
+export interface IntakeMember {
+  user_id: string; display_name: string | null; email: string | null;
+  /** A data URL, or null when the member has not set a photo. */
+  profile_photo: string | null;
+}
+/** A requester the queue can be filtered by, with their most recent email. */
+export interface IntakeRequester { name: string; email: string | null }
 /** The editable description of a request. */
 export interface IntakeDetails {
   subject: string; description: string;
@@ -731,7 +737,9 @@ export interface IntakeRequestSummary extends Omit<IntakeDetails, "description">
 }
 export interface IntakeRequestPage { requests: IntakeRequestSummary[]; next_cursor: string | null }
 export interface IntakeRequest extends Omit<IntakeRequestSummary, "capabilities">, IntakeDetails {
-  org_id: string; created_by_name: string;
+  org_id: string;
+  /** Null once the creator's account is erased. */
+  created_by: string | null; created_by_name: string;
   capabilities: {
     edit: boolean; assign: boolean; note: boolean; wait: boolean;
     resume: boolean; resolve: boolean; cancel: boolean; reopen: boolean;
@@ -742,12 +750,14 @@ export interface IntakeRequest extends Omit<IntakeRequestSummary, "capabilities"
 /** Legacy question, reply and answer messages are shown as notes. */
 export interface IntakeMessage {
   id: string; kind: "note" | "resolution" | "cancel_reason" | "question" | "reply" | "answer";
-  body: string; author_name: string; created_at: string;
+  body: string;
+  /** Null once the author's account is erased. */
+  author_id: string | null; author_name: string; created_at: string;
 }
 export interface IntakeEvent {
   id: number; kind: string; from_state: IntakeState | null; to_state: IntakeState | null;
   /** Null for automatic changes, such as unassignment when a member leaves. */
-  actor_name: string | null; assignee_name: string | null; created_at: string;
+  actor_id: string | null; actor_name: string | null; assignee_name: string | null; created_at: string;
 }
 /** A document attached to a request, readable by every organization member. */
 export interface IntakeDocument {
@@ -755,6 +765,33 @@ export interface IntakeDocument {
   status: string; added_by_name: string; created_at: string;
   /** The note the document was added with, if any. */
   message_id: string | null;
+}
+/**
+ * Where an organization's requests stand. Counts of open requests are as of
+ * now; weeks start on Monday in the viewer's timezone, oldest first.
+ */
+export type IntakeDashboardDays = 7 | 30 | 90 | 365;
+export type IntakeDashboardMedianDays = 30 | 90 | 365;
+export type IntakeDashboardWeeks = 4 | 8 | 12 | 26;
+export interface IntakeDashboard {
+  open: number; new: number; in_progress: number; waiting: number;
+  unassigned: number; overdue: number;
+  /** Requests created in the last `created_days`, resolved in the last `resolved_days`. */
+  created: number; resolved: number;
+  /** The periods these figures cover. */
+  created_days: IntakeDashboardDays; resolved_days: IntakeDashboardDays;
+  median_days: IntakeDashboardMedianDays;
+  weeks_shown: IntakeDashboardWeeks;
+  /** Median hours from creation to resolution, over the last `median_days` days. */
+  median_hours_to_resolve: number | null;
+  weeks: { week_start: string; created: number; resolved: number }[];
+  /** Open requests per assigned member, busiest first. */
+  workload: {
+    assignee_id: string; name: string;
+    /** The reviewer's profile photo as a data URL, or null. */
+    photo: string | null;
+    open: number; waiting: number; overdue: number;
+  }[];
 }
 export interface IntakeReceipt { request_id: string | null; applied_version: number; message_id: string | null; replayed: boolean }
 export interface IntakeSubmission extends IntakeDetails { id: string; command_id: string; assignee_id: string | null }

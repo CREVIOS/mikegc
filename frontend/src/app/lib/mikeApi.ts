@@ -7,10 +7,15 @@ import type {
     OrgDepartureResolution,
     IntakeAction,
     IntakeCommand,
+    IntakeDashboard,
+    IntakeDashboardDays,
+    IntakeDashboardMedianDays,
+    IntakeDashboardWeeks,
     IntakeDocument,
     IntakeEdit,
     IntakeEvent,
     IntakeMember,
+    IntakeRequester,
     IntakeMessage,
     IntakeReceipt,
     IntakeRequest,
@@ -4522,12 +4527,46 @@ const jsonBody = (method: string, body: unknown): RequestInit => ({
 export function getIntakeMembers(orgId: string) {
     return apiRequest<IntakeMember[]>(intakePath(orgId, "/members"));
 }
+/** List each requester the queue can be filtered by, once. */
+export function getIntakeRequesters(orgId: string) {
+    return apiRequest<IntakeRequester[]>(intakePath(orgId, "/requesters"));
+}
+/** Where the workspace's requests stand, with weeks counted in `timezone`. */
+export function getIntakeDashboard(
+    orgId: string,
+    timezone: string,
+    periods: {
+        weeks: IntakeDashboardWeeks;
+        created_days: IntakeDashboardDays;
+        resolved_days: IntakeDashboardDays;
+        median_days: IntakeDashboardMedianDays;
+    } = { weeks: 8, created_days: 30, resolved_days: 30, median_days: 30 },
+) {
+    const query = new URLSearchParams({
+        timezone,
+        weeks: String(periods.weeks),
+        created_days: String(periods.created_days),
+        resolved_days: String(periods.resolved_days),
+        median_days: String(periods.median_days),
+    });
+    return apiRequest<IntakeDashboard>(intakePath(orgId, `/dashboard?${query}`));
+}
+/** What a dashboard figure counted, for the queue to show just those requests. */
+export type IntakeListScope =
+    | "open"
+    | "unassigned"
+    | "overdue"
+    | "recorded_30d"
+    | "resolved_30d";
 export type IntakeListQuery = {
     state?: string;
     /** "unassigned", "me" or a member's user ID. */
     assignee?: string;
+    /** One requester's name, matched without case. */
+    requester?: string;
     search?: string;
     sort?: "updated" | "updated_asc" | "target";
+    scope?: IntakeListScope;
     cursor?: string;
 };
 /** Fetch one keyset page of the queue; pass the previous page's cursor for the next. */
@@ -4566,6 +4605,21 @@ export function getIntakeDocuments(orgId: string, id: string) {
  * Upload files to a request. The upload worker links each document to the
  * request as it is created, so a closed tab never leaves an unlinked file.
  */
+/**
+ * Copy documents the signed-in member can read, such as library files, onto a
+ * request, and onto their note or resolution when `messageId` names it.
+ */
+export function copyIntakeDocuments(
+    orgId: string,
+    requestId: string,
+    documentIds: string[],
+    messageId: string | null = null,
+) {
+    return apiRequest<IntakeDocument[]>(
+        intakePath(orgId, `/requests/${requestId}/documents/copy`),
+        jsonBody("POST", { document_ids: documentIds, message_id: messageId }),
+    );
+}
 export function uploadIntakeDocuments(
     orgId: string,
     requestId: string,

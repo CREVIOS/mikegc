@@ -7,7 +7,7 @@ import { PDF_FIXTURE } from "./helpers";
 
 // Real browser, gateway, auth and SQL. Faults drop committed responses and
 // rate-limit a replay to prove history navigation cannot duplicate a write.
-test("Legal records a business request, works it and resolves it exactly once", async ({
+test("Legal creates a business request, works it and resolves it exactly once", async ({
   browser,
   baseURL,
 }) => {
@@ -94,7 +94,7 @@ test("Legal records a business request, works it and resolves it exactly once", 
         );
     const [lawyerA, lawyerB] = people.map((p) => p.page);
 
-    // Intake is on by default and every member can record requests.
+    // Intake is on by default and every member can create requests.
     await lawyerA.goto("/assistant");
     await lawyerA.getByRole("button", { name: "Intake", exact: true }).click();
     await expect(
@@ -119,7 +119,7 @@ test("Legal records a business request, works it and resolves it exactly once", 
     await lawyerA.locator('input[type="file"]').setInputFiles(PDF_FIXTURE);
     await expect(lawyerA.getByText("test.pdf", { exact: true })).toBeVisible();
     await lawyerA.goBack();
-    await expect(lawyerA).toHaveURL(/\/intake(\?|$)/);
+    await expect(lawyerA).toHaveURL(/\/intake\/requests(\?|$)/);
     await lawyerA.goForward();
     await expect(lawyerA.getByLabel("Subject", { exact: true })).toHaveValue(
       "Synthetic supplier NDA",
@@ -131,7 +131,7 @@ test("Legal records a business request, works it and resolves it exactly once", 
     await expect(lawyerA.getByLabel("Timezone")).toHaveValue("Europe/Stockholm");
     // New requests start assigned to their creator.
     await expect(
-      lawyerA.getByRole("button", { name: "Assigned lawyer: Intake Lawyer A" }),
+      lawyerA.getByRole("button", { name: "Reviewer: Intake Lawyer A" }),
     ).toBeVisible();
     const submissions: unknown[] = [];
     await lawyerA.route("**/api/intake/*/requests", async (route) => {
@@ -182,16 +182,16 @@ test("Legal records a business request, works it and resolves it exactly once", 
 
     // A note draft survives Back/Forward and is saved without a version.
     // A document added with it waits with the draft and is tagged on the note.
-    await lawyerA.getByRole("button", { name: "Add note" }).click();
-    await lawyerA.getByLabel("Add a note").fill("Called Jane; draft is coming.");
+    // The comment box is always open on an outstanding request.
+    await lawyerA.getByLabel("Add comment").fill("Called Jane; draft is coming.");
     await lawyerA
-      .getByLabel("Add a note")
+      .getByLabel("Add comment")
       .locator("xpath=..")
       .locator('input[type="file"]')
       .setInputFiles(PDF_FIXTURE);
     await lawyerA.goBack();
     await lawyerA.goForward();
-    await expect(lawyerA.getByLabel("Add a note")).toHaveValue(
+    await expect(lawyerA.getByLabel("Add comment")).toHaveValue(
       "Called Jane; draft is coming.",
     );
     await expect(
@@ -201,9 +201,7 @@ test("Legal records a business request, works it and resolves it exactly once", 
     await expect(
       lawyerA.getByText("Called Jane; draft is coming.", { exact: true }),
     ).toBeVisible();
-    await expect(
-      lawyerA.getByRole("button", { name: "Add note" }),
-    ).toBeVisible();
+    await expect(lawyerA.getByLabel("Add comment")).toHaveValue("");
     const activity = lawyerA.getByRole("region", { name: "Activity" });
     // The note's document uploads from this tab once the note is saved, and
     // a reload would cancel it, so wait until it has finished first.
@@ -226,15 +224,12 @@ test("Legal records a business request, works it and resolves it exactly once", 
       documents.getByRole("button", { name: "Open test.pdf" }),
     ).toHaveCount(2);
 
-    // A colleague finds it in the shared queue, takes it and waits on Jane.
+    // A colleague finds it among the outstanding requests, takes it and waits on Jane.
     await lawyerB.goto("/intake");
-    await lawyerB
-      .getByRole("button", { name: "Assigned to me", exact: true })
-      .click();
+    await expect(lawyerB).toHaveURL(/\/intake\/requests$/);
     await expect(
-      lawyerB.getByRole("link", { name: "Synthetic supplier NDA" }),
-    ).toHaveCount(0);
-    await lawyerB.getByRole("button", { name: "All", exact: true }).click();
+      lawyerB.getByRole("button", { name: "Outstanding", exact: true }),
+    ).toHaveAttribute("aria-pressed", "true");
     await lawyerB.getByRole("link", { name: "Synthetic supplier NDA" }).click();
     // Every member can open the attachment, not only its uploader.
     const opened = lawyerB.waitForResponse(
@@ -252,10 +247,10 @@ test("Legal records a business request, works it and resolves it exactly once", 
     // The details panel holds the facts, the assignee and the status.
     const summaryB = lawyerB.getByRole("complementary", { name: "Details" });
     await summaryB
-      .getByRole("button", { name: "Assigned lawyer: Intake Lawyer A" })
+      .getByRole("button", { name: "Reviewer: Intake Lawyer A" })
       .click();
     await lawyerB
-      .getByRole("menuitemradio", { name: "Intake Lawyer B (you)" })
+      .getByRole("menuitemradio", { name: "Myself" })
       .click();
     await expect(
       lawyerB
@@ -289,17 +284,25 @@ test("Legal records a business request, works it and resolves it exactly once", 
     });
     await status("In progress").click();
     await lawyerB.getByRole("menuitemradio", { name: "Resolved" }).click();
-    const dialog = lawyerB.getByRole("dialog");
-    await dialog.getByLabel("Resolution").fill(resolution);
-    await dialog.getByRole("button", { name: "Resolve", exact: true }).click();
+    // Resolved opens the note form; the note becomes the resolution.
+    await lawyerB.getByLabel("Add comment").fill(resolution);
+    await lawyerB.getByRole("button", { name: "Resolve request" }).click();
     await expect(summaryB.getByText("Resolved", { exact: true })).toBeVisible();
     expect(commands).toHaveLength(2);
     expect(commands[0]).toEqual(commands[1]);
-    const outcome = lawyerB.getByRole("region", { name: "Resolution" });
-    await expect(outcome.getByText(resolution, { exact: true })).toHaveCount(1);
+    // The resolution reads once, in the timeline.
+    const activityB = lawyerB.getByRole("region", { name: "Activity" });
+    await expect(activityB.getByText(resolution, { exact: true })).toHaveCount(1);
 
     await lawyerA.goto(detailURL);
-    await expect(lawyerA.getByRole("region", { name: "Resolution" })).toBeVisible();
+    await expect(
+      lawyerA
+        .getByRole("region", { name: "Activity" })
+        .getByText(resolution, { exact: true }),
+    ).toBeVisible();
+    await expect(
+      lawyerA.getByRole("button", { name: "Reopen", exact: true }),
+    ).toBeVisible();
     await lawyerA.setViewportSize({ width: 375, height: 812 });
     for (const dark of [false, true]) {
       // Exercise the same root class and color-scheme used by applyDarkMode.
@@ -321,7 +324,7 @@ test("Legal records a business request, works it and resolves it exactly once", 
         fullPage: true,
       });
       const text = lawyerA
-        .getByRole("region", { name: "Resolution" })
+        .getByRole("region", { name: "Activity" })
         .getByText(resolution, { exact: true });
       await text.scrollIntoViewIfNeeded();
       expect(
@@ -344,10 +347,14 @@ test("Legal records a business request, works it and resolves it exactly once", 
       .getByRole("dialog")
       .getByRole("button", { name: "Cancel request" })
       .click();
+    // The reason reads in the timeline, and the request can be reopened there.
     await expect(
       lawyerA
-        .getByRole("region", { name: "Cancellation reason" })
+        .getByRole("region", { name: "Activity" })
         .getByText("Jane withdrew the request.", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      lawyerA.getByRole("button", { name: "Reopen", exact: true }),
     ).toBeVisible();
 
     // Any member can delete a request; it leaves the queue for everyone.
@@ -357,7 +364,11 @@ test("Legal records a business request, works it and resolves it exactly once", 
       .getByRole("dialog", { name: "Delete this request?" })
       .getByRole("button", { name: "Delete request" })
       .click();
-    await expect(lawyerA).toHaveURL(/\/intake$/);
+    await expect(lawyerA).toHaveURL(/\/intake\/requests$/);
+    // It was cancelled, so it would be listed under Cancelled were it kept.
+    await lawyerA.getByRole("button", { name: "Cancelled", exact: true }).click();
+    await expect(lawyerA).toHaveURL(/\/intake\/requests\?tab=cancelled$/);
+    await expect(lawyerA.getByText("No requests found")).toBeVisible();
     await expect(
       lawyerA.getByRole("link", { name: "Synthetic supplier NDA" }),
     ).toHaveCount(0);

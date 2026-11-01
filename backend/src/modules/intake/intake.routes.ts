@@ -9,31 +9,47 @@ import {
 import {
   commandIntakeRequest,
   editIntakeRequest,
+  getIntakeDashboard,
   getIntakeRequest,
   listIntakeDocuments,
+  copyIntakeDocuments,
   listIntakeEvents,
   listIntakeMembers,
+  listIntakeRequesters,
   listIntakeMessages,
   listIntakeRequests,
+  resolveIntakeOrg,
   submitIntakeRequest,
   type IntakeScope,
 } from "./intake.service";
 import {
   intakeCommands,
+  intakeDashboardQuery,
+  intakeDocumentCopy,
   intakeEdit,
   intakeId,
   intakeList,
   intakePage,
   intakeSubmit,
+  intakeWorkspace,
   type IntakeCommandAction,
 } from "./intake.validation";
 
 export const intakeRouter = Router();
 intakeRouter.use(requireAuth);
+// A team organization's id, or "personal" for the caller's own workspace,
+// which is resolved here so every handler works with an organization id.
 intakeRouter.param("orgId", (req, res, next, value) => {
-  if (!intakeId.safeParse(value).success)
+  if (!intakeWorkspace.safeParse(value).success)
     return void res.status(400).json({ detail: "Invalid organization ID." });
-  next();
+  resolveIntakeOrg(createServerSupabase(), res.locals.userId, value).then(
+    (result) => {
+      if (!result.ok) return void sendServiceFailure(res, result);
+      res.locals.intakeOrgId = result.data;
+      next();
+    },
+    next,
+  );
 });
 intakeRouter.param("requestId", (req, res, next, value) => {
   if (!intakeId.safeParse(value).success)
@@ -41,8 +57,8 @@ intakeRouter.param("requestId", (req, res, next, value) => {
   next();
 });
 /** The actor always comes from authentication, never from the request body. */
-const scopeOf = (orgId: string, res: Response): IntakeScope => ({
-  orgId,
+const scopeOf = (res: Response): IntakeScope => ({
+  orgId: res.locals.intakeOrgId,
   actorId: res.locals.userId,
 });
 function send<T>(res: Response, result: ServiceResult<T>, status = 200) {
@@ -57,7 +73,36 @@ intakeRouter.get(
       res,
       await listIntakeMembers(
         createServerSupabase(),
-        scopeOf(req.params.orgId, res),
+        scopeOf(res),
+      ),
+    );
+  }),
+);
+intakeRouter.get(
+  "/:orgId/requesters",
+  asyncRoute(async (req, res) => {
+    send(
+      res,
+      await listIntakeRequesters(createServerSupabase(), scopeOf(res)),
+    );
+  }),
+);
+intakeRouter.get(
+  "/:orgId/dashboard",
+  asyncRoute(async (req, res) => {
+    const parsed = intakeDashboardQuery.safeParse(req.query);
+    if (!parsed.success)
+      return void res
+        .status(400)
+        .json({ detail: "Invalid timezone or period." });
+    const { timezone, ...periods } = parsed.data;
+    send(
+      res,
+      await getIntakeDashboard(
+        createServerSupabase(),
+        scopeOf(res),
+        timezone,
+        periods,
       ),
     );
   }),
@@ -72,7 +117,7 @@ intakeRouter.get(
       res,
       await listIntakeRequests(
         createServerSupabase(),
-        scopeOf(req.params.orgId, res),
+        scopeOf(res),
         parsed.data,
       ),
     );
@@ -89,7 +134,7 @@ intakeRouter.post(
       });
     const result = await submitIntakeRequest(
       createServerSupabase(),
-      scopeOf(req.params.orgId, res),
+      scopeOf(res),
       parsed.data,
     );
     send(res, result, result.ok && !result.data.replayed ? 201 : 200);
@@ -102,7 +147,7 @@ intakeRouter.get(
       res,
       await getIntakeRequest(
         createServerSupabase(),
-        scopeOf(req.params.orgId, res),
+        scopeOf(res),
         req.params.requestId,
       ),
     );
@@ -118,10 +163,31 @@ intakeRouter.patch(
       res,
       await editIntakeRequest(
         createServerSupabase(),
-        scopeOf(req.params.orgId, res),
+        scopeOf(res),
         req.params.requestId,
         parsed.data,
       ),
+    );
+  }),
+);
+intakeRouter.post(
+  "/:orgId/requests/:requestId/documents/copy",
+  asyncRoute(async (req, res) => {
+    const parsed = intakeDocumentCopy.safeParse(req.body);
+    if (!parsed.success)
+      return void res.status(400).json({ detail: "Invalid documents." });
+    send(
+      res,
+      await copyIntakeDocuments(
+        createServerSupabase(),
+        { ...scopeOf(res), userEmail: res.locals.userEmail },
+        req.params.requestId,
+        parsed.data.document_ids,
+        parsed.data.message_id,
+        // Personal intake takes the actor's own unfiled documents.
+        req.params.orgId === "personal" ? null : res.locals.intakeOrgId,
+      ),
+      201,
     );
   }),
 );
@@ -132,7 +198,7 @@ intakeRouter.get(
       res,
       await listIntakeDocuments(
         createServerSupabase(),
-        scopeOf(req.params.orgId, res),
+        scopeOf(res),
         req.params.requestId,
       ),
     );
@@ -150,7 +216,7 @@ for (const [path, read] of [
         return void res.status(400).json({ detail: "Invalid page." });
       const result: ServiceResult<unknown[]> = await read(
         createServerSupabase(),
-        scopeOf(req.params.orgId, res),
+        scopeOf(res),
         req.params.requestId,
         parsed.data,
       );
@@ -171,7 +237,7 @@ for (const action of Object.keys(intakeCommands) as IntakeCommandAction[]) {
         res,
         await commandIntakeRequest(
           createServerSupabase(),
-          scopeOf(req.params.orgId, res),
+          scopeOf(res),
           req.params.requestId,
           action,
           parsed.data,

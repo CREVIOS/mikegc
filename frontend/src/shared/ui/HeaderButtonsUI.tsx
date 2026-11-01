@@ -33,14 +33,18 @@ export type HeaderButtonUIProps = Omit<
     children?: ReactNode;
     className?: string;
     iconOnly?: boolean;
+    /** Text with no icon: shown in full at every width. */
+    labelled?: boolean;
 };
 
 export function headerButtonClassName({
     iconOnly = false,
+    labelled = false,
     disabled = false,
     className = "",
 }: {
     iconOnly?: boolean;
+    labelled?: boolean;
     disabled?: boolean;
     className?: string;
 } = {}) {
@@ -48,7 +52,11 @@ export function headerButtonClassName({
         "flex h-7 items-center justify-center rounded-full text-sm transition-colors disabled:cursor-default disabled:text-gray-300 disabled:hover:bg-transparent disabled:hover:text-gray-300",
         LIQUID_GLASS_HOVER_CLASS,
         LIQUID_GLASS_PRESSED_CLASS,
-        iconOnly ? "w-7" : "w-7 gap-1.5 px-0 sm:w-auto sm:px-3",
+        iconOnly
+            ? "w-7"
+            : labelled
+              ? "gap-1.5 px-3"
+              : "w-7 gap-1.5 px-0 sm:w-auto sm:px-3",
         disabled ? "cursor-default" : "cursor-pointer",
         "text-gray-500 hover:text-gray-900",
         className,
@@ -61,6 +69,7 @@ export function HeaderButtonUI({
     children,
     className,
     iconOnly = false,
+    labelled = false,
     disabled,
     type = "button",
     ...props
@@ -71,6 +80,7 @@ export function HeaderButtonUI({
             disabled={disabled}
             className={headerButtonClassName({
                 iconOnly,
+                labelled,
                 disabled,
                 className,
             })}

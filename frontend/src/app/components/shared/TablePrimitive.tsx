@@ -119,6 +119,8 @@ export type TableFilterOption<T extends string> = {
     value: T;
     label: string;
     icon?: ComponentType<{ className?: string }>;
+    /** A decorative colour dot before the label, such as a status's own. */
+    dotClassName?: string;
     className?: string;
 };
 
@@ -200,11 +202,19 @@ export function TableFilters<T extends string>({
                                 className={`truncate pr-2 ${
                                     Icon
                                         ? "inline-flex items-center gap-1.5 font-medium"
-                                        : ""
+                                        : option.dotClassName
+                                          ? "inline-flex items-center gap-2"
+                                          : ""
                                 } ${option.className ?? ""}`}
                             >
                                 {Icon && (
                                     <Icon className="h-3.5 w-3.5 shrink-0" />
+                                )}
+                                {!Icon && option.dotClassName && (
+                                    <span
+                                        aria-hidden="true"
+                                        className={`h-2 w-2 shrink-0 rounded-full ${option.dotClassName}`}
+                                    />
                                 )}
                                 {option.label}
                             </span>

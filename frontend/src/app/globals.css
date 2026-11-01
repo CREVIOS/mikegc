@@ -26,6 +26,23 @@
     background-color: var(--color-blue-50);
 }
 
+/* Chart marks, such as the intake dashboard's. Each theme has its own step
+   of the same hue, validated together against that theme's card surface.
+   The status colors match the intake queue's status dots. Text never wears
+   these; labels use the text colors beside a colored mark. */
+:root {
+    --chart-series-1: #2a78d6;
+    --chart-series-2: #eb6834;
+    --chart-status-new: #3b82f6;
+    --chart-status-in-progress: #f59e0b;
+    --chart-status-waiting: #8b5cf6;
+}
+.dark {
+    --chart-series-1: #3987e5;
+    --chart-series-2: #d95926;
+    --chart-status-in-progress: #d97706;
+}
+
 .dark .table-surface .table-sticky-cell.bg-blue-50 {
     background-color: rgba(3, 73, 130, 0.3);
 }

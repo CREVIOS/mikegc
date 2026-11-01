@@ -34,6 +34,15 @@ describe("parseUploadSessionRequest", () => {
     expect(
       parseUploadSessionRequest(request, USER_ID, SESSION_ID).destination,
     ).toEqual(destination);
+    // Personal names the uploader's own workspace.
+    const personal = { ...destination, org_id: "personal" };
+    expect(
+      parseUploadSessionRequest(
+        { ...request, destination: personal },
+        USER_ID,
+        SESSION_ID,
+      ).destination,
+    ).toEqual(personal);
     // Documents added with a note name it.
     const withNote = { ...destination, message_id: USER_ID };
     expect(
@@ -46,6 +55,7 @@ describe("parseUploadSessionRequest", () => {
     for (const invalid of [
       { ...request, destination: { scope: "intake", org_id: USER_ID } },
       { ...request, destination: { ...destination, message_id: "note" } },
+      { ...request, destination: { ...destination, org_id: "team" } },
       {
         ...request,
         files: [{ ...request.files[0], folder_id: SESSION_ID }],
