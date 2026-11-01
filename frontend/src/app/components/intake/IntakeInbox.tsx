@@ -8,7 +8,6 @@ import type {
   IntakeMember,
   IntakeRequester,
   IntakeRequestSummary,
-  IntakeState,
 } from "@mike/contracts";
 import { useWorkspace } from "@/app/contexts/WorkspaceContext";
 import { notifyPartialFailure, notifyError } from "@/app/lib/userFacingError";
@@ -57,6 +56,7 @@ import {
   intakeFiltersQuery,
   parseIntakeFilters,
   type IntakeFilters,
+  type IntakeOpenState,
   type IntakeTab,
 } from "./intakeQuery";
 import { IntakePageHeader } from "./IntakePageHeader";
@@ -91,18 +91,14 @@ const SCOPE_LABELS: Record<IntakeListScope, string> = {
 const isClosedTab = (tab: IntakeTab): tab is "resolved" | "cancelled" =>
   tab === "resolved" || tab === "cancelled";
 
-/** Each status with the colour dot its table cells show. */
-const STATE_OPTIONS = (Object.keys(INTAKE_STATE_LABELS) as IntakeState[]).map(
-  (value) => ({
-    value,
-    label: INTAKE_STATE_LABELS[value],
-    dotClassName: INTAKE_STATE_DOT_CLASS[value],
-  }),
-);
-/** The statuses an outstanding request can have. */
-const OPEN_STATE_OPTIONS = STATE_OPTIONS.filter(
-  (option) => option.value !== "resolved" && option.value !== "cancelled",
-);
+/** The statuses an outstanding request can have, with their table dots. */
+const OPEN_STATE_OPTIONS = (
+  ["submitted", "in_review", "needs_information"] as IntakeOpenState[]
+).map((value) => ({
+  value,
+  label: INTAKE_STATE_LABELS[value],
+  dotClassName: INTAKE_STATE_DOT_CLASS[value],
+}));
 /**
  * Figures that count closed requests as well, so no tab describes their
  * list: Outstanding holds only open requests.
@@ -262,11 +258,15 @@ export function Inbox({
     ids: [] as string[],
   });
   // Only rows on screen can be selected: a refresh that drops one drops it
-  // from the selection too.
-  const selectedIds =
-    selection.key === queryKey && rows
-      ? selection.ids.filter((id) => rows.some((row) => row.id === id))
-      : [];
+  // from the selection, so it is not selected again if it comes back.
+  if (selection.key === queryKey && rows) {
+    const shown = selection.ids.filter((id) =>
+      rows.some((row) => row.id === id),
+    );
+    if (shown.length !== selection.ids.length)
+      setSelection({ key: queryKey, ids: shown });
+  }
+  const selectedIds = selection.key === queryKey ? selection.ids : [];
   const setSelectedIds = (update: (ids: string[]) => string[]) =>
     setSelection((current) => ({
       key: queryKey,
@@ -707,9 +707,7 @@ export function Inbox({
                     label="Filter by status"
                     value={state}
                     allLabel="All statuses"
-                    options={
-                      tab === "outstanding" ? OPEN_STATE_OPTIONS : STATE_OPTIONS
-                    }
+                    options={OPEN_STATE_OPTIONS}
                     onChange={(status) => update({ status })}
                   />
                 )}

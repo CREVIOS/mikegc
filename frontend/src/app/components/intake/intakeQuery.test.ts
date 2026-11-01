@@ -62,5 +62,10 @@ describe("intake page URLs", () => {
       parseIntakeFilters(new URLSearchParams("status=needs_information"))
         .status,
     ).toBe("needs_information");
+    // A status link, such as the dashboard's, opens the list it names.
+    const href = intakeRequestsHref({ status: "in_review" });
+    expect(
+      parseIntakeFilters(new URLSearchParams(href.split("?")[1])).status,
+    ).toBe("in_review");
   });
 });

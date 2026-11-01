@@ -40,6 +40,14 @@ const mocks = vi.hoisted(() => ({
   notify: vi.fn(),
   partial: vi.fn(),
   dashboard: vi.fn(),
+  UploadBatchError: class UploadBatchError extends Error {
+    constructor(
+      message: string,
+      readonly outcomes: { filename: string; status: string }[],
+    ) {
+      super(message);
+    }
+  },
   searchParams: new URLSearchParams(),
   workspace: {
     accountId: "account-a",
@@ -61,6 +69,7 @@ vi.mock("@/app/lib/mikeApi", () => ({
   getIntakeDashboard: mocks.dashboard,
   getIntakeDocuments: mocks.documents,
   uploadIntakeDocuments: mocks.upload,
+  UploadBatchError: mocks.UploadBatchError,
   getDocument: mocks.document,
   getDocumentUrl: vi.fn(),
   isMfaRequiredError: (error: { code?: string }) =>
@@ -639,11 +648,14 @@ describe("queue", () => {
   });
 
   it("keeps the rows on screen, and drops a missing one from the selection, when a refresh fails", async () => {
+    const both = page([
+      summary(),
+      summary({ id: "request-b", subject: "Second request" }),
+    ]);
     mocks.list
-      .mockResolvedValueOnce(
-        page([summary(), summary({ id: "request-b", subject: "Second request" })]),
-      )
+      .mockResolvedValueOnce(both)
       .mockResolvedValueOnce(page([summary()]))
+      .mockResolvedValueOnce(both)
       .mockRejectedValueOnce(new TypeError("offline"));
     const user = userEvent.setup();
     render(<Inbox orgId="org-a" accountId="account-a" />);
@@ -651,10 +663,17 @@ describe("queue", () => {
       await screen.findByRole("checkbox", { name: "Select Second request" }),
     );
     expect(screen.getByRole("button", { name: "Actions" })).toBeInTheDocument();
+    // Quiet refreshes are at most every 30 seconds.
+    let now = Date.now();
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const refocus = () => {
+      now += 60_000;
+      act(() => {
+        window.dispatchEvent(new Event("focus"));
+      });
+    };
     // A refresh drops the selected row, and the selection with it.
-    act(() => {
-      window.dispatchEvent(new Event("focus"));
-    });
+    refocus();
     await waitFor(() =>
       expect(
         screen.queryByRole("link", { name: "Second request" }),
@@ -663,18 +682,23 @@ describe("queue", () => {
     expect(
       screen.queryByRole("button", { name: "Actions" }),
     ).not.toBeInTheDocument();
-    // Retrying a failed action refreshes again; this one fails.
-    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 60_000);
-    act(() => {
-      window.dispatchEvent(new Event("focus"));
-    });
+    // When it comes back, it is not selected again.
+    refocus();
+    expect(
+      await screen.findByRole("checkbox", { name: "Select Second request" }),
+    ).not.toBeChecked();
+    expect(
+      screen.queryByRole("button", { name: "Actions" }),
+    ).not.toBeInTheDocument();
+    // This refresh fails.
+    refocus();
     await waitFor(() =>
       expect(mocks.notify).toHaveBeenCalledWith(expect.any(TypeError), {
         action: "refresh the requests",
       }),
     );
     expect(
-      screen.getByRole("link", { name: "Confidential request A" }),
+      screen.getByRole("link", { name: "Second request" }),
     ).toBeInTheDocument();
     expect(screen.queryByText("Unable to load requests")).not.toBeInTheDocument();
   });
@@ -1262,6 +1286,31 @@ describe("contract review documents", () => {
     expect(mocks.partial).toHaveBeenCalledTimes(1);
     expect(mocks.partial).toHaveBeenCalledWith(
       "The request was saved, but Supplier NDA.docx and Library NDA.pdf couldn't be added. Add them from the request.",
+      { action: "add the documents" },
+    );
+  });
+
+  it("names only the documents a failed later upload session left out", async () => {
+    mocks.submit.mockImplementation(async (_org: string, body: { id: string }) => ({
+      ...receipt,
+      request_id: body.id,
+    }));
+    mocks.upload.mockRejectedValue(
+      new mocks.UploadBatchError("Session failed", [
+        { filename: "Supplier NDA.docx", status: "completed" },
+        { filename: "Order form.pdf", status: "error" },
+      ]),
+    );
+    render(<IntakeNewRequestPage />);
+    fillRequest();
+    chooseFiles([
+      contract(),
+      new File(["%PDF"], "Order form.pdf", { type: "application/pdf" }),
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: "Create request" }));
+    await waitFor(() => expect(mocks.push).toHaveBeenCalled());
+    expect(mocks.partial).toHaveBeenCalledWith(
+      "The request was saved, but Order form.pdf couldn't be added. Add it from the request.",
       { action: "add the documents" },
     );
   });
@@ -2298,6 +2347,30 @@ describe("request detail", () => {
       ),
     );
     expect(mocks.notify).not.toHaveBeenCalled();
+  });
+
+  it("does not report a note when a resolution without text has documents that fail to copy", async () => {
+    mocks.command.mockResolvedValue({ ...receipt, message_id: null });
+    mocks.copy.mockRejectedValue(new TypeError("offline"));
+    render(detail());
+    await noteEditor();
+    fireEvent.click(screen.getByRole("button", { name: "Add documents" }));
+    fireEvent.click(screen.getByRole("button", { name: "Pick Library NDA.pdf" }));
+    fireEvent.click(screen.getByRole("button", { name: "Resolve request" }));
+    await waitFor(() =>
+      expect(mocks.copy).toHaveBeenCalledWith(
+        "org-a",
+        "request-a",
+        ["library-doc"],
+        null,
+      ),
+    );
+    await waitFor(() =>
+      expect(mocks.notify).toHaveBeenCalledWith(expect.any(TypeError), {
+        action: "add the documents",
+      }),
+    );
+    expect(mocks.partial).not.toHaveBeenCalled();
   });
 
   it("keeps Check again for an unconfirmed cancel once the request is hidden", async () => {

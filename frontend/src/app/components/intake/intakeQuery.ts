@@ -7,6 +7,8 @@ export const INTAKE_DASHBOARD_PATH = "/intake/dashboard";
 
 /** The list's tabs. Outstanding, the default, holds the open requests. */
 export type IntakeTab = "outstanding" | "resolved" | "cancelled";
+/** The statuses the status filter takes; closed requests have their own tabs. */
+export type IntakeOpenState = Exclude<IntakeState, "resolved" | "cancelled">;
 export type IntakeSort = "updated" | "updated_asc" | "target";
 
 /**
@@ -24,7 +26,7 @@ export type IntakeSort = "updated" | "updated_asc" | "target";
 export type IntakeFilters = {
   tab: IntakeTab;
   scope: IntakeListScope | null;
-  status: IntakeState | null;
+  status: IntakeOpenState | null;
   assignee: string | null;
   requester: string | null;
   sort: IntakeSort;
@@ -50,8 +52,7 @@ const SCOPES: readonly IntakeListScope[] = [
   "recorded_30d",
   "resolved_30d",
 ];
-/** The status filter narrows open requests; closed ones have their own tabs. */
-const STATES: readonly IntakeState[] = [
+const STATES: readonly IntakeOpenState[] = [
   "submitted",
   "in_review",
   "needs_information",

@@ -10,6 +10,7 @@ import {
   copyIntakeDocuments,
   getIntakeMembers,
   submitIntakeRequest,
+  UploadBatchError,
   uploadIntakeDocuments,
 } from "@/app/lib/mikeApi";
 import { notifyPartialFailure } from "@/app/lib/userFacingError";
@@ -174,7 +175,13 @@ export function IntakeNewRequest({
       return outcomes
         .filter((outcome) => outcome.status !== "completed")
         .map((outcome) => outcome.filename);
-    } catch {
+    } catch (error) {
+      // A later upload session can fail after earlier ones added documents;
+      // those must not be named as missing.
+      if (error instanceof UploadBatchError)
+        return error.outcomes
+          .filter((outcome) => outcome.status !== "completed")
+          .map((outcome) => outcome.filename);
       return pending.map((file) => file.name);
     }
   }

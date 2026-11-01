@@ -329,7 +329,12 @@ export function Detail({
         if (noteFiles.length)
           void upload.add(noteFiles, receipt.message_id ?? undefined);
         if (notePicked.length)
-          addPicked(notePicked, receipt.message_id ?? null, true);
+          addPicked(
+            notePicked,
+            receipt.message_id ?? null,
+            // A resolution without text saved no note to report.
+            !!receipt.message_id,
+          );
         setNote("");
         setNoteFiles([]);
         setNotePicked([]);
