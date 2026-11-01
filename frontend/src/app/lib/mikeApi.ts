@@ -4601,20 +4601,31 @@ export function getIntakeEvents(orgId: string, id: string, offset = 0) {
 export function getIntakeDocuments(orgId: string, id: string) {
     return apiRequest<IntakeDocument[]>(intakeRequestPath(orgId, id, "/documents"));
 }
+/** The most documents one copy call takes; the API refuses a longer list. */
+export const INTAKE_COPY_BATCH_SIZE = 20;
 /**
  * Copy documents the signed-in member can read, such as library files, onto a
- * request, and onto their note or resolution when `messageId` names it.
+ * request, and onto their note or resolution when `messageId` names it. Any
+ * number can be chosen: they are sent in order, at most 20 a call, and the
+ * request's documents after the last call are returned.
  */
-export function copyIntakeDocuments(
+export async function copyIntakeDocuments(
     orgId: string,
     requestId: string,
     documentIds: string[],
     messageId: string | null = null,
 ) {
-    return apiRequest<IntakeDocument[]>(
-        intakeRequestPath(orgId, requestId, "/documents/copy"),
-        jsonBody("POST", { document_ids: documentIds, message_id: messageId }),
-    );
+    let documents: IntakeDocument[] = [];
+    for (let start = 0; start < documentIds.length; start += INTAKE_COPY_BATCH_SIZE) {
+        documents = await apiRequest<IntakeDocument[]>(
+            intakeRequestPath(orgId, requestId, "/documents/copy"),
+            jsonBody("POST", {
+                document_ids: documentIds.slice(start, start + INTAKE_COPY_BATCH_SIZE),
+                message_id: messageId,
+            }),
+        );
+    }
+    return documents;
 }
 /**
  * Upload files to a request. The upload worker links each document to the

@@ -52,4 +52,15 @@ describe("intake page URLs", () => {
       parseIntakeFilters(new URLSearchParams("requester=%20%20")).requester,
     ).toBeNull();
   });
+
+  it("filters by open statuses only; closed ones have their own tabs", () => {
+    for (const status of ["resolved", "cancelled"])
+      expect(
+        parseIntakeFilters(new URLSearchParams(`status=${status}`)).status,
+      ).toBeNull();
+    expect(
+      parseIntakeFilters(new URLSearchParams("status=needs_information"))
+        .status,
+    ).toBe("needs_information");
+  });
 });

@@ -158,8 +158,8 @@ delete returns its original receipt, and the command IDs that touched the
 request become tombstones, so a lost retry of the command that recorded it
 cannot bring it back. In the queue, a row's menu and the **Actions** menu for
 selected rows offer **Cancel request** for open requests and **Delete
-request** for any request. Deleting several deletes each in turn and reports
-the ones that changed in the meantime.
+request** for any request. Deleting or cancelling several does each in turn,
+reports how many changed in the meantime, and leaves those still selected.
 
 Statuses are **New**, **In progress**, **Waiting on requester**, **Resolved**
 and **Cancelled** (stored as `submitted`, `in_review`, `needs_information`,
@@ -174,8 +174,9 @@ Every request can carry documents. The New request page shows a drop zone:
 drag files onto it, or click it to open the app's **Add documents** modal and
 pick files from the library or upload new ones. PDF, Word, Excel and
 PowerPoint files are accepted. The files upload, and library files are
-copied, after the request is saved. If an upload fails, the request is
-still saved and a notice says which documents to add again from the request.
+copied, after the request is saved, and the page stays locked until they
+are, so the request cannot be sent twice. If an upload fails, the request is
+still saved and a notice names the documents to add again from the request.
 On the request page, **Documents** lists the files in rows like the file
 directory's (name, who added it, when and size); a ready file opens in the
 document viewer. Below the list, a grey field like the playbook run's opens
@@ -199,7 +200,8 @@ so they get no separate `document_added` event.
 
 A library file picked in **Add documents** is copied, never moved:
 `POST /intake/:org/requests/:id/documents/copy` takes up to 20 document IDs
-and an optional note or resolution ID. Each source must be readable by the
+and an optional note or resolution ID; the app sends a longer choice 20 at a
+time. Each source must be readable by the
 member, come from the request's workspace, as a project's documents must,
 and have finished processing. The copy becomes its own `intake_attachment`,
 linked before its bytes are copied and processing until its version exists,
@@ -273,7 +275,8 @@ command. A later access denial hides request content immediately.
 The queue pages by keyset cursor, so a request created or updated while
 someone scrolls is never shown twice. Returning to the window refreshes the
 queue and the open request in place, at most every 30 seconds, without dropping
-rows already loaded or discarding drafts.
+rows already loaded or discarding drafts; a refresh that fails says so and
+leaves the rows on screen.
 
 Drafts and unconfirmed commands stay in tab memory, scoped to the signed-in
 account, organization and request. Back/Forward, internal navigation and

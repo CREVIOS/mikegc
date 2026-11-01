@@ -12,6 +12,7 @@ import type { AnchorHTMLAttributes, ReactNode } from "react";
 import type {
   IntakeEvent,
   IntakeMessage,
+  IntakeReceipt,
   IntakeRequest,
   IntakeRequestPage,
   IntakeRequestSummary,
@@ -637,6 +638,95 @@ describe("queue", () => {
     ).toBeInTheDocument();
   });
 
+  it("keeps the rows on screen, and drops a missing one from the selection, when a refresh fails", async () => {
+    mocks.list
+      .mockResolvedValueOnce(
+        page([summary(), summary({ id: "request-b", subject: "Second request" })]),
+      )
+      .mockResolvedValueOnce(page([summary()]))
+      .mockRejectedValueOnce(new TypeError("offline"));
+    const user = userEvent.setup();
+    render(<Inbox orgId="org-a" accountId="account-a" />);
+    await user.click(
+      await screen.findByRole("checkbox", { name: "Select Second request" }),
+    );
+    expect(screen.getByRole("button", { name: "Actions" })).toBeInTheDocument();
+    // A refresh drops the selected row, and the selection with it.
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("link", { name: "Second request" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByRole("button", { name: "Actions" }),
+    ).not.toBeInTheDocument();
+    // Retrying a failed action refreshes again; this one fails.
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 60_000);
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await waitFor(() =>
+      expect(mocks.notify).toHaveBeenCalledWith(expect.any(TypeError), {
+        action: "refresh the requests",
+      }),
+    );
+    expect(
+      screen.getByRole("link", { name: "Confidential request A" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Unable to load requests")).not.toBeInTheDocument();
+  });
+
+  it("drops a next page that was loading when the list refreshed", async () => {
+    const more = deferred<IntakeRequestPage>();
+    mocks.list
+      .mockResolvedValueOnce(page([summary()], "cursor-1"))
+      .mockReturnValueOnce(more.promise)
+      .mockResolvedValueOnce(
+        page(
+          [summary({ id: "request-n", subject: "Newest request" }), summary()],
+          "cursor-2",
+        ),
+      );
+    render(<Inbox orgId="org-a" accountId="account-a" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Load more" }));
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await screen.findByRole("link", { name: "Newest request" });
+    await act(async () =>
+      more.resolve(page([summary({ id: "request-c", subject: "Older request" })])),
+    );
+    // That page followed rows that are no longer the last on screen.
+    expect(
+      screen.queryByRole("link", { name: "Older request" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+    await waitFor(() =>
+      expect(mocks.list).toHaveBeenLastCalledWith(
+        "org-a",
+        expect.objectContaining({ cursor: "cursor-2" }),
+      ),
+    );
+  });
+
+  it("searches at most the 200 characters the API takes", async () => {
+    render(<Inbox orgId="org-a" accountId="account-a" />);
+    await screen.findByText(EMPTY_QUEUE);
+    fireEvent.change(
+      screen.getByRole("searchbox", { name: "Search requests or requesters…" }),
+      { target: { value: "x".repeat(300) } },
+    );
+    await waitFor(() =>
+      expect(mocks.list).toHaveBeenLastCalledWith(
+        "org-a",
+        expect.objectContaining({ search: "x".repeat(200) }),
+      ),
+    );
+  });
+
   it("cancels a request from its row menu with a reason", async () => {
     const user = userEvent.setup();
     mocks.list.mockResolvedValue(page([summary({ version: 4 })]));
@@ -745,7 +835,7 @@ describe("queue", () => {
     );
     await waitFor(() =>
       expect(mocks.partial).toHaveBeenCalledWith(
-        "1 of 2 requests couldn't be deleted. They may have changed; reload and try again.",
+        "1 of 2 requests couldn't be deleted and are still selected. They may have changed; check them and try again.",
         { action: "delete the requests" },
       ),
     );
@@ -753,6 +843,14 @@ describe("queue", () => {
       "request-a",
       "request-b",
     ]);
+    // The one that failed stays selected, so it can be found and retried.
+    await waitFor(() => expect(mocks.list).toHaveBeenCalledTimes(2));
+    expect(
+      screen.getByRole("checkbox", { name: "Select Second request" }),
+    ).toBeChecked();
+    expect(
+      screen.getByRole("checkbox", { name: "Select Confidential request A" }),
+    ).not.toBeChecked();
   });
 
   it("assigns a request to the signed-in member from its row menu", async () => {
@@ -1136,9 +1234,84 @@ describe("contract review documents", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create request" }));
     await waitFor(() => expect(mocks.push).toHaveBeenCalled());
     expect(mocks.partial).toHaveBeenCalledWith(
-      "The request was saved, but its documents couldn't be uploaded. Add them from the request.",
-      { action: "upload the documents" },
+      "The request was saved, but Supplier NDA.docx couldn't be added. Add it from the request.",
+      { action: "add the documents" },
     );
+  });
+
+  it("names each document that could not be added, uploaded or copied", async () => {
+    mocks.submit.mockImplementation(async (_org: string, body: { id: string }) => ({
+      ...receipt,
+      request_id: body.id,
+    }));
+    mocks.upload.mockResolvedValue([
+      { clientId: "a", filename: "Supplier NDA.docx", status: "error", result: null, errorCode: "failed" },
+    ]);
+    mocks.copy.mockRejectedValue(new TypeError("offline"));
+    render(<IntakeNewRequestPage />);
+    fillRequest();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /^Drag and drop documents here, or click to browse\./,
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Pick Library NDA.pdf" }));
+    chooseFiles([contract()]);
+    fireEvent.click(screen.getByRole("button", { name: "Create request" }));
+    await waitFor(() => expect(mocks.push).toHaveBeenCalled());
+    expect(mocks.partial).toHaveBeenCalledTimes(1);
+    expect(mocks.partial).toHaveBeenCalledWith(
+      "The request was saved, but Supplier NDA.docx and Library NDA.pdf couldn't be added. Add them from the request.",
+      { action: "add the documents" },
+    );
+  });
+
+  it("stays locked until its library documents are copied, so it is never created twice", async () => {
+    mocks.submit.mockImplementation(async (_org: string, body: { id: string }) => ({
+      ...receipt,
+      request_id: body.id,
+    }));
+    const copied = deferred<[]>();
+    mocks.copy.mockReturnValue(copied.promise);
+    const view = render(<IntakeNewRequestPage />);
+    fillRequest();
+    setTargetDate("2026-12-01");
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /^Drag and drop documents here, or click to browse\./,
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Pick Library NDA.pdf" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create request" }));
+    const adding = await screen.findByRole("button", { name: /Adding documents/ });
+    expect(adding).toBeDisabled();
+    expect(screen.getByLabelText("Target date")).toBeDisabled();
+    expect(screen.getByLabelText("Subject")).toBeDisabled();
+    fireEvent.submit(adding.closest("form")!);
+    // Leaving and coming back while the copy runs keeps the form locked.
+    view.unmount();
+    render(<IntakeNewRequestPage />);
+    expect(
+      await screen.findByRole("button", { name: /Adding documents/ }),
+    ).toBeDisabled();
+    fireEvent.submit(screen.getByLabelText("Subject").closest("form")!);
+    expect(mocks.submit).toHaveBeenCalledTimes(1);
+    await act(async () => copied.resolve([]));
+    // The draft is gone once the documents are in, and the form is free again.
+    await waitFor(() =>
+      expect(screen.getByLabelText("Subject")).toHaveValue(""),
+    );
+    expect(screen.getByLabelText("Subject")).toBeEnabled();
+    expect(mocks.submit).toHaveBeenCalledTimes(1);
+  });
+
+  it("says the request goes to its creator even when the member list fails", async () => {
+    mocks.members.mockRejectedValue(new TypeError("offline"));
+    render(<IntakeNewRequestPage />);
+    await waitFor(() => expect(mocks.members).toHaveBeenCalled());
+    expect(
+      screen.getByRole("button", { name: "Reviewer: Myself" }),
+    ).toBeInTheDocument();
   });
 
   it("lists, opens and adds documents on the request", async () => {
@@ -1943,6 +2116,216 @@ describe("request detail", () => {
         requester_team: "Procurement",
       }),
     );
+  });
+
+  it("sends a command made just after its own last change at that change's version", async () => {
+    mocks.command
+      .mockResolvedValueOnce({ ...receipt, applied_version: 2 })
+      .mockResolvedValueOnce({ ...receipt, applied_version: 3 });
+    const user = userEvent.setup();
+    render(detail());
+    const details = await screen.findByRole("complementary", { name: "Details" });
+    // The refresh after the assignment has not arrived yet.
+    mocks.request.mockReturnValue(deferred<IntakeRequest>().promise);
+    await user.click(
+      within(details).getByRole("button", { name: "Reviewer: Lawyer B" }),
+    );
+    await user.click(screen.getByRole("menuitemradio", { name: "Myself" }));
+    const status = within(details).getByRole("button", {
+      name: "Status: In progress",
+    });
+    await waitFor(() => expect(status).toBeEnabled());
+    await user.click(status);
+    await user.click(
+      screen.getByRole("menuitemradio", { name: "Waiting on requester" }),
+    );
+    await waitFor(() => expect(mocks.command).toHaveBeenCalledTimes(2));
+    expect(mocks.command.mock.calls[1][3]).toMatchObject({ expected_version: 2 });
+  });
+
+  it("saves a field once when Enter is followed by leaving it", async () => {
+    mocks.edit.mockResolvedValue(receipt);
+    render(detail());
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Requester: Jane Business" }),
+    );
+    const name = screen.getByLabelText("Name");
+    fireEvent.change(name, { target: { value: "Sam Business" } });
+    mocks.request.mockResolvedValue(
+      request({ version: 2, requester_name: "Sam Business" }),
+    );
+    fireEvent.keyDown(name, { key: "Enter" });
+    fireEvent.blur(name);
+    expect(
+      await screen.findByRole("button", { name: "Requester: Sam Business" }),
+    ).toBeInTheDocument();
+    expect(mocks.edit).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a timezone change that is saving when a date is then chosen", async () => {
+    const first = deferred<typeof receipt>();
+    mocks.edit
+      .mockReturnValueOnce(first.promise)
+      .mockResolvedValueOnce({ ...receipt, applied_version: 3 });
+    mocks.request.mockResolvedValue(
+      request({ requested_by_date: "2026-12-01", timezone: "America/New_York" }),
+    );
+    render(detail());
+    const timezone = await screen.findByLabelText("Timezone");
+    fireEvent.change(timezone, { target: { value: "Europe/Paris" } });
+    fireEvent.blur(timezone);
+    setTargetDate("2026-12-15");
+    expect(mocks.edit).toHaveBeenCalledTimes(1);
+    mocks.request.mockResolvedValue(
+      request({
+        version: 2,
+        requested_by_date: "2026-12-01",
+        timezone: "Europe/Paris",
+      }),
+    );
+    await act(async () => first.resolve(receipt));
+    await waitFor(() => expect(mocks.edit).toHaveBeenCalledTimes(2));
+    expect(mocks.edit.mock.calls[1][2]).toMatchObject({
+      expected_version: 2,
+      requested_by_date: "2026-12-15",
+      timezone: "Europe/Paris",
+    });
+  });
+
+  it("pairs a first target date with the viewer's timezone", async () => {
+    mocks.edit.mockResolvedValue(receipt);
+    render(detail());
+    await screen.findByRole("complementary", { name: "Details" });
+    setTargetDate("2026-12-15");
+    await waitFor(() => expect(mocks.edit).toHaveBeenCalledTimes(1));
+    expect(mocks.edit.mock.calls[0][2]).toMatchObject({
+      requested_by_date: "2026-12-15",
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    });
+  });
+
+  it("discards a cancellation reason when its dialog is closed", async () => {
+    const user = userEvent.setup();
+    render(detail());
+    const details = await screen.findByRole("complementary", { name: "Details" });
+    const chooseCancelled = async () => {
+      await user.click(
+        within(details).getByRole("button", { name: "Status: In progress" }),
+      );
+      await user.click(screen.getByRole("menuitemradio", { name: "Cancelled" }));
+      return screen.getByRole("dialog");
+    };
+    const dialog = await chooseCancelled();
+    fireEvent.change(within(dialog).getByRole("textbox"), {
+      target: { value: "Duplicate" },
+    });
+    await user.click(within(dialog).getByRole("button", { name: "Back" }));
+    expect(
+      within(await chooseCancelled()).getByRole("textbox"),
+    ).toHaveValue("");
+    expect(mocks.command).not.toHaveBeenCalled();
+  });
+
+  it("cannot confirm a delete while another change is saving", async () => {
+    const saving = deferred<typeof receipt>();
+    mocks.edit.mockReturnValue(saving.promise);
+    const user = userEvent.setup();
+    render(detail());
+    await user.click(await screen.findByRole("button", { name: "Edit request" }));
+    const editor = screen.getByRole("textbox", { name: "Request" });
+    fireEvent.change(editor, { target: { value: "A clearer description" } });
+    const submit = within(editor.closest("section")!).getByRole("button", {
+      name: "Submit",
+    });
+    await user.click(
+      within(screen.getByRole("banner")).getByRole("button", {
+        name: "More actions",
+      }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Delete request" }));
+    const dialog = screen.getByRole("dialog", { name: "Delete this request?" });
+    // The edit starts while the confirmation is open.
+    fireEvent.click(submit);
+    await waitFor(() => expect(mocks.edit).toHaveBeenCalledTimes(1));
+    const confirm = within(dialog).getByRole("button", { name: "Delete request" });
+    expect(confirm).toBeDisabled();
+    fireEvent.click(confirm);
+    await act(async () => saving.resolve(receipt));
+    await waitFor(() => expect(mocks.request).toHaveBeenCalledTimes(2));
+    expect(mocks.command).not.toHaveBeenCalled();
+    expect(mocks.push).not.toHaveBeenCalled();
+  });
+
+  it("takes no files dropped on the comment box while the comment is saving", async () => {
+    const saving = deferred<IntakeReceipt>();
+    mocks.command.mockReturnValue(saving.promise);
+    render(detail());
+    const editor = await noteEditor();
+    fireEvent.change(editor, { target: { value: "Called the supplier" } });
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    await waitFor(() => expect(mocks.command).toHaveBeenCalledTimes(1));
+    const dataTransfer = {
+      types: ["Files"],
+      files: [contractFile()],
+      dropEffect: "none",
+    };
+    fireEvent.dragEnter(editor, { dataTransfer });
+    fireEvent.drop(editor, { dataTransfer });
+    await act(async () =>
+      saving.resolve({ ...receipt, message_id: "message-new" }),
+    );
+    await waitFor(() => expect(mocks.request).toHaveBeenCalledTimes(2));
+    expect(mocks.upload).not.toHaveBeenCalled();
+  });
+
+  it("says the note was added when its documents cannot be uploaded at all", async () => {
+    mocks.command.mockResolvedValue({ ...receipt, message_id: "message-new" });
+    mocks.upload.mockRejectedValue(new TypeError("offline"));
+    render(detail());
+    const editor = await noteEditor();
+    fireEvent.change(editor, { target: { value: "Signed copy attached" } });
+    fireEvent.change(
+      editor.parentElement!.querySelector<HTMLInputElement>(
+        'input[type="file"]',
+      )!,
+      { target: { files: [contractFile()] } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    await waitFor(() =>
+      expect(mocks.partial).toHaveBeenCalledWith(
+        "The note was added, but its documents couldn't be uploaded. Add them to the request's documents instead.",
+        { action: "upload the documents" },
+      ),
+    );
+    expect(mocks.notify).not.toHaveBeenCalled();
+  });
+
+  it("keeps Check again for an unconfirmed cancel once the request is hidden", async () => {
+    const recheck = deferred<IntakeRequest>();
+    mocks.request
+      .mockResolvedValueOnce(request())
+      .mockReturnValue(recheck.promise);
+    mocks.command
+      .mockRejectedValueOnce(new TypeError("lost response"))
+      .mockRejectedValueOnce({ status: 403 });
+    const user = userEvent.setup();
+    render(detail());
+    const details = await screen.findByRole("complementary", { name: "Details" });
+    await user.click(
+      within(details).getByRole("button", { name: "Status: In progress" }),
+    );
+    await user.click(screen.getByRole("menuitemradio", { name: "Cancelled" }));
+    const dialog = screen.getByRole("dialog");
+    fireEvent.change(within(dialog).getByRole("textbox"), {
+      target: { value: "Duplicate" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel request" }));
+    await waitFor(() => expect(mocks.request).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Check again" }));
+    await waitFor(() => expect(mocks.command).toHaveBeenCalledTimes(3));
+    expect(mocks.command.mock.calls[2]).toEqual(mocks.command.mock.calls[0]);
+    await act(async () => recheck.reject({ status: 403 }));
   });
 
   it("renames the request from the page title", async () => {

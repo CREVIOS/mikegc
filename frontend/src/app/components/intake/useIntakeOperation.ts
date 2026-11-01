@@ -108,10 +108,17 @@ export function useIntakeOperation(
       if (view.valid) notifyIntakeMemory(view);
     }
   }
+  /**
+   * Whether `execute` would start a new command now. It reads the retained
+   * state itself, which can be ahead of the last render.
+   */
+  const idle = () =>
+    view.valid && !view.busy && !view.pending && !view.outcome;
   return {
     busy: snapshot.busy,
     uncertain: snapshot.uncertain,
     execute,
+    idle,
     locked: snapshot.busy || snapshot.uncertain || !!snapshot.outcome,
   };
 }

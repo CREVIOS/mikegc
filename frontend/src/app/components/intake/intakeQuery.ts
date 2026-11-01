@@ -15,7 +15,7 @@ export type IntakeSort = "updated" | "updated_asc" | "target";
  *
  *   tab       resolved or cancelled (Outstanding when absent)
  *   scope     what a dashboard figure counted, e.g. overdue
- *   status    one status, e.g. in_review
+ *   status    one open status, e.g. in_review
  *   assignee  a member's user ID
  *   requester one requester's name
  *   sort      updated_asc or target (most recently updated first when absent)
@@ -50,12 +50,11 @@ const SCOPES: readonly IntakeListScope[] = [
   "recorded_30d",
   "resolved_30d",
 ];
+/** The status filter narrows open requests; closed ones have their own tabs. */
 const STATES: readonly IntakeState[] = [
   "submitted",
   "in_review",
   "needs_information",
-  "resolved",
-  "cancelled",
 ];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

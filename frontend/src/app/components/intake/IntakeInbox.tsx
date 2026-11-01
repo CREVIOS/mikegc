@@ -238,7 +238,11 @@ export function Inbox({
   function changeSearch(value: string) {
     setSearch(value);
     if (searchTimer.current) clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(() => update({ q: value }), 250);
+    // The API searches at most 200 characters, as a link's search is cut.
+    searchTimer.current = setTimeout(
+      () => update({ q: value.slice(0, 200) }),
+      250,
+    );
   }
   // Rows, errors and selection are stored against the query that produced
   // them, so a change shows the loading state at once and a late response
@@ -257,7 +261,12 @@ export function Inbox({
     key: queryKey,
     ids: [] as string[],
   });
-  const selectedIds = selection.key === queryKey ? selection.ids : [];
+  // Only rows on screen can be selected: a refresh that drops one drops it
+  // from the selection too.
+  const selectedIds =
+    selection.key === queryKey && rows
+      ? selection.ids.filter((id) => rows.some((row) => row.id === id))
+      : [];
   const setSelectedIds = (update: (ids: string[]) => string[]) =>
     setSelection((current) => ({
       key: queryKey,
@@ -294,6 +303,11 @@ export function Inbox({
     };
   }, [orgId, reload]);
 
+  // The query whose rows are on screen, for a refresh that fails.
+  const shownKey = useRef<string | null>(null);
+  useEffect(() => {
+    shownKey.current = page?.key ?? null;
+  }, [page]);
   useEffect(() => {
     let active = true;
     // `reload` refetches the first page in place: the rows on screen stay
@@ -311,7 +325,11 @@ export function Inbox({
         setLoadMoreError(false);
       })
       .catch((e) => {
-        if (active) setListError({ key: queryKey, message: intakeError(e) });
+        if (!active) return;
+        // A refresh that fails leaves the rows it would have replaced.
+        if (shownKey.current === queryKey)
+          notifyError(e, { action: "refresh the requests" });
+        else setListError({ key: queryKey, message: intakeError(e) });
       });
     return () => {
       active = false;
@@ -337,15 +355,18 @@ export function Inbox({
   async function loadMore() {
     if (!page || page.key !== queryKey || !page.next || loadingMore) return;
     const key = queryKey;
+    const cursor = page.next;
     setLoadingMore(true);
     setLoadMoreError(false);
     try {
       const result = await listIntakeRequests(orgId, {
         ...query,
-        cursor: page.next,
+        cursor,
       });
       setPage((current) => {
-        if (current?.key !== key) return current;
+        // A refresh replaced the pages meanwhile: this one followed rows
+        // that are no longer the last on screen, so it could skip some.
+        if (current?.key !== key || current.next !== cursor) return current;
         const seen = new Set(current.rows.map((r) => r.id));
         return {
           key,
@@ -526,7 +547,8 @@ export function Inbox({
     }
     setDeleting(false);
     setDeleteTargets(null);
-    setSelectedIds(() => []);
+    // The ones that failed stay selected, so they can be found and retried.
+    setSelectedIds(() => failed.map((request) => request.id));
     refresh();
     const deleted = targets.length - failed.length;
     if (deleted > 0)
@@ -540,7 +562,7 @@ export function Inbox({
       });
     else if (failed.length > 0)
       notifyPartialFailure(
-        `${failed.length} of ${targets.length} requests couldn't be deleted. They may have changed; reload and try again.`,
+        `${failed.length} of ${targets.length} requests couldn't be deleted and are still selected. They may have changed; check them and try again.`,
         { action: "delete the requests" },
       );
   }
@@ -563,7 +585,8 @@ export function Inbox({
     }
     setCancelling(false);
     setCancelTargets(null);
-    setSelectedIds(() => []);
+    // The ones that failed stay selected, so they can be found and retried.
+    setSelectedIds(() => failed.map((request) => request.id));
     refresh();
     if (failed.length === targets.length && lastError)
       notifyError(lastError, {
@@ -572,7 +595,7 @@ export function Inbox({
       });
     else if (failed.length > 0)
       notifyPartialFailure(
-        `${failed.length} of ${targets.length} requests couldn't be cancelled. They may have changed; reload and try again.`,
+        `${failed.length} of ${targets.length} requests couldn't be cancelled and are still selected. They may have changed; check them and try again.`,
         { action: "cancel the requests" },
       );
   }
