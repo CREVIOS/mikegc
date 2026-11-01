@@ -260,7 +260,7 @@ test("Legal records a business request, works it and resolves it exactly once", 
     await expect(
       lawyerB
         .getByRole("region", { name: "Activity" })
-        .getByText("Assigned to Intake Lawyer B", { exact: true }),
+        .getByText(/assigned this to Intake Lawyer B/),
     ).toBeVisible();
     const status = (name: string) =>
       summaryB.getByRole("button", { name: `Status: ${name}` });
