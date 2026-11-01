@@ -38,7 +38,8 @@ type SourceDocument = {
  * library, onto a request, and onto the actor's note or resolution when
  * `messageId` names one. Each copy is the request's own attachment: the
  * source is untouched, and editing or deleting either never affects the
- * other. Sources must come from the request's workspace, as a project's do.
+ * other. Sources must come from the request's workspace, as a project's do,
+ * and have finished processing.
  *
  * `workspaceOrgId` is the organization whose documents may be copied, or
  * null in the actor's Personal workspace.
@@ -94,6 +95,12 @@ export async function copyIntakeDocuments(
   } catch (cause) {
     return internalFailure(cause);
   }
+  // Nothing here would finish a source's processing for its copy.
+  if (sources.some((source) => source.status !== "ready"))
+    return failure(
+      "validation",
+      "Only documents that have finished processing can be copied.",
+    );
 
   // Copied in the order chosen, so a failure part way leaves the earlier
   // copies attached and says which ones remain.
@@ -131,7 +138,8 @@ async function copyOne(
     .insert({
       user_id: scope.actorId,
       org_id: scope.orgId,
-      status: source.status ?? "ready",
+      // Ready once its version exists, as an upload is.
+      status: "processing",
       library_kind: "intake_attachment",
     })
     .select("id")
@@ -184,6 +192,11 @@ async function copyOne(
       content_sha256: contentSha256(bytes),
     });
     if (createError) throw createError;
+    const { error: readyError } = await db
+      .from("documents")
+      .update({ status: "ready", updated_at: new Date().toISOString() })
+      .eq("id", copyId);
+    if (readyError) throw readyError;
     return ok(null);
   } catch (cause) {
     await Promise.all([

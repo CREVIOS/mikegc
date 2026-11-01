@@ -576,6 +576,11 @@ describe.skipIf(!url || !key || !anon)(
       const source = await library(1, org, "Library NDA.pdf");
       const personal = await library(1, null, "Personal draft.pdf");
       const outsider = await library(5, other, "Other NDA.pdf");
+      const unfinished = await library(1, org, "Unfinished NDA.pdf");
+      await db
+        .from("documents")
+        .update({ status: "processing" })
+        .eq("id", unfinished);
       const body = input();
       expect((await post(1, "/requests", body)).status).toBe(201);
       const copyPath = `/requests/${body.id}/documents/copy`;
@@ -586,6 +591,7 @@ describe.skipIf(!url || !key || !anon)(
         expect.objectContaining({
           filename: "Library NDA.pdf",
           file_type: "pdf",
+          status: "ready",
           message_id: null,
           added_by_name: users[1].email,
         }),
@@ -646,8 +652,8 @@ describe.skipIf(!url || !key || !anon)(
         ),
       ).toHaveLength(1);
 
-      // Refused: another workspace's document, one the actor cannot read, and
-      // someone else's comment. None leaves a copy behind.
+      // Refused: another workspace's document, one the actor cannot read, one
+      // still processing, and someone else's comment. None leaves a copy.
       const attachments = async () =>
         (
           await db
@@ -665,6 +671,10 @@ describe.skipIf(!url || !key || !anon)(
       expect(
         (await post(1, copyPath, { document_ids: [outsider] })).status,
       ).toBe(404);
+      expect(
+        (await post(1, copyPath, { document_ids: [source, unfinished] }))
+          .status,
+      ).toBe(400);
       expect(
         (
           await post(1, copyPath, {
@@ -692,7 +702,7 @@ describe.skipIf(!url || !key || !anon)(
           await db
             .from("documents")
             .delete()
-            .in("id", [source, personal, outsider])
+            .in("id", [source, personal, outsider, unfinished])
         ).error,
       ).toBeNull();
     });

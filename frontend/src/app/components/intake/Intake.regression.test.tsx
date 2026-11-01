@@ -302,6 +302,8 @@ beforeEach(() => {
   );
   mocks.command.mockResolvedValue(receipt);
   vi.spyOn(window, "confirm").mockReturnValue(false);
+  // jsdom does not scroll; choosing Resolved brings the comment box into view.
+  Element.prototype.scrollIntoView = vi.fn();
   vi.stubGlobal(
     "matchMedia",
     vi.fn().mockReturnValue({
@@ -1218,6 +1220,12 @@ describe("request detail", () => {
     await user.click(screen.getByRole("menuitemradio", { name: "Resolved" }));
     const field = await screen.findByLabelText("Add comment");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({
+        block: "center",
+        behavior: "smooth",
+      }),
+    );
     fireEvent.change(field, {
       target: { value: "  Approved with edits.\nSecond line  " },
     });

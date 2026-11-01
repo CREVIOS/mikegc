@@ -105,8 +105,8 @@ validated against that theme's card surface.
    past their target date are marked overdue.
 3. Any member can assign or reassign a request, add notes at any time, mark
    it **Waiting on requester** and resume it, edit its details while it is
-   open, resolve it with a required resolution, cancel it with a required
-   reason, reopen it, and delete it. The resolution or cancellation reason
+   open, resolve it with an optional resolution, cancel it with a required
+   reason, reopen it, and delete it. A resolution or cancellation reason
    reads in the timeline beside the change.
 
 The request page centres the request beside a **Details** sidebar. The page
@@ -200,9 +200,10 @@ so they get no separate `document_added` event.
 A library file picked in **Add documents** is copied, never moved:
 `POST /intake/:org/requests/:id/documents/copy` takes up to 20 document IDs
 and an optional note or resolution ID. Each source must be readable by the
-member and come from the request's workspace, as a project's documents must.
-The copy becomes its own `intake_attachment`, linked before its bytes are
-copied, so the library original and the request's copy change independently.
+member, come from the request's workspace, as a project's documents must,
+and have finished processing. The copy becomes its own `intake_attachment`,
+linked before its bytes are copied and processing until its version exists,
+so the library original and the request's copy change independently.
 Uploading in the modal files the new document in the member's library first,
 then copies it to the request.
 

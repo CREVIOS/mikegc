@@ -4602,10 +4602,6 @@ export function getIntakeDocuments(orgId: string, id: string) {
     return apiRequest<IntakeDocument[]>(intakeRequestPath(orgId, id, "/documents"));
 }
 /**
- * Upload files to a request. The upload worker links each document to the
- * request as it is created, so a closed tab never leaves an unlinked file.
- */
-/**
  * Copy documents the signed-in member can read, such as library files, onto a
  * request, and onto their note or resolution when `messageId` names it.
  */
@@ -4616,10 +4612,14 @@ export function copyIntakeDocuments(
     messageId: string | null = null,
 ) {
     return apiRequest<IntakeDocument[]>(
-        intakePath(orgId, `/requests/${requestId}/documents/copy`),
+        intakeRequestPath(orgId, requestId, "/documents/copy"),
         jsonBody("POST", { document_ids: documentIds, message_id: messageId }),
     );
 }
+/**
+ * Upload files to a request. The upload worker links each document to the
+ * request as it is created, so a closed tab never leaves an unlinked file.
+ */
 export function uploadIntakeDocuments(
     orgId: string,
     requestId: string,
