@@ -52,8 +52,10 @@ personal organization and every request in it.
 
 Intake has two pages, `/intake/requests` (the list; plain `/intake` opens it)
 and `/intake/dashboard`, and the **Requests** and **Dashboard** buttons in
-their header switch between them. The dashboard shows where the workspace's
-requests stand and loads afresh each time it is opened:
+their header switch between them. Owners and admins also have **Settings**
+(`/intake/settings`), for [automated intake](intake-automation.md). The
+dashboard shows where the workspace's requests stand and loads afresh each
+time it is opened:
 
 - Counts of open, unassigned and overdue requests; requests created and
   requests resolved, each over the last 7, 30 (the default) or 90 days or 12
