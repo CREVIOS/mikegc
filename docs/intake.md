@@ -5,7 +5,9 @@ questions from the business. MikeGC is used only by the Legal team, so every
 member of an organization is on the Legal team and works one shared queue.
 Business colleagues never use MikeGC: a lawyer creates the request that arrived
 by email, chat, phone or in a meeting, and the business person appears only as
-the named requester on that record.
+the named requester on that record. An organization can also have MikeGC record
+requests itself from email sent to a shared address and from Slack messages
+that mention @MikeGC; see [Automated intake](intake-automation.md).
 
 Intake is always on in every organization and in Personal; there is no
 setting to switch it off. In Personal it tracks the person's own requests,
@@ -221,8 +223,9 @@ then copies it to the request.
   purging the organization deletes its attachments, and the document version
   trigger queues their storage objects for durable cleanup.
 
-This slice does not include notifications, AI triage, scheduled processing or
-automatic legal decisions.
+Apart from the triage that [automated intake](intake-automation.md) runs on
+the messages it receives, intake does not include notifications, scheduled
+processing or automatic legal decisions.
 
 ## Access and retention
 
@@ -340,6 +343,12 @@ Apply migrations before starting the new application build:
   periods it used.
 - `20261102_01_intake_resolve_optional_text.sql` lets a request be resolved
   without a resolution; cancelling still needs a reason.
+- `20261102_02_intake_automation.sql` adds automated intake: the
+  per-organization settings (`intake_automation`), what each member handles
+  (`intake_member_focus`), the messages received (`intake_inbound`), a request's
+  `source`, the `automated` mark on events and attachments, and
+  `intake_submit_automated` and `intake_attach_automated`, which record a
+  request and its documents as MikeGC.
 
 Use the existing migration runner documented in [deployment.md](deployment.md).
 Do not replay historical migrations over a fresh schema. Fresh installations use

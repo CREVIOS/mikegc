@@ -736,10 +736,16 @@ export interface IntakeRequestSummary extends Omit<IntakeDetails, "description">
   capabilities: { assign: boolean; cancel: boolean; delete: boolean };
 }
 export interface IntakeRequestPage { requests: IntakeRequestSummary[]; next_cursor: string | null }
+/** Where a request came from: typed by a member, or recorded by MikeGC. */
+export type IntakeSource = "manual" | "email" | "slack";
 export interface IntakeRequest extends Omit<IntakeRequestSummary, "capabilities">, IntakeDetails {
   org_id: string;
-  /** Null once the creator's account is erased. */
+  /**
+   * Null once the creator's account is erased, and for requests MikeGC
+   * recorded, whose creator reads as "MikeGC".
+   */
   created_by: string | null; created_by_name: string;
+  source: IntakeSource;
   capabilities: {
     edit: boolean; assign: boolean; note: boolean; wait: boolean;
     resume: boolean; resolve: boolean; cancel: boolean; reopen: boolean;
@@ -759,6 +765,70 @@ export interface IntakeEvent {
   /** Null for automatic changes, such as unassignment when a member leaves. */
   actor_id: string | null; actor_name: string | null; assignee_name: string | null; created_at: string;
 }
+/**
+ * Automated intake, as an organization's owners and admins see it. Secrets
+ * are write-only: the response says whether they are set, never what they are.
+ */
+export interface IntakeAutomationSettings {
+  email: {
+    enabled: boolean;
+    /** Whether an inbound webhook URL has been generated. */
+    configured: boolean;
+    /** The last characters of the URL's token, to tell URLs apart. */
+    token_hint: string | null;
+    /** Sender domains accepted, such as "example.com"; empty accepts anyone. */
+    allowed_domains: string[];
+  };
+  slack: {
+    enabled: boolean;
+    /** The Request URL for the Slack app's Event Subscriptions. */
+    events_url: string;
+    /** Whether a signing secret and bot token are saved. */
+    configured: boolean;
+    /** The Slack workspace and MikeGC bot the saved token belongs to. */
+    team_id: string | null;
+    team_name: string | null;
+    bot_user_id: string | null;
+  };
+  triage: {
+    /** Off, requests are recorded from the message without AI. */
+    enabled: boolean;
+    /** The timezone target dates in messages are read in; null is UTC. */
+    default_timezone: string | null;
+    /** Whether a model and key are available to triage with. */
+    model_available: boolean;
+  };
+  /** What each member handles, which triage reads to choose a reviewer. */
+  focus: { user_id: string; focus: string }[];
+  /** The most recent messages received, newest first. */
+  recent: IntakeInboundSummary[];
+}
+/** One message received for intake, without its content. */
+export interface IntakeInboundSummary {
+  id: string; source: Exclude<IntakeSource, "manual">;
+  status: "pending" | "done" | "failed" | "ignored";
+  /** Why it was ignored or failed, in words an admin can act on. */
+  error: string | null;
+  request_id: string | null; created_at: string;
+}
+/** A change to automated intake. Omitted fields keep their saved value. */
+export interface IntakeAutomationUpdate {
+  email_enabled?: boolean;
+  email_allowed_domains?: string[];
+  slack_enabled?: boolean;
+  /** Write-only. Saving a bot token checks it with Slack first. */
+  slack_signing_secret?: string;
+  slack_bot_token?: string;
+  triage_enabled?: boolean;
+  default_timezone?: string | null;
+  /** Replaces every member's focus; a member left out has none. */
+  focus?: { user_id: string; focus: string }[];
+}
+/**
+ * A newly generated inbound webhook URL for email. It holds a secret token
+ * and is returned only once; generating another replaces it.
+ */
+export interface IntakeEmailWebhook { webhook_url: string; token_hint: string }
 /** A document attached to a request, readable by every organization member. */
 export interface IntakeDocument {
   document_id: string; filename: string; file_type: string | null; size_bytes: number | null;

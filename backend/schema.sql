@@ -10942,6 +10942,15 @@ create index if not exists intake_requests_created_by on public.intake_requests(
 create index if not exists intake_requests_org_updated on public.intake_requests(org_id, updated_at desc, id desc);
 create index if not exists intake_requests_org_target on public.intake_requests(org_id, requested_by_date, id);
 
+-- Where a request came from: typed by a member, or recorded by MikeGC from an
+-- email or a Slack message. MikeGC is not an account, so what it records has no
+-- actor and is marked automated, to read as MikeGC rather than a former member.
+alter table public.intake_requests add column if not exists source text not null default 'manual';
+alter table public.intake_requests drop constraint if exists intake_requests_source_check;
+alter table public.intake_requests add constraint intake_requests_source_check
+  check (source in ('manual', 'email', 'slack'));
+alter table public.intake_events add column if not exists automated boolean not null default false;
+
 -- Legacy question, reply and answer messages stay readable as notes.
 alter table public.intake_messages drop constraint if exists intake_messages_kind_check;
 alter table public.intake_messages add constraint intake_messages_kind_check
@@ -11295,7 +11304,9 @@ returns jsonb language sql stable set search_path = public, pg_temp as $$
     'assignee_id', r.assignee_id,
     'assignee_name', case when r.assignee_id is null then null else coalesce(a.display_name, a.email, 'Former member') end,
     'created_by', r.created_by,
-    'created_by_name', coalesce(c.display_name, c.email, 'Former member'),
+    'created_by_name', case when r.created_by is null and r.source <> 'manual' then 'MikeGC'
+      else coalesce(c.display_name, c.email, 'Former member') end,
+    'source', r.source,
     'created_at', r.created_at, 'updated_at', r.updated_at,
     'capabilities', jsonb_build_object(
       'edit', r.state not in ('resolved', 'cancelled'),
@@ -11559,6 +11570,7 @@ begin
         -- IDs let the page show each person's photo from its member list.
         case when e.kind in ('assignee_left', 'reviewer_removed') then null else e.actor_id end as actor_id,
         case when e.kind in ('assignee_left', 'reviewer_removed') then null
+          when e.automated then 'MikeGC'
           else coalesce(u.display_name, u.email, 'Former member') end as actor_name,
         case when e.assignee_id is null then null else coalesce(a.display_name, a.email, 'Former member') end as assignee_name
       from public.intake_events e
@@ -11635,6 +11647,8 @@ begin
     select org_id,actor_id,command_id from public.intake_commands
     where org_id=p_org and request_id is not null on conflict do nothing;
   delete from public.intake_requests where org_id=p_org;
+  -- Messages received for intake hold request text too.
+  delete from public.intake_inbound where org_id=p_org;
   insert into public.intake_events(org_id,actor_id,kind)
     select p_org,p_actor,'requests_purged' where exists(select 1 from public.intake_settings where org_id=p_org);
 end $$;
@@ -11670,6 +11684,8 @@ create table if not exists public.intake_request_documents (
   created_at timestamptz not null default now(),
   -- The note the document was added with, if any.
   message_id uuid references public.intake_messages(id) on delete set null,
+  -- Added by MikeGC with a request it recorded.
+  automated boolean not null default false,
   primary key (request_id, document_id),
   unique (document_id),
   foreign key (org_id, request_id) references public.intake_requests(org_id, id) on delete cascade
@@ -11739,7 +11755,8 @@ begin
   return (select coalesce(jsonb_agg(jsonb_build_object(
       'document_id', d.id, 'filename', coalesce(v.filename, 'Untitled document'),
       'file_type', v.file_type, 'size_bytes', v.size_bytes, 'status', d.status,
-      'added_by_name', coalesce(u.display_name, u.email, 'Former member'), 'created_at', l.created_at,
+      'added_by_name', case when l.automated then 'MikeGC'
+        else coalesce(u.display_name, u.email, 'Former member') end, 'created_at', l.created_at,
       'message_id', l.message_id)
       order by l.created_at, d.id), '[]')
     from public.intake_request_documents l
@@ -11767,6 +11784,130 @@ returns boolean language sql stable set search_path=public,pg_temp as $$
         and public.intake_member_role(p_org_id,p_user_id::uuid) is not null)
     ));
 $$;
+
+-- Automated intake. MikeGC records requests from email forwarded to an
+-- organization's intake address and from Slack messages that mention it.
+-- Owners and admins configure it; secrets are encrypted by the API
+-- (AES-256-GCM) and the email address's token is kept only as a SHA-256 hash.
+create table if not exists public.intake_automation (
+  org_id uuid primary key references public.organizations(id) on delete cascade,
+  email_enabled boolean not null default false,
+  email_token_hash text unique check (email_token_hash is null or email_token_hash ~ '^[0-9a-f]{64}$'),
+  email_token_hint text check (email_token_hint is null or char_length(email_token_hint) between 1 and 8),
+  email_allowed_domains text[] not null default '{}' check (cardinality(email_allowed_domains) <= 50),
+  slack_enabled boolean not null default false,
+  -- Names the organization in its Slack events URL; requests are verified
+  -- with the signing secret, so this identifier is not a credential.
+  slack_webhook_id uuid not null default gen_random_uuid() unique,
+  slack_team_id text check (slack_team_id is null or char_length(slack_team_id) between 1 and 40),
+  slack_team_name text check (slack_team_name is null or char_length(slack_team_name) between 1 and 200),
+  slack_bot_user_id text check (slack_bot_user_id is null or char_length(slack_bot_user_id) between 1 and 40),
+  slack_signing_secret_encrypted text,
+  slack_signing_secret_iv text,
+  slack_signing_secret_tag text,
+  slack_bot_token_encrypted text,
+  slack_bot_token_iv text,
+  slack_bot_token_tag text,
+  triage_enabled boolean not null default true,
+  default_timezone text check (default_timezone is null or char_length(default_timezone) between 1 and 100),
+  -- The admin who last saved the settings. Triage uses the organization's
+  -- model keys as this member; it runs without AI once they have left.
+  configured_by uuid references auth.users(id) on delete set null,
+  updated_at timestamptz not null default now()
+);
+create index if not exists intake_automation_configured_by on public.intake_automation(configured_by);
+
+-- What each member handles, such as "NDAs and procurement contracts", which
+-- triage reads to choose a reviewer. It goes when the member leaves.
+create table if not exists public.intake_member_focus (
+  org_id uuid not null,
+  user_id uuid not null,
+  focus text not null check (char_length(focus) between 1 and 500 and btrim(focus) <> ''),
+  updated_at timestamptz not null default now(),
+  primary key (org_id, user_id),
+  foreign key (org_id, user_id) references public.org_members(org_id, user_id) on delete cascade
+);
+create index if not exists intake_member_focus_user on public.intake_member_focus(user_id);
+
+-- Each message received for intake, once: a webhook delivered again finds
+-- its row and records nothing new. The payload is kept only until the
+-- message is handled; the request then holds its content.
+create table if not exists public.intake_inbound (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references public.organizations(id) on delete cascade,
+  source text not null check (source in ('email', 'slack')),
+  external_id text not null check (char_length(external_id) between 1 and 300),
+  status text not null default 'pending' check (status in ('pending', 'done', 'failed', 'ignored')),
+  payload jsonb,
+  request_id uuid references public.intake_requests(id) on delete set null,
+  error text check (error is null or char_length(error) <= 200),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (org_id, source, external_id)
+);
+create index if not exists intake_inbound_request on public.intake_inbound(request_id) where request_id is not null;
+
+-- A request MikeGC records from a received message. No member makes it, so
+-- it has no creator and its "submitted" event is marked automated. Asking
+-- again for the same message returns the request it already made. A
+-- reviewer who is not a current member leaves the request unassigned.
+create or replace function public.intake_submit_automated(p_org uuid, p_inbound uuid, p_request uuid,
+  p_subject text, p_description text, p_requester_name text, p_requester_email text default null,
+  p_date date default null, p_timezone text default null, p_assignee uuid default null)
+returns uuid language plpgsql set search_path = public, pg_temp as $$
+declare i public.intake_inbound; next_state text; reviewer uuid := p_assignee;
+begin
+  perform 1 from public.organizations where id = p_org and kind in ('team', 'personal')
+    and deleted_at is null for update;
+  if not found then raise exception 'Intake not found' using errcode = 'P0002'; end if;
+  select * into i from public.intake_inbound where id = p_inbound and org_id = p_org for update;
+  if not found then raise exception 'Message not found' using errcode = 'P0002'; end if;
+  if i.request_id is not null then return i.request_id; end if;
+  if i.status <> 'pending' then raise exception 'Message already handled' using errcode = 'P0001'; end if;
+  if p_request is null then raise exception 'Invalid request details' using errcode = '22023'; end if;
+  perform public.intake_check_details(p_subject, p_description, p_requester_name,
+    p_requester_email, null, p_date, p_timezone);
+  if reviewer is not null and public.intake_member_role(p_org, reviewer) is null then
+    reviewer := null;
+  end if;
+  if exists(select 1 from public.intake_requests where id = p_request) then
+    raise exception 'Request ID already used' using errcode = 'P0007';
+  end if;
+  insert into public.intake_settings(org_id) values(p_org) on conflict do nothing;
+  next_state := case when reviewer is null then 'submitted' else 'in_review' end;
+  insert into public.intake_requests(id, org_id, created_by, source, requester_name, requester_email,
+      assignee_id, subject, description, requested_by_date, timezone, state)
+    values(p_request, p_org, null, i.source, p_requester_name, p_requester_email,
+      reviewer, p_subject, p_description, p_date, p_timezone, next_state);
+  insert into public.intake_events(org_id, request_id, actor_id, kind, to_state, assignee_id, automated)
+    values(p_org, p_request, null, 'submitted', next_state, reviewer, true);
+  update public.intake_inbound set request_id = p_request, updated_at = now() where id = p_inbound;
+  return p_request;
+end $$;
+
+-- Link a document MikeGC made from a received message's attachment to the
+-- request it recorded. The document belongs to the organization and has no
+-- uploader; linking it again is a no-op.
+create or replace function public.intake_attach_automated(p_org uuid, p_request uuid, p_document uuid)
+returns void language plpgsql set search_path = public, pg_temp as $$
+begin
+  perform 1 from public.organizations where id = p_org and kind in ('team', 'personal')
+    and deleted_at is null for update;
+  if not found or not exists(select 1 from public.intake_requests where org_id = p_org and id = p_request) then
+    raise exception 'Request not found' using errcode = 'P0002';
+  end if;
+  if not exists(select 1 from public.documents where id = p_document and org_id = p_org
+      and library_kind = 'intake_attachment' and user_id is null
+      and project_id is null and workflow_id is null) then
+    raise exception 'Document not found' using errcode = 'P0002';
+  end if;
+  if exists(select 1 from public.intake_request_documents
+      where document_id = p_document and request_id <> p_request) then
+    raise exception 'The document belongs to another request' using errcode = '22023';
+  end if;
+  insert into public.intake_request_documents(org_id, request_id, document_id, added_by, automated)
+    values(p_org, p_request, p_document, null, true) on conflict do nothing;
+end $$;
 
 -- Tables and functions are inaccessible to browser database roles, even if
 -- default Supabase grants change. The backend service role supplies the actor.
@@ -11962,5 +12103,6 @@ insert into public.schema_migrations (filename) values
   ('20261101_06_intake_member_photos.sql'),
   ('20261101_07_intake_resolution_documents.sql'),
   ('20261101_08_intake_dashboard_periods.sql'),
-  ('20261102_01_intake_resolve_optional_text.sql')
+  ('20261102_01_intake_resolve_optional_text.sql'),
+  ('20261102_02_intake_automation.sql')
 on conflict (filename) do nothing;
