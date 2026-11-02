@@ -1102,12 +1102,27 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
     upload(61);
     expect(() => sql(attachAutomated(61))).toThrow(/P0002/);
   });
-  it("deletes received messages with the organization's intake data", () => {
+  it("deletes received messages with the organization's intake data, and their staged files", () => {
     inbound();
     sql(automated());
     inbound(73, "slack");
+    // An email still waiting, with an attachment staged in storage.
+    sql(`insert into public.intake_inbound(id,org_id,source,external_id,payload)
+      values(${q(74)},${q(10)},'email','message-74',
+        '{"kind":"email","attachments":[{"key":"intake-inbound/org/74/0"},{"key":""}]}')`);
     sql(`select public.intake_purge(${q(10)},${q(1)})`);
     expect(sql("select count(*) from public.intake_inbound")).toBe("0");
+    expect(
+      sql("select payload->'keys' from public.db_jobs where kind='storage.cleanup'"),
+    ).toBe('["intake-inbound/org/74/0"]');
+    // An organization's purge cascades to its messages the same way.
+    sql(`insert into public.intake_inbound(id,org_id,source,external_id,payload)
+      values(${q(75)},${q(11)},'email','message-75',
+        '{"kind":"email","attachments":[{"key":"intake-inbound/other/75/0"}]}')`);
+    sql(`delete from public.organizations where id=${q(11)}`);
+    expect(
+      sql("select count(*) from public.db_jobs where kind='storage.cleanup' and payload->'keys' ? 'intake-inbound/other/75/0'"),
+    ).toBe("1");
   });
   it("keeps automation settings and messages from browser roles", () => {
     for (const role of ["anon", "authenticated"]) {

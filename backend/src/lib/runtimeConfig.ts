@@ -179,6 +179,20 @@ export function configuredApiPublicUrl(
   return required(env, ["API_PUBLIC_URL"]).replace(/\/+$/, "");
 }
 
+/**
+ * The web app's public origin, for links the server sends elsewhere (such as
+ * a Slack reply). Production requires FRONTEND_URL; development falls back
+ * to the local frontend.
+ */
+export function configuredFrontendUrl(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return (required(env, ["FRONTEND_URL"]) || "http://localhost:3000").replace(
+    /\/+$/,
+    "",
+  );
+}
+
 export function authHandoffEncryptionSecret(
   env: NodeJS.ProcessEnv = process.env,
 ): string {

@@ -71,6 +71,27 @@ create table if not exists public.intake_inbound (
 );
 create index if not exists intake_inbound_request on public.intake_inbound(request_id) where request_id is not null;
 
+-- An email's attachments wait in storage until it is handled. A message
+-- deleted first, including by an intake purge or an organization's purge,
+-- hands its staged files to the storage worker.
+create or replace function public.intake_inbound_staged_cleanup()
+returns trigger language plpgsql security definer set search_path = '' as $$
+declare v_keys jsonb;
+begin
+  select coalesce(jsonb_agg(a->>'key'), '[]'::jsonb) into v_keys
+    from jsonb_array_elements(case when jsonb_typeof(old.payload->'attachments') = 'array'
+      then old.payload->'attachments' else '[]'::jsonb end) a
+    where coalesce(a->>'key', '') <> '';
+  if jsonb_array_length(v_keys) > 0 then
+    insert into public.db_jobs(kind, payload, max_attempts)
+      values ('storage.cleanup', jsonb_build_object('keys', v_keys), 8);
+  end if;
+  return null;
+end $$;
+drop trigger if exists intake_inbound_staged_cleanup on public.intake_inbound;
+create trigger intake_inbound_staged_cleanup after delete on public.intake_inbound
+  for each row execute function public.intake_inbound_staged_cleanup();
+
 
 create or replace function public.intake_submit_automated(p_org uuid, p_inbound uuid, p_request uuid,
   p_subject text, p_description text, p_requester_name text, p_requester_email text default null,

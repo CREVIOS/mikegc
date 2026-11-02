@@ -51,7 +51,11 @@ export async function validateIntakeExport(
   }
   return true;
 }
-/** Permanently purge request content through the owner-authorized transaction. */
+/**
+ * Permanently purge request content through the owner-authorized transaction.
+ * Received messages go with it; a trigger hands any attachments still staged
+ * for them to the storage worker.
+ */
 export async function purgeIntake(
   db: Db,
   orgId: string,

@@ -23,3 +23,13 @@ export {
   resolveIntakeOrg,
 } from "./intake.workspace";
 export { validateIntakeExport, purgeIntake } from "./intake.lifecycle";
+export {
+  getIntakeAutomation,
+  updateIntakeAutomation,
+  generateIntakeEmailWebhook,
+} from "./intake.automation";
+export { receiveSlackEvent, receiveInboundEmail } from "./intake.inbound";
+export {
+  handleIntakeInbound,
+  markIntakeInboundFailed,
+} from "./intake.automationJob";

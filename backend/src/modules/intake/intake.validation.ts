@@ -134,3 +134,51 @@ export type IntakeCommandInput = {
   body?: string;
   assignee_id?: string | null;
 };
+/** A change to automated intake; secrets are write-only and bounded. */
+export const intakeAutomationUpdate = z
+  .object({
+    email_enabled: z.boolean().optional(),
+    email_allowed_domains: z.array(z.string().max(255)).max(50).optional(),
+    slack_enabled: z.boolean().optional(),
+    slack_signing_secret: z.string().trim().min(1).max(300).optional(),
+    slack_bot_token: z
+      .string()
+      .trim()
+      .max(300)
+      .regex(/^xoxb-[\x21-\x7e]+$/)
+      .optional(),
+    triage_enabled: z.boolean().optional(),
+    default_timezone: z
+      .string()
+      .trim()
+      .min(1)
+      .max(100)
+      .refine((v) => knownTimezone({ timezone: v }))
+      .nullable()
+      .optional(),
+    focus: z
+      .array(
+        z
+          .object({ user_id: intakeId, focus: z.string().trim().min(1).max(500) })
+          .strict(),
+      )
+      .max(500)
+      .refine((f) => new Set(f.map((x) => x.user_id)).size === f.length)
+      .optional(),
+  })
+  .strict();
+const AUTOMATION_PROBLEMS: Record<string, string> = {
+  email_allowed_domains: "List at most 50 sender domains.",
+  slack_signing_secret: "Paste the Slack app's signing secret.",
+  slack_bot_token: "Paste the Bot User OAuth Token, which starts with xoxb-.",
+  default_timezone: "Choose a valid timezone.",
+  focus: "Describe what each member handles in 1 to 500 characters, once per member.",
+};
+/** What to fix in a rejected automation change, by its first problem. */
+export function automationUpdateProblem(error: z.ZodError): string {
+  const field = error.issues[0]?.path[0];
+  return (
+    (typeof field === "string" && AUTOMATION_PROBLEMS[field]) ||
+    "Check the automation settings."
+  );
+}

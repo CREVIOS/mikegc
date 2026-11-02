@@ -44,9 +44,12 @@ request, edit its details and add or remove documents as with any other
 request.
 
 The message is untrusted text. Triage can only pick from the organization's
-members and the message's own attachments, a requester email must appear in
-the message or be the sender's, and every field is checked like one a member
-typed. When triage is off, no model is available, or the model's answer is
+members and the message's own attachments, and every field is checked like
+one a member typed. A requester email must appear in the message; otherwise
+the sender's address is used when the sender is the requester, and none
+when someone else is. If the details are still refused, the request is
+recorded without the target date and requester email rather than not at
+all. When triage is off, no model is available, or the model's answer is
 unusable, MikeGC still records the request: the email subject or the first
 line of the Slack message as the subject, the message as the description, the
 sender as requester, no target date, unassigned, with every accepted
@@ -56,15 +59,19 @@ Triage runs with the organization's model keys, as the owner or admin who
 last saved the settings, on a fast, low-cost model (for example Claude Haiku)
 from the first provider with a key. If that person is no longer an owner or
 admin, it uses only the deployment's own keys. **Intake → Settings** says
-when no model is available.
+when no model is available, judged as the admin who last saved (or, before
+anyone has, as the person viewing).
 
 ## Documents
 
 PDF, Word, Excel and PowerPoint attachments are accepted: up to 10 per message
 and 25 MB each. Anything else, or anything over those limits, is listed at the
-end of the request's description so a reviewer can ask for it. Accepted
-documents become the request's documents, like ones a member uploads, and
-every member can open them.
+end of the request's description so a reviewer can ask for it. Images
+embedded in an email's body, such as signature logos, are left out without
+being listed. Accepted documents become the request's documents, like ones a
+member uploads, and every member can open them: Word and PowerPoint files are
+converted for the viewer the same way, and they are stored under
+`documents/intake-<organization ID>/` because MikeGC is not a user.
 
 ## Setting up email
 
@@ -80,15 +87,19 @@ inbound mail.
 3. Forward your intake address to that inbound address: a Google Workspace
    routing rule or Gmail forwarding for Gmail, or a mail flow rule or mailbox
    forwarding for Outlook and Exchange Online.
-4. Optionally list the **sender domains** to accept, such as `example.com`.
-   Mail from other domains is recorded as ignored, without creating a request.
-   Leaving the list empty accepts any sender, which suits an address only
-   colleagues know.
+4. Optionally list the **sender domains** to accept, such as `example.com`
+   (which also accepts its subdomains, such as `eu.example.com`). Mail from
+   other domains is recorded as ignored, without creating a request. Leaving
+   the list empty accepts any sender, which suits an address only colleagues
+   know. The check reads the From header, which a sender can forge: it keeps
+   out stray mail, not a determined impostor.
 5. Turn **Email** on and save. Send a test message, then check **Recent
    messages** on the settings page.
 
-Automatic replies, such as out-of-office messages and bulk mail, are ignored.
-A message Postmark delivers twice is recorded once.
+Automatic replies, such as out-of-office messages, and bulk or list mail
+are recorded as ignored, without their content. A message Postmark delivers
+twice is recorded once. A webhook URL that has been replaced, or email
+switched off, answers `403`, which tells Postmark to stop retrying.
 
 ## Setting up Slack
 
@@ -140,15 +151,25 @@ so anyone in the channel can see them.
   never sent back to the browser.
 - **Retention.** A message's content is kept only until it is handled; the
   request then holds it. Deleting all intake requests in **Privacy & Data**,
-  and purging the organization, delete received messages too. What a member
-  handles is deleted when they leave the organization.
+  and purging the organization, delete received messages too, and a database
+  trigger hands the attachments of any still waiting to the storage worker.
+  What a member handles is deleted when they leave the organization.
+- **Not recorded.** Changes to these settings are not written to the audit
+  log yet.
 
 ## Deployment
 
 Apply `backend/migrations/20261102_02_intake_automation.sql` before starting
-the new build. There are no new environment variables: the webhook URLs are
+the new build. No new environment variables are required: the webhook URLs are
 built from `API_PUBLIC_URL`, the request links in Slack replies from
 `FRONTEND_URL`, and secrets are encrypted with `MCP_CONNECTORS_ENCRYPTION_SECRET`
-(or `USER_API_KEYS_ENCRYPTION_SECRET`). Both webhooks must reach the API over
-public HTTPS; for local development, run a tunnel and set `API_PUBLIC_URL` to
-it, as for the Slack connector in [connectors.md](connectors.md).
+(or `USER_API_KEYS_ENCRYPTION_SECRET`). Webhook deliveries have their own rate
+limit, 120 a minute per sending address, which `RATE_LIMIT_WEBHOOK_MAX` and
+`RATE_LIMIT_WEBHOOK_WINDOW_MINUTES` can change.
+
+Both webhooks must reach the API over public HTTPS. The frontend's `/api`
+gateway forwards them unchanged, including Slack's signature headers, the raw
+body Slack signs and large Postmark messages, so `API_PUBLIC_URL` can be the
+usual same-origin gateway. For local development, run a tunnel and set
+`API_PUBLIC_URL` to it, as for the Slack connector in
+[connectors.md](connectors.md).
