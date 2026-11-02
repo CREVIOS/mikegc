@@ -3709,4 +3709,23 @@ describe("intake API boundary", () => {
             if(body)expect(JSON.parse(String(call.init.body))).toEqual(body);
         }
     });
+    it("copies more documents than one call takes in order, 20 at a time", async () => {
+        const listed = [{ document_id: "copy-45" }];
+        fetchMock.mockImplementation(async () => jsonResponse(listed));
+        const ids = Array.from({ length: 45 }, (_, i) => `doc-${i}`);
+        await expect(copyIntakeDocuments("org-1", "request-1", ids, "note-1")).resolves.toEqual(listed);
+        const bodies = fetchMock.mock.calls.map(([, init]) => JSON.parse(String((init as RequestInit).body)));
+        expect(bodies).toEqual([
+            { document_ids: ids.slice(0, 20), message_id: "note-1" },
+            { document_ids: ids.slice(20, 40), message_id: "note-1" },
+            { document_ids: ids.slice(40), message_id: "note-1" },
+        ]);
+    });
+    it("stops copying at the first call that fails", async () => {
+        fetchMock.mockImplementationOnce(async () => jsonResponse([]));
+        fetchMock.mockImplementationOnce(async () => jsonResponse({ detail: "Invalid documents." }, { status: 400 }));
+        const ids = Array.from({ length: 45 }, (_, i) => `doc-${i}`);
+        await expect(copyIntakeDocuments("org-1", "request-1", ids)).rejects.toBeTruthy();
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
 });

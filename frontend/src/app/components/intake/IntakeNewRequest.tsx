@@ -10,6 +10,7 @@ import {
   copyIntakeDocuments,
   getIntakeMembers,
   submitIntakeRequest,
+  UploadBatchError,
   uploadIntakeDocuments,
 } from "@/app/lib/mikeApi";
 import { notifyPartialFailure } from "@/app/lib/userFacingError";
@@ -47,6 +48,15 @@ import {
 } from "./IntakeDocumentPicker";
 
 const EMAIL = /^[^@\s]+@[^@\s]+$/;
+
+/** Names documents in a notice: "A.pdf and B.docx", or the first three and how many more. */
+function nameDocuments(names: string[]) {
+  const shown = names.slice(0, 3);
+  const more = names.length - shown.length;
+  return new Intl.ListFormat("en", { type: "conjunction" }).format(
+    more ? [...shown, `${more} more`] : shown,
+  );
+}
 
 /** The new-request page for the current workspace: an organization or Personal. */
 export function IntakeNewRequestPage() {
@@ -134,7 +144,14 @@ export function IntakeNewRequest({
   );
   const [picking, setPicking] = useState(false);
   const [dirty, setDirty] = useIntakeDraft(memory, "dirty", false);
-  const [uploading, setUploading] = useState(false);
+  // Set from the moment the request is saved until its documents are added.
+  // It is kept with the draft, so the form stays locked even if the page is
+  // left and opened again meanwhile: the saved request is never sent twice.
+  const [addingDocuments, setAddingDocuments] = useIntakeDraft(
+    memory,
+    "addingDocuments",
+    false,
+  );
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -143,47 +160,45 @@ export function IntakeNewRequest({
     };
   }, []);
   /**
-   * Contract review documents upload once the request exists. A failure then
-   * must not read as a failed request: the request is saved either way.
+   * Documents upload, and library documents are copied, once the request
+   * exists. A failure then must not read as a failed request: the request is
+   * saved either way. Each returns the names of the documents not added.
    */
-  /**
-   * Library documents are copied once the request exists. As with uploads, a
-   * failure must not read as a failed request: the request is saved anyway.
-   */
+  async function uploadDocuments(requestId: string, pending: File[]) {
+    if (!pending.length) return [];
+    try {
+      const outcomes = await uploadIntakeDocuments(
+        orgId,
+        requestId,
+        pending.map((file) => ({ file })),
+      );
+      return outcomes
+        .filter((outcome) => outcome.status !== "completed")
+        .map((outcome) => outcome.filename);
+    } catch (error) {
+      // A later upload session can fail after earlier ones added documents;
+      // those must not be named as missing.
+      if (error instanceof UploadBatchError)
+        return error.outcomes
+          .filter((outcome) => outcome.status !== "completed")
+          .map((outcome) => outcome.filename);
+      return pending.map((file) => file.name);
+    }
+  }
   async function copyDocuments(
     requestId: string,
     chosen: IntakePickedDocument[],
   ) {
-    await copyIntakeDocuments(
-      orgId,
-      requestId,
-      chosen.map((document) => document.id),
-    ).catch(() =>
-      notifyPartialFailure(
-        "The request was saved, but its library documents couldn't be added. Add them from the request.",
-        { action: "add the documents" },
-      ),
-    );
-  }
-  async function uploadDocuments(requestId: string, pending: File[]) {
-    setUploading(true);
-    const failed = await uploadIntakeDocuments(
-      orgId,
-      requestId,
-      pending.map((file) => ({ file })),
-    ).then(
-      (outcomes) =>
-        outcomes.filter((outcome) => outcome.status !== "completed").length,
-      () => pending.length,
-    );
-    if (failed)
-      notifyPartialFailure(
-        failed === pending.length
-          ? "The request was saved, but its documents couldn't be uploaded. Add them from the request."
-          : `The request was saved, but ${failed} of ${pending.length} documents couldn't be uploaded. Add them from the request.`,
-        { action: "upload the documents" },
-      );
-    if (mounted.current) setUploading(false);
+    const failed: string[] = [];
+    // One at a time, so the notice can name exactly the ones that failed.
+    for (const document of chosen) {
+      try {
+        await copyIntakeDocuments(orgId, requestId, [document.id]);
+      } catch {
+        failed.push(document.filename);
+      }
+    }
+    return failed;
   }
   const operation = useIntakeOperation(
     (receipt: IntakeReceipt) => {
@@ -196,13 +211,21 @@ export function IntakeNewRequest({
         onSaved(requestId);
         return;
       }
+      setAddingDocuments(true);
       void Promise.all([
-        pending.length ? uploadDocuments(requestId, pending) : null,
-        copies.length ? copyDocuments(requestId, copies) : null,
-      ]).then(() => {
+        uploadDocuments(requestId, pending),
+        copyDocuments(requestId, copies),
+      ]).then(([notUploaded, notCopied]) => {
+        const failed = [...notUploaded, ...notCopied];
+        if (failed.length)
+          notifyPartialFailure(
+            `The request was saved, but ${nameDocuments(failed)} couldn't be added. Add ${failed.length === 1 ? "it" : "them"} from the request.`,
+            { action: "add the documents" },
+          );
         // Someone who left mid-upload is not pulled back to the request.
         // Read before discarding: the draft also holds the open dialog.
         const stillOpen = mounted.current;
+        setAddingDocuments(false);
         discardIntakeDraft(memory);
         if (stillOpen) onSaved(requestId);
       });
@@ -210,7 +233,7 @@ export function IntakeNewRequest({
     undefined,
     memory,
   );
-  const locked = operation.locked || uploading;
+  const locked = operation.locked || addingDocuments;
   const draftGuard = useIntakeDraftWarning(dirty || locked);
   const timezones = useMemo(() => intakeTimezones(), []);
   const ids = {
@@ -272,7 +295,7 @@ export function IntakeNewRequest({
     }, "create the request");
   }
 
-  const savingLabel = uploading ? "Uploading documents…" : "Creating…";
+  const savingLabel = addingDocuments ? "Adding documents…" : "Creating…";
   const overdue =
     !!date &&
     isIntakeOverdue({
@@ -365,6 +388,7 @@ export function IntakeNewRequest({
               <TargetDateField
                 value={date || null}
                 overdue={overdue}
+                disabled={locked}
                 onSave={(next) => change(setDate)(next ?? "")}
               />
               {date && (
@@ -404,7 +428,11 @@ export function IntakeNewRequest({
               )}
               <AssigneeField
                 assigneeId={assigneeId}
-                assigneeName={null}
+                // Until the members load, or if they cannot be, the default
+                // still says who the request will go to.
+                assigneeName={
+                  assigneeId && assigneeId === accountId ? "Myself" : null
+                }
                 members={members}
                 accountId={accountId ?? null}
                 disabled={locked}
@@ -506,9 +534,11 @@ export function IntakeNewRequest({
               size="sm"
               type="submit"
               disabled={!complete || locked}
-              loading={operation.busy || uploading}
+              loading={operation.busy || addingDocuments}
             >
-              {operation.busy || uploading ? savingLabel : "Create request"}
+              {operation.busy || addingDocuments
+                ? savingLabel
+                : "Create request"}
             </PillButtonUI>
           </div>
         </DetailColumns>

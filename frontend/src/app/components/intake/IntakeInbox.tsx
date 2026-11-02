@@ -8,7 +8,6 @@ import type {
   IntakeMember,
   IntakeRequester,
   IntakeRequestSummary,
-  IntakeState,
 } from "@mike/contracts";
 import { useWorkspace } from "@/app/contexts/WorkspaceContext";
 import { notifyPartialFailure, notifyError } from "@/app/lib/userFacingError";
@@ -57,6 +56,7 @@ import {
   intakeFiltersQuery,
   parseIntakeFilters,
   type IntakeFilters,
+  type IntakeOpenState,
   type IntakeTab,
 } from "./intakeQuery";
 import { IntakePageHeader } from "./IntakePageHeader";
@@ -91,18 +91,14 @@ const SCOPE_LABELS: Record<IntakeListScope, string> = {
 const isClosedTab = (tab: IntakeTab): tab is "resolved" | "cancelled" =>
   tab === "resolved" || tab === "cancelled";
 
-/** Each status with the colour dot its table cells show. */
-const STATE_OPTIONS = (Object.keys(INTAKE_STATE_LABELS) as IntakeState[]).map(
-  (value) => ({
-    value,
-    label: INTAKE_STATE_LABELS[value],
-    dotClassName: INTAKE_STATE_DOT_CLASS[value],
-  }),
-);
-/** The statuses an outstanding request can have. */
-const OPEN_STATE_OPTIONS = STATE_OPTIONS.filter(
-  (option) => option.value !== "resolved" && option.value !== "cancelled",
-);
+/** The statuses an outstanding request can have, with their table dots. */
+const OPEN_STATE_OPTIONS = (
+  ["submitted", "in_review", "needs_information"] as IntakeOpenState[]
+).map((value) => ({
+  value,
+  label: INTAKE_STATE_LABELS[value],
+  dotClassName: INTAKE_STATE_DOT_CLASS[value],
+}));
 /**
  * Figures that count closed requests as well, so no tab describes their
  * list: Outstanding holds only open requests.
@@ -238,7 +234,11 @@ export function Inbox({
   function changeSearch(value: string) {
     setSearch(value);
     if (searchTimer.current) clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(() => update({ q: value }), 250);
+    // The API searches at most 200 characters, as a link's search is cut.
+    searchTimer.current = setTimeout(
+      () => update({ q: value.slice(0, 200) }),
+      250,
+    );
   }
   // Rows, errors and selection are stored against the query that produced
   // them, so a change shows the loading state at once and a late response
@@ -257,6 +257,15 @@ export function Inbox({
     key: queryKey,
     ids: [] as string[],
   });
+  // Only rows on screen can be selected: a refresh that drops one drops it
+  // from the selection, so it is not selected again if it comes back.
+  if (selection.key === queryKey && rows) {
+    const shown = selection.ids.filter((id) =>
+      rows.some((row) => row.id === id),
+    );
+    if (shown.length !== selection.ids.length)
+      setSelection({ key: queryKey, ids: shown });
+  }
   const selectedIds = selection.key === queryKey ? selection.ids : [];
   const setSelectedIds = (update: (ids: string[]) => string[]) =>
     setSelection((current) => ({
@@ -294,6 +303,11 @@ export function Inbox({
     };
   }, [orgId, reload]);
 
+  // The query whose rows are on screen, for a refresh that fails.
+  const shownKey = useRef<string | null>(null);
+  useEffect(() => {
+    shownKey.current = page?.key ?? null;
+  }, [page]);
   useEffect(() => {
     let active = true;
     // `reload` refetches the first page in place: the rows on screen stay
@@ -311,7 +325,11 @@ export function Inbox({
         setLoadMoreError(false);
       })
       .catch((e) => {
-        if (active) setListError({ key: queryKey, message: intakeError(e) });
+        if (!active) return;
+        // A refresh that fails leaves the rows it would have replaced.
+        if (shownKey.current === queryKey)
+          notifyError(e, { action: "refresh the requests" });
+        else setListError({ key: queryKey, message: intakeError(e) });
       });
     return () => {
       active = false;
@@ -337,15 +355,18 @@ export function Inbox({
   async function loadMore() {
     if (!page || page.key !== queryKey || !page.next || loadingMore) return;
     const key = queryKey;
+    const cursor = page.next;
     setLoadingMore(true);
     setLoadMoreError(false);
     try {
       const result = await listIntakeRequests(orgId, {
         ...query,
-        cursor: page.next,
+        cursor,
       });
       setPage((current) => {
-        if (current?.key !== key) return current;
+        // A refresh replaced the pages meanwhile: this one followed rows
+        // that are no longer the last on screen, so it could skip some.
+        if (current?.key !== key || current.next !== cursor) return current;
         const seen = new Set(current.rows.map((r) => r.id));
         return {
           key,
@@ -526,7 +547,8 @@ export function Inbox({
     }
     setDeleting(false);
     setDeleteTargets(null);
-    setSelectedIds(() => []);
+    // The ones that failed stay selected, so they can be found and retried.
+    setSelectedIds(() => failed.map((request) => request.id));
     refresh();
     const deleted = targets.length - failed.length;
     if (deleted > 0)
@@ -540,7 +562,7 @@ export function Inbox({
       });
     else if (failed.length > 0)
       notifyPartialFailure(
-        `${failed.length} of ${targets.length} requests couldn't be deleted. They may have changed; reload and try again.`,
+        `${failed.length} of ${targets.length} requests couldn't be deleted and are still selected. They may have changed; check them and try again.`,
         { action: "delete the requests" },
       );
   }
@@ -563,7 +585,8 @@ export function Inbox({
     }
     setCancelling(false);
     setCancelTargets(null);
-    setSelectedIds(() => []);
+    // The ones that failed stay selected, so they can be found and retried.
+    setSelectedIds(() => failed.map((request) => request.id));
     refresh();
     if (failed.length === targets.length && lastError)
       notifyError(lastError, {
@@ -572,7 +595,7 @@ export function Inbox({
       });
     else if (failed.length > 0)
       notifyPartialFailure(
-        `${failed.length} of ${targets.length} requests couldn't be cancelled. They may have changed; reload and try again.`,
+        `${failed.length} of ${targets.length} requests couldn't be cancelled and are still selected. They may have changed; check them and try again.`,
         { action: "cancel the requests" },
       );
   }
@@ -684,9 +707,7 @@ export function Inbox({
                     label="Filter by status"
                     value={state}
                     allLabel="All statuses"
-                    options={
-                      tab === "outstanding" ? OPEN_STATE_OPTIONS : STATE_OPTIONS
-                    }
+                    options={OPEN_STATE_OPTIONS}
                     onChange={(status) => update({ status })}
                   />
                 )}

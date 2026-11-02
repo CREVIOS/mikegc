@@ -52,4 +52,20 @@ describe("intake page URLs", () => {
       parseIntakeFilters(new URLSearchParams("requester=%20%20")).requester,
     ).toBeNull();
   });
+
+  it("filters by open statuses only; closed ones have their own tabs", () => {
+    for (const status of ["resolved", "cancelled"])
+      expect(
+        parseIntakeFilters(new URLSearchParams(`status=${status}`)).status,
+      ).toBeNull();
+    expect(
+      parseIntakeFilters(new URLSearchParams("status=needs_information"))
+        .status,
+    ).toBe("needs_information");
+    // A status link, such as the dashboard's, opens the list it names.
+    const href = intakeRequestsHref({ status: "in_review" });
+    expect(
+      parseIntakeFilters(new URLSearchParams(href.split("?")[1])).status,
+    ).toBe("in_review");
+  });
 });

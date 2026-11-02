@@ -85,7 +85,13 @@ export function useIntakeDocumentUpload(
           { action: "upload the documents" },
         );
     } catch (error) {
-      notifyError(error, { action: "upload the documents" });
+      // A note is saved before its documents upload, so say so.
+      if (messageId)
+        notifyPartialFailure(
+          "The note was added, but its documents couldn't be uploaded. Add them to the request's documents instead.",
+          { action: "upload the documents" },
+        );
+      else notifyError(error, { action: "upload the documents" });
     } finally {
       setUploading((current) =>
         current.filter((upload) => !batch.includes(upload)),

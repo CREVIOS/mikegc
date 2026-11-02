@@ -36,7 +36,7 @@ import {
   getIntakeMessages,
   getIntakeRequest,
 } from "@/app/lib/mikeApi";
-import { notifyError } from "@/app/lib/userFacingError";
+import { notifyError, notifyPartialFailure } from "@/app/lib/userFacingError";
 import { notifySuccess } from "@/shared/lib/errorNotifier";
 import {
   formatUnsupportedDocumentWarning,
@@ -137,6 +137,40 @@ async function allPages<T>(read: (offset: number) => Promise<T[]>) {
     rows.push(...page);
     if (page.length < 100) return rows;
   }
+}
+/** The fields an edit sends, all of them, at the request's version. */
+const DETAIL_KEYS = [
+  "subject",
+  "description",
+  "requester_name",
+  "requester_email",
+  "requester_team",
+  "requested_by_date",
+  "timezone",
+] as const satisfies readonly (keyof IntakeDetails)[];
+function detailsOf(request: IntakeDetails): IntakeDetails {
+  return {
+    subject: request.subject,
+    description: request.description,
+    requester_name: request.requester_name,
+    requester_email: request.requester_email,
+    requester_team: request.requester_team,
+    requested_by_date: request.requested_by_date,
+    timezone: request.timezone,
+  };
+}
+/**
+ * A target date always has a timezone and no date has none, however the
+ * edits that made them were queued: a date set where there was none takes
+ * the viewer's timezone.
+ */
+function datedTogether(details: IntakeDetails): IntakeDetails {
+  if (!details.requested_by_date) return { ...details, timezone: null };
+  if (details.timezone) return details;
+  return {
+    ...details,
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  };
 }
 type Closing = "resolve" | "cancel";
 /** Which retained draft a successful command has consumed. */
@@ -255,7 +289,11 @@ export function Detail({
   );
   const viewer = useIntakeDocumentViewer();
   /** Copy library documents onto the request, or onto a saved note. */
-  function addPicked(picked: IntakePickedDocument[], messageId: string | null) {
+  function addPicked(
+    picked: IntakePickedDocument[],
+    messageId: string | null,
+    withNote = false,
+  ) {
     copyIntakeDocuments(
       orgId,
       requestId,
@@ -264,7 +302,13 @@ export function Detail({
     ).then(
       () => void refresh(),
       (e) => {
-        notifyError(e, { action: "add the documents" });
+        // The note is saved either way; only its documents need adding.
+        if (withNote)
+          notifyPartialFailure(
+            "The note was added, but its library documents couldn't all be added. Add them to the request's documents instead.",
+            { action: "add the documents" },
+          );
+        else notifyError(e, { action: "add the documents" });
         void refresh();
       },
     );
@@ -285,7 +329,12 @@ export function Detail({
         if (noteFiles.length)
           void upload.add(noteFiles, receipt.message_id ?? undefined);
         if (notePicked.length)
-          addPicked(notePicked, receipt.message_id ?? null);
+          addPicked(
+            notePicked,
+            receipt.message_id ?? null,
+            // A resolution without text saved no note to report.
+            !!receipt.message_id,
+          );
         setNote("");
         setNoteFiles([]);
         setNotePicked([]);
@@ -336,18 +385,26 @@ export function Detail({
   function focusNote() {
     document.getElementById("intake-note")?.focus({ preventScroll: true });
   }
-  /** Capture the displayed request version; recovery reuses the same command. */
+  /** Send a command at the latest version this page knows; recovery reuses the same command. */
   function command(
     action: IntakeAction,
     label: string,
     fields: Pick<IntakeCommand, "body" | "assignee_id"> = {},
     consumed: Consumed = null,
   ) {
-    if (!request) return;
+    // A command that would not start must not claim a draft either: its
+    // receipt would be read as this command's.
+    if (!request || !operation.idle()) return;
     const input: IntakeCommand = {
       command_id: crypto.randomUUID(),
-      // Notes leave the request unchanged, so they carry no version.
-      ...(action === "notes" ? {} : { expected_version: request.version }),
+      // Notes leave the request unchanged, so they carry no version. This
+      // page's own last change may not be on screen yet: its version is the
+      // request's now, unless someone else has changed it since.
+      ...(action === "notes"
+        ? {}
+        : {
+            expected_version: Math.max(request.version, savedVersion.current),
+          }),
       ...fields,
     };
     setConsumes(consumed);
@@ -365,15 +422,12 @@ export function Detail({
   }
   function sendDetails(patch: Partial<IntakeDetails>) {
     if (!request) return;
+    const details = datedTogether({ ...detailsOf(request), ...patch });
+    // A field left after Enter, or an edit queued behind its own save, can
+    // name only what is saved already: sending it would record a change.
+    if (DETAIL_KEYS.every((key) => details[key] === request[key])) return;
     const input: IntakeEdit = {
-      subject: request.subject,
-      description: request.description,
-      requester_name: request.requester_name,
-      requester_email: request.requester_email,
-      requester_team: request.requester_team,
-      requested_by_date: request.requested_by_date,
-      timezone: request.timezone,
-      ...patch,
+      ...details,
       command_id: crypto.randomUUID(),
       expected_version: request.version,
     };
@@ -387,7 +441,7 @@ export function Detail({
   }
   function saveDetails(patch: Partial<IntakeDetails>) {
     if (!request) return;
-    if (operation.locked || request.version < savedVersion.current) {
+    if (!operation.idle() || request.version < savedVersion.current) {
       queuedDetails.current = { ...queuedDetails.current, ...patch };
       return;
     }
@@ -395,7 +449,7 @@ export function Detail({
   }
   useEffect(() => {
     const queued = queuedDetails.current;
-    if (!queued || !request || operation.locked) return;
+    if (!queued || !request || !operation.idle()) return;
     if (request.version < savedVersion.current) return;
     queuedDetails.current = null;
     sendDetails(queued);
@@ -452,8 +506,10 @@ export function Detail({
   );
   const assign = (assigneeId: string | null) =>
     command("assignment", "assign the request", { assignee_id: assigneeId });
-  // An unresolved save stays retryable even while the request is hidden.
-  const recheck = operation.uncertain && !closing && (
+  // An unresolved save stays retryable even while the request is hidden. The
+  // cancel dialog offers its own Check again, but only while the request shows.
+  const cancelRechecks = closing === "cancel" && !!request;
+  const recheck = operation.uncertain && !cancelRechecks && (
     <div className="flex flex-wrap items-center gap-3" role="status">
       <span className="text-sm text-gray-500">
         Checking whether it was saved. Your text is kept here.
@@ -560,9 +616,11 @@ export function Detail({
           setDragging(false);
           setOverNote(false);
           const files = Array.from(event.dataTransfer.files);
-          if (noteBox.current?.contains(event.target as Node))
-            addNoteFiles(files);
-          else void upload.add(files);
+          if (noteBox.current?.contains(event.target as Node)) {
+            // A note being saved takes no more files: they would be tagged
+            // on it once it is saved, though it was sent without them.
+            if (!operation.locked) addNoteFiles(files);
+          } else void upload.add(files);
         }}
       >
         {dragging && !overNote && (
@@ -823,6 +881,7 @@ export function Detail({
         confirmLabel="Delete request"
         confirmVariant="danger"
         cancelLabel="Keep request"
+        confirmDisabled={operation.locked}
         onCancel={() => setConfirmingDelete(false)}
         onConfirm={() => {
           setConfirmingDelete(false);
@@ -858,7 +917,11 @@ export function Detail({
           onConfirm={() =>
             command("cancel", "cancel the request", { body: reason }, "reason")
           }
-          onClose={() => setClosing(null)}
+          onClose={() => {
+            // Closing the dialog discards its reason, as closing a form does.
+            setReason("");
+            setClosing(null);
+          }}
         />
       )}
     </div>

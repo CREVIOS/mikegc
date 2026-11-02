@@ -97,6 +97,33 @@ afterEach(() => {
 });
 
 describe("IntakeDashboard", () => {
+  it("names the period of the figure on screen until the next one arrives", async () => {
+    const user = userEvent.setup();
+    let arrive: (value: Dashboard) => void = () => {};
+    render(<IntakeDashboard orgId="org-a" />);
+    const menu = await screen.findByRole("button", {
+      name: "Created period: Last 30 days",
+    });
+    mocks.dashboard.mockReturnValue(
+      new Promise<Dashboard>((resolve) => {
+        arrive = resolve;
+      }),
+    );
+    await user.click(menu);
+    await user.click(screen.getByRole("menuitemradio", { name: "Last 7 days" }));
+    await waitFor(() => expect(mocks.dashboard).toHaveBeenCalledTimes(2));
+    // The 30-day figure is still on screen, marked busy, under its own period.
+    expect(screen.getByText("6")).toHaveAttribute("aria-busy", "true");
+    expect(
+      screen.getByRole("button", { name: "Created period: Last 30 days" }),
+    ).toBeInTheDocument();
+    arrive(dashboard({ created: 17, created_days: 7 }));
+    expect(
+      await screen.findByRole("button", { name: "Created period: Last 7 days" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("17")).not.toHaveAttribute("aria-busy");
+  });
+
   it("reads each period figure over the period chosen from its own menu", async () => {
     const user = userEvent.setup();
     render(<IntakeDashboard orgId="org-a" />);

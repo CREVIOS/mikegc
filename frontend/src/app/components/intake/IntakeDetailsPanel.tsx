@@ -275,18 +275,9 @@ export function IntakeDetailsPanel({
           <TargetDateField
             value={request.requested_by_date}
             overdue={overdue}
-            onSave={(date) =>
-              onSave(
-                date
-                  ? {
-                      requested_by_date: date,
-                      timezone:
-                        request.timezone ??
-                        Intl.DateTimeFormat().resolvedOptions().timeZone,
-                    }
-                  : { requested_by_date: null, timezone: null },
-              )
-            }
+            // The page pairs the date with the request's timezone when the
+            // edit is sent, so a timezone change saving meanwhile is kept.
+            onSave={(date) => onSave({ requested_by_date: date })}
           />
           {request.requested_by_date && (
             <TimezoneField
@@ -357,10 +348,13 @@ function parseTypedDate(text: string): string | null | undefined {
 export function TargetDateField({
   value,
   overdue,
+  disabled,
   onSave,
 }: {
   value: string | null;
   overdue: boolean;
+  /** While a save is pending, the date cannot change under it. */
+  disabled?: boolean;
   onSave: (date: string | null) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -399,7 +393,7 @@ export function TargetDateField({
       <label htmlFor={inputId} className={LABEL_CLASS}>
         Target date
       </label>
-      <Popover open={open} onOpenChange={setOpen}>
+      <Popover open={open && !disabled} onOpenChange={setOpen}>
         <PopoverAnchor asChild>
           <div
             className={cn(
@@ -413,6 +407,7 @@ export function TargetDateField({
               type="text"
               value={shown}
               placeholder="None"
+              disabled={disabled}
               aria-invalid={invalid || undefined}
               aria-describedby={
                 invalid || (overdue && draft === null && !saving)
@@ -436,7 +431,7 @@ export function TargetDateField({
                 }
               }}
               className={cn(
-                "min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-gray-400",
+                "min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-gray-400 disabled:cursor-not-allowed disabled:opacity-60",
                 overdue && draft === null && !saving && "text-red-600",
               )}
             />
@@ -452,7 +447,8 @@ export function TargetDateField({
               <button
                 type="button"
                 aria-label="Choose target date"
-                className="-mr-1 rounded-full p-0.5 text-gray-400 transition-colors hover:text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+                disabled={disabled}
+                className="-mr-1 rounded-full p-0.5 text-gray-400 transition-colors hover:text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <CalendarDays aria-hidden="true" className="h-4 w-4 shrink-0" />
               </button>

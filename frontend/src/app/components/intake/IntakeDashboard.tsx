@@ -131,7 +131,8 @@ export function IntakeDashboard({ orgId }: { orgId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
   // Each period figure reads over its own period; the figures on screen stay
-  // until the next ones arrive.
+  // until the next ones arrive. Their menus name the period they cover, and
+  // a figure whose next period is loading is marked busy.
   const [periods, setPeriods] = useState<Periods>(DEFAULT_PERIODS);
   const choose = (patch: Partial<Periods>) =>
     setPeriods((current) => ({ ...current, ...patch }));
@@ -202,10 +203,11 @@ export function IntakeDashboard({ orgId }: { orgId: string }) {
               <StatTile
                 label="Created"
                 value={data.created}
+                busy={periods.created_days !== data.created_days}
                 detail={
                   <PeriodMenu
                     label="Created"
-                    value={periods.created_days}
+                    value={data.created_days}
                     options={DAY_PERIODS}
                     onChange={(created_days) => choose({ created_days })}
                   />
@@ -214,10 +216,11 @@ export function IntakeDashboard({ orgId }: { orgId: string }) {
               <StatTile
                 label="Resolved"
                 value={data.resolved}
+                busy={periods.resolved_days !== data.resolved_days}
                 detail={
                   <PeriodMenu
                     label="Resolved"
-                    value={periods.resolved_days}
+                    value={data.resolved_days}
                     options={DAY_PERIODS}
                     onChange={(resolved_days) => choose({ resolved_days })}
                   />
@@ -226,10 +229,11 @@ export function IntakeDashboard({ orgId }: { orgId: string }) {
               <StatTile
                 label="Median time to resolve"
                 value={formatHours(data.median_hours_to_resolve)}
+                busy={periods.median_days !== data.median_days}
                 detail={
                   <PeriodMenu
                     label="Median time to resolve"
-                    value={periods.median_days}
+                    value={data.median_days}
                     options={MEDIAN_PERIODS}
                     onChange={(median_days) => choose({ median_days })}
                   />
@@ -241,10 +245,11 @@ export function IntakeDashboard({ orgId }: { orgId: string }) {
               <StatusBreakdown data={data} />
               <WeeklyChart
                 weeks={data.weeks}
+                busy={periods.weeks !== data.weeks_shown}
                 period={
                   <PeriodMenu
                     label="Requests per week"
-                    value={periods.weeks}
+                    value={data.weeks_shown}
                     options={WEEK_PERIODS}
                     onChange={(weeks) => choose({ weeks })}
                   />
@@ -281,10 +286,10 @@ const DAY_PERIODS: { value: IntakeDashboardDays; label: string }[] = [
 ];
 const MEDIAN_PERIODS: { value: IntakeDashboardMedianDays; label: string }[] =
   [
-    { value: 30, label: "Last 30 days" },
-    { value: 90, label: "Last 90 days" },
-    { value: 365, label: "Last 12 months" },
-  ];
+  { value: 30, label: "Last 30 days" },
+  { value: 90, label: "Last 90 days" },
+  { value: 365, label: "Last 12 months" },
+];
 const WEEK_PERIODS: { value: IntakeDashboardWeeks; label: string }[] = [
   { value: 4, label: "Last 4 weeks" },
   { value: 8, label: "Last 8 weeks" },
@@ -355,6 +360,7 @@ function StatTile({
   value,
   detail,
   alert = false,
+  busy = false,
   href,
 }: {
   label: string;
@@ -362,15 +368,19 @@ function StatTile({
   detail?: ReactNode;
   /** Needs attention: the value is shown in red beside its label. */
   alert?: boolean;
+  /** The figure for a newly chosen period is loading. */
+  busy?: boolean;
   href?: string;
 }) {
   const content = (
     <>
       <span className="block text-xs text-gray-500">{label}</span>
       <span
+        aria-busy={busy || undefined}
         className={cn(
-          "mt-1 block text-2xl font-semibold [overflow-wrap:anywhere]",
+          "mt-1 block text-2xl font-semibold transition-opacity [overflow-wrap:anywhere]",
           alert ? "text-red-600" : "text-gray-900",
+          busy && "opacity-50",
         )}
       >
         {value}
@@ -625,10 +635,13 @@ function weekLabel(weekStart: string) {
 function WeeklyChart({
   weeks,
   period,
+  busy = false,
 }: {
   weeks: Dashboard["weeks"];
   /** The chart's period menu, under its title. */
   period: ReactNode;
+  /** The weeks for a newly chosen period are loading. */
+  busy?: boolean;
 }) {
   const [active, setActive] = useState<number | null>(null);
   const top = axisTop(
@@ -652,110 +665,115 @@ function WeeklyChart({
         </ul>
       }
     >
-      {empty ? (
-        <p className="mt-4 text-sm text-gray-500">
-          No requests were created or resolved in these weeks.
-        </p>
-      ) : (
-        <>
-          <div className="relative mt-5 h-40">
-            {ticks.map((tick) => (
-              <div
-                key={tick}
-                aria-hidden="true"
-                className="absolute left-7 right-0 h-px bg-gray-100"
-                style={{ bottom: `${(tick / top) * 100}%` }}
-              >
-                <span className="absolute -left-7 w-5 -translate-y-1/2 text-right text-[11px] tabular-nums text-gray-400">
-                  {tick}
-                </span>
+      <div
+        aria-busy={busy || undefined}
+        className={cn("transition-opacity", busy && "opacity-50")}
+      >
+        {empty ? (
+          <p className="mt-4 text-sm text-gray-500">
+            No requests were created or resolved in these weeks.
+          </p>
+        ) : (
+          <>
+            <div className="relative mt-5 h-40">
+              {ticks.map((tick) => (
+                <div
+                  key={tick}
+                  aria-hidden="true"
+                  className="absolute left-7 right-0 h-px bg-gray-100"
+                  style={{ bottom: `${(tick / top) * 100}%` }}
+                >
+                  <span className="absolute -left-7 w-5 -translate-y-1/2 text-right text-[11px] tabular-nums text-gray-400">
+                    {tick}
+                  </span>
+                </div>
+              ))}
+              <div className="absolute inset-y-0 left-7 right-0 flex items-end">
+                {weeks.map((week, index) => {
+                  const label = weekLabel(week.week_start);
+                  return (
+                    <div
+                      key={week.week_start}
+                      role="img"
+                      tabIndex={0}
+                      aria-label={`Week of ${label}: ${week.created} created, ${week.resolved} resolved`}
+                      onPointerEnter={() => setActive(index)}
+                      onPointerLeave={() => setActive(null)}
+                      onFocus={() => setActive(index)}
+                      onBlur={() => setActive(null)}
+                      className="relative flex h-full flex-1 items-end justify-center gap-0.5 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+                    >
+                      {WEEK_SERIES.map((series) => (
+                        <span
+                          key={series.key}
+                          aria-hidden="true"
+                          className={cn(
+                            "w-2 rounded-t-[4px] transition-opacity @[30rem]:w-3",
+                            active !== null && active !== index && "opacity-50",
+                          )}
+                          style={{
+                            height: `${(week[series.key] / top) * 100}%`,
+                            backgroundColor: `var(${series.color})`,
+                          }}
+                        />
+                      ))}
+                      {active === index && (
+                        <div
+                          aria-hidden="true"
+                          className={cn(
+                            "pointer-events-none absolute bottom-full z-10 mb-1 whitespace-nowrap rounded-lg px-2.5 py-1.5 text-xs",
+                            LIQUID_GLASS_FLOAT_CLASS,
+                            index === 0
+                              ? "left-0"
+                              : index === weeks.length - 1
+                                ? "right-0"
+                                : "left-1/2 -translate-x-1/2",
+                          )}
+                        >
+                          <p className="text-gray-500">Week of {label}</p>
+                          {WEEK_SERIES.map((series) => (
+                            <p
+                              key={series.key}
+                              className="mt-0.5 flex items-center gap-1.5"
+                            >
+                              <span
+                                className="h-0.5 w-2.5 rounded-full"
+                                style={{
+                                  backgroundColor: `var(${series.color})`,
+                                }}
+                              />
+                              <span className="font-semibold text-gray-900">
+                                {week[series.key]}
+                              </span>
+                              <span className="text-gray-500">
+                                {series.label.toLowerCase()}
+                              </span>
+                            </p>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
-            ))}
-            <div className="absolute inset-y-0 left-7 right-0 flex items-end">
-              {weeks.map((week, index) => {
-                const label = weekLabel(week.week_start);
-                return (
-                  <div
-                    key={week.week_start}
-                    role="img"
-                    tabIndex={0}
-                    aria-label={`Week of ${label}: ${week.created} created, ${week.resolved} resolved`}
-                    onPointerEnter={() => setActive(index)}
-                    onPointerLeave={() => setActive(null)}
-                    onFocus={() => setActive(index)}
-                    onBlur={() => setActive(null)}
-                    className="relative flex h-full flex-1 items-end justify-center gap-0.5 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
-                  >
-                    {WEEK_SERIES.map((series) => (
-                      <span
-                        key={series.key}
-                        aria-hidden="true"
-                        className={cn(
-                          "w-2 rounded-t-[4px] transition-opacity @[30rem]:w-3",
-                          active !== null && active !== index && "opacity-50",
-                        )}
-                        style={{
-                          height: `${(week[series.key] / top) * 100}%`,
-                          backgroundColor: `var(${series.color})`,
-                        }}
-                      />
-                    ))}
-                    {active === index && (
-                      <div
-                        aria-hidden="true"
-                        className={cn(
-                          "pointer-events-none absolute bottom-full z-10 mb-1 whitespace-nowrap rounded-lg px-2.5 py-1.5 text-xs",
-                          LIQUID_GLASS_FLOAT_CLASS,
-                          index === 0
-                            ? "left-0"
-                            : index === weeks.length - 1
-                              ? "right-0"
-                              : "left-1/2 -translate-x-1/2",
-                        )}
-                      >
-                        <p className="text-gray-500">Week of {label}</p>
-                        {WEEK_SERIES.map((series) => (
-                          <p
-                            key={series.key}
-                            className="mt-0.5 flex items-center gap-1.5"
-                          >
-                            <span
-                              className="h-0.5 w-2.5 rounded-full"
-                              style={{
-                                backgroundColor: `var(${series.color})`,
-                              }}
-                            />
-                            <span className="font-semibold text-gray-900">
-                              {week[series.key]}
-                            </span>
-                            <span className="text-gray-500">
-                              {series.label.toLowerCase()}
-                            </span>
-                          </p>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
             </div>
-          </div>
-          <div aria-hidden="true" className="ml-7 mt-1.5 flex">
-            {weeks.map((week, index) => (
-              <span
-                key={week.week_start}
-                className={cn(
-                  "flex-1 text-center text-[11px] text-gray-400",
-                  // Every other week on a narrow card, so labels never collide.
-                  index % 2 === 1 && "invisible @[36rem]:visible",
-                )}
-              >
-                {weekLabel(week.week_start)}
-              </span>
-            ))}
-          </div>
-        </>
-      )}
+            <div aria-hidden="true" className="ml-7 mt-1.5 flex">
+              {weeks.map((week, index) => (
+                <span
+                  key={week.week_start}
+                  className={cn(
+                    "flex-1 text-center text-[11px] text-gray-400",
+                    // Every other week on a narrow card, so labels never collide.
+                    index % 2 === 1 && "invisible @[36rem]:visible",
+                  )}
+                >
+                  {weekLabel(week.week_start)}
+                </span>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
     </Card>
   );
 }
