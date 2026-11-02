@@ -6,6 +6,8 @@ import type {
     OrgDepartureList,
     OrgDepartureResolution,
     IntakeAction,
+    IntakeAutomationSettings,
+    IntakeAutomationUpdate,
     IntakeCommand,
     IntakeDashboard,
     IntakeDashboardDays,
@@ -13,6 +15,7 @@ import type {
     IntakeDashboardWeeks,
     IntakeDocument,
     IntakeEdit,
+    IntakeEmailWebhook,
     IntakeEvent,
     IntakeMember,
     IntakeRequester,
@@ -4530,6 +4533,30 @@ export function getIntakeMembers(orgId: string) {
 /** List each requester the queue can be filtered by, once. */
 export function getIntakeRequesters(orgId: string) {
     return apiRequest<IntakeRequester[]>(intakePath(orgId, "/requesters"));
+}
+/**
+ * How MikeGC records requests from email and Slack. Only owners and admins
+ * may read it (403 otherwise); secrets come back only as whether they are set.
+ */
+export function getIntakeAutomation(orgId: string) {
+    return apiRequest<IntakeAutomationSettings>(intakePath(orgId, "/automation"));
+}
+/** Change automated intake; fields left out keep their saved value. */
+export function updateIntakeAutomation(orgId: string, body: IntakeAutomationUpdate) {
+    return apiRequest<IntakeAutomationSettings>(
+        intakePath(orgId, "/automation"),
+        jsonBody("PATCH", body),
+    );
+}
+/**
+ * Generate the email webhook URL. It is returned only this once, and
+ * generating another replaces it, so the old one stops working.
+ */
+export function generateIntakeEmailWebhook(orgId: string) {
+    return apiRequest<IntakeEmailWebhook>(
+        intakePath(orgId, "/automation/email-webhook"),
+        { method: "POST" },
+    );
 }
 /** Where the workspace's requests stand, with weeks counted in `timezone`. */
 export function getIntakeDashboard(

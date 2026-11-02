@@ -5,19 +5,41 @@ import {
   PageHeader,
   type PageHeaderAction,
 } from "@/app/components/shared/PageHeader";
-import { INTAKE_DASHBOARD_PATH, INTAKE_REQUESTS_PATH } from "./intakeQuery";
+import {
+  PERSONAL_WORKSPACE,
+  useWorkspace,
+} from "@/app/contexts/WorkspaceContext";
+import { isOrgAdmin } from "@/app/lib/permissions";
+import {
+  INTAKE_DASHBOARD_PATH,
+  INTAKE_REQUESTS_PATH,
+  INTAKE_SETTINGS_PATH,
+} from "./intakeQuery";
 
-export type IntakePage = "requests" | "dashboard";
+export type IntakePage = "requests" | "dashboard" | "settings";
 
 const PAGES: { page: IntakePage; label: string; href: string }[] = [
   { page: "requests", label: "Requests", href: INTAKE_REQUESTS_PATH },
   { page: "dashboard", label: "Dashboard", href: INTAKE_DASHBOARD_PATH },
+  { page: "settings", label: "Settings", href: INTAKE_SETTINGS_PATH },
 ];
 
 /**
+ * Whether the viewer may change automated intake: an organization's owners
+ * and admins, and in Personal its owner, who is the only member.
+ */
+export function useCanManageIntake() {
+  const { workspaceId, activeOrganization } = useWorkspace();
+  return (
+    workspaceId === PERSONAL_WORKSPACE || isOrgAdmin(activeOrganization?.role)
+  );
+}
+
+/**
  * The Intake pages' header: Intake › the page as breadcrumbs, buttons that
- * switch between the requests list and the dashboard, then the page's own
- * actions and, on the requests list, New request.
+ * switch between the requests list, the dashboard and, for those who may
+ * change it, automated intake's settings, then the page's own actions and,
+ * on the requests list, New request.
  */
 export function IntakePageHeader({
   page,
@@ -28,7 +50,13 @@ export function IntakePageHeader({
   actions?: PageHeaderAction[];
 }) {
   const router = useRouter();
+  const canManage = useCanManageIntake();
   const current = PAGES.find((item) => item.page === page)!;
+  // Settings is offered only to those who may change it; anyone else who
+  // opens it by link is told so on the page.
+  const switches = PAGES.filter(
+    (item) => item.page !== "settings" || canManage || page === "settings",
+  );
   return (
     <>
       {/* Breadcrumbs are not a heading; this names the page for assistive technology. */}
@@ -47,7 +75,7 @@ export function IntakePageHeader({
           { label: current.label, title: current.label },
         ]}
         actionGroups={[
-          PAGES.map((item) => ({
+          switches.map((item) => ({
             title: item.label,
             label: item.label,
             pressed: page === item.page,

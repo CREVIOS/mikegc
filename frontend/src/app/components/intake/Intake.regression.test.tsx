@@ -238,6 +238,7 @@ const request = (overrides: Partial<IntakeRequest> = {}): IntakeRequest => ({
   assignee_name: "Lawyer B",
   created_by: "account-a",
   created_by_name: "Lawyer A",
+  source: "manual",
   created_at: "2026-10-26T10:00:00Z",
   updated_at: "2026-10-26T10:00:00Z",
   capabilities,
@@ -1665,6 +1666,54 @@ describe("request detail", () => {
       screen.queryByRole("button", { name: "Edit request" }),
     ).not.toBeInTheDocument();
     expect(details).toHaveTextContent("Jane Business");
+  });
+
+  it("names MikeGC as the creator of a request it recorded, with where it came from", async () => {
+    mocks.request.mockResolvedValue(
+      request({ created_by: null, created_by_name: "MikeGC", source: "email" }),
+    );
+    mocks.events.mockResolvedValue([
+      event({ actor_id: null, actor_name: "MikeGC", assignee_name: "Lawyer B" }),
+      event({ id: 2, kind: "assign", assignee_name: "Lawyer A" }),
+    ]);
+    const { unmount } = render(detail());
+    const activity = await screen.findByRole("region", { name: "Activity" });
+    expect(activity).toHaveTextContent(
+      "MikeGC created this and assigned it to Lawyer B ·",
+    );
+    // MikeGC's entry has its mark; a member's has their avatar.
+    const marks = activity.querySelectorAll("[data-actor]");
+    expect(marks[0]).toHaveAttribute("data-actor", "mikegc");
+    expect(marks[1]).toHaveAttribute("data-actor", "person");
+    const details = screen.getByRole("complementary", { name: "Details" });
+    // Plain text after the name, beside MikeGC's mark.
+    expect(details).toHaveTextContent("Created byMikeGC from email");
+    expect(details.querySelector('[data-actor="mikegc"]')).not.toBeNull();
+    expect(
+      within(details).queryByRole("img", { name: "MikeGC" }),
+    ).not.toBeInTheDocument();
+    unmount();
+
+    mocks.request.mockResolvedValue(
+      request({ created_by: null, created_by_name: "MikeGC", source: "slack" }),
+    );
+    render(detail());
+    const fromSlack = await screen.findByRole("complementary", {
+      name: "Details",
+    });
+    await waitFor(() =>
+      expect(fromSlack).toHaveTextContent("Created byMikeGC from Slack"),
+    );
+  });
+
+  it("says nothing of a source for a request a member created", async () => {
+    render(detail());
+    const details = await screen.findByRole("complementary", {
+      name: "Details",
+    });
+    expect(details).toHaveTextContent("Created byLALawyer A");
+    expect(details).not.toHaveTextContent(/from (email|Slack)/);
+    expect(details.querySelector('[data-actor="mikegc"]')).toBeNull();
   });
 
   it("changes status from the details panel and copies the link from the header", async () => {

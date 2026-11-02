@@ -65,6 +65,23 @@ describe("describeIntakeEvent", () => {
   });
 });
 
+describe("what MikeGC recorded", () => {
+  it("reads as MikeGC creating and assigning the request", () => {
+    // MikeGC is not an account: the entry has no actor ID, only its name.
+    expect(
+      describeIntakeEvent(
+        event({ actor_id: null, actor_name: "MikeGC", assignee_name: "Lawyer B" }),
+      ),
+    ).toEqual({
+      actor: "MikeGC",
+      action: "created this and assigned it to Lawyer B",
+    });
+    expect(
+      describeIntakeEvent(event({ actor_id: null, actor_name: "MikeGC" })),
+    ).toEqual({ actor: "MikeGC", action: "created this" });
+  });
+});
+
 describe("describeIntakeMessage", () => {
   it("names what the person wrote; the text goes below", () => {
     expect(describeIntakeMessage(message({}))).toEqual({

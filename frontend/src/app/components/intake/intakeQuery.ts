@@ -4,6 +4,8 @@ import type { IntakeListScope } from "@/app/lib/mikeApi";
 /** The Intake pages, which the header switches between. */
 export const INTAKE_REQUESTS_PATH = "/intake/requests";
 export const INTAKE_DASHBOARD_PATH = "/intake/dashboard";
+/** Automated intake, for an organization's owners and admins. */
+export const INTAKE_SETTINGS_PATH = "/intake/settings";
 
 /** The list's tabs. Outstanding, the default, holds the open requests. */
 export type IntakeTab = "outstanding" | "resolved" | "cancelled";
@@ -99,4 +101,9 @@ export function intakeFiltersQuery(filters: IntakeFilters): string {
 export function intakeRequestsHref(filters: Partial<IntakeFilters> = {}) {
   const query = intakeFiltersQuery({ ...DEFAULT_INTAKE_FILTERS, ...filters });
   return query ? `${INTAKE_REQUESTS_PATH}?${query}` : INTAKE_REQUESTS_PATH;
+}
+
+/** One request's page, in the workspace it belongs to. */
+export function intakeRequestHref(orgId: string, requestId: string) {
+  return `/intake/${encodeURIComponent(requestId)}?org=${encodeURIComponent(orgId)}`;
 }

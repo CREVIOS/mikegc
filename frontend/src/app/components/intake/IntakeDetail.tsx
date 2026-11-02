@@ -66,7 +66,7 @@ import {
   useIntakeDraftWarning,
   useIntakeOperation,
 } from "./useIntakeOperation";
-import { IntakeActorAvatar } from "./IntakeActorAvatar";
+import { IntakeActorAvatar, isMikeGCEvent } from "./IntakeActorAvatar";
 import {
   IntakeDocuments,
   useIntakeDocumentUpload,
@@ -740,6 +740,9 @@ export function Detail({
                       <li key={entry.key} className="relative flex gap-3">
                         <IntakeActorAvatar
                           name={line.actor}
+                          mikegc={
+                            "event" in entry && isMikeGCEvent(entry.event)
+                          }
                           photo={
                             members.find(
                               (m) =>

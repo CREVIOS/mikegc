@@ -1,4 +1,4 @@
-import {getIntakeMembers,getIntakeRequesters,getIntakeDashboard,getIntakeDocuments,copyIntakeDocuments,listIntakeRequests,submitIntakeRequest,getIntakeRequest,editIntakeRequest,getIntakeMessages,getIntakeEvents,commandIntakeRequest} from "./mikeApi";
+import {getIntakeMembers,getIntakeRequesters,getIntakeDashboard,getIntakeAutomation,updateIntakeAutomation,generateIntakeEmailWebhook,getIntakeDocuments,copyIntakeDocuments,listIntakeRequests,submitIntakeRequest,getIntakeRequest,editIntakeRequest,getIntakeMessages,getIntakeEvents,commandIntakeRequest} from "./mikeApi";
 import { listOrgPrivateContent, setOrgPrivateContentPermission, openOrgPrivateContent, closeOrgPrivateContent } from "./mikeApi";
 import { setUserProfilePhoto, listDeletedOrganizations, restoreOrganization } from "./mikeApi";
 import { listOrgDepartures, reassignOrgDepartureArchives, deleteOrgDepartureArchives } from "./mikeApi";
@@ -3708,6 +3708,34 @@ describe("intake API boundary", () => {
             expect(call.init.method??"GET").toBe(method);
             if(body)expect(JSON.parse(String(call.init.body))).toEqual(body);
         }
+    });
+    it("reads, changes and generates automated intake under the same scope", async () => {
+        const settings = { email: { enabled: false }, recent: [] };
+        fetchMock.mockImplementation(async () => jsonResponse(settings));
+        await expect(getIntakeAutomation("org/id")).resolves.toEqual(settings);
+        let call = lastFetchCall();
+        expect(call.url).toBe("/api/intake/org%2Fid/automation");
+        expect(call.init.method ?? "GET").toBe("GET");
+
+        // Only the fields given are sent; the rest keep their saved value.
+        const update = { email_enabled: true, slack_bot_token: "xoxb-1", default_timezone: null, focus: [{ user_id: "u1", focus: "NDAs" }] };
+        await expect(updateIntakeAutomation("personal", update)).resolves.toEqual(settings);
+        call = lastFetchCall();
+        expect(call.url).toBe("/api/intake/personal/automation");
+        expect(call.init.method).toBe("PATCH");
+        expect(JSON.parse(String(call.init.body))).toEqual(update);
+
+        const webhook = { webhook_url: "https://api.example.test/webhooks/intake/email/secret", token_hint: "cret" };
+        fetchMock.mockImplementation(async () => jsonResponse(webhook));
+        await expect(generateIntakeEmailWebhook("org/id")).resolves.toEqual(webhook);
+        call = lastFetchCall();
+        expect(call.url).toBe("/api/intake/org%2Fid/automation/email-webhook");
+        expect(call.init.method).toBe("POST");
+        expect(call.init.body).toBeUndefined();
+    });
+    it("rejects a member's read of automated intake with the API's status", async () => {
+        fetchMock.mockImplementation(async () => jsonResponse({ detail: "Only owners and admins can change automated intake." }, { status: 403 }));
+        await expect(getIntakeAutomation("org-1")).rejects.toMatchObject({ status: 403 });
     });
     it("copies more documents than one call takes in order, 20 at a time", async () => {
         const listed = [{ document_id: "copy-45" }];
