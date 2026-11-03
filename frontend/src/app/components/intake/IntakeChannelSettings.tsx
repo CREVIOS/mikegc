@@ -321,11 +321,8 @@ function IntakeChannelModal({
         ) : undefined
       }
       primaryAction={primaryAction}
-      cancelAction={{
-        label: dirty || form ? "Cancel" : "Close",
-        onClick: onClose,
-        disabled: saving,
-      }}
+      // Closing discards what wasn't saved; the header's Close does the same.
+      cancelAction={{ label: "Cancel", onClick: onClose, disabled: saving }}
     >
       <div
         data-modal-scroll="vertical"

@@ -246,62 +246,47 @@ afterEach(() => {
 });
 
 describe("IntakeSettings", () => {
-  it("shows Email, Slack, Teams and Triage rules one after another", async () => {
-    server = emailOn();
+  const card = (name: string) => screen.getByRole("article", { name });
+  /** Opens a channel's modal from its card's button. */
+  async function openModal(
+    user: ReturnType<typeof userEvent.setup>,
+    button: string,
+    name: string,
+  ) {
+    await user.click(screen.getByRole("button", { name: button }));
+    return screen.findByRole("dialog", { name });
+  }
+
+  it("shows each channel as a card with Set up or Manage, then Triage rules", async () => {
     render(<IntakeSettings orgId="org-a" />);
     await form();
     expect(mocks.automation).toHaveBeenCalledWith("org-a");
-
-    // The settings frame around it has the sections; it has no tabs of its own.
     expect(screen.queryByRole("tab")).toBeNull();
     expect(
       screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent),
-    ).toEqual(["Email", "Slack", "Teams", "Triage rules"]);
-    expect(screen.queryByText("Recent messages")).not.toBeInTheDocument();
+    ).toEqual(["Channels", "Triage rules"]);
 
-    const email = section("Email");
-    // Titled outside their cards, as in Settings.
-    expect(within(email).getByRole("heading", { name: "Email" })).toHaveClass(
-      "text-xl",
+    // One line of status each, and one button naming the channel.
+    expect(card("Email")).toHaveTextContent(
+      "Off · intake@example.com · Outlook",
     );
+    expect(card("Slack")).toHaveTextContent("On · Acme Legal");
+    expect(card("Teams")).toHaveTextContent("Not set up");
+    for (const name of ["Manage Email", "Manage Slack", "Set up Teams"]) {
+      const button = screen.getByRole("button", { name });
+      expect(button).toHaveAttribute("type", "button");
+      expect(button).toHaveAttribute("aria-haspopup", "dialog");
+    }
     expect(
-      within(email).getByRole("switch", { name: "Record requests from email" }),
-    ).toHaveAttribute("aria-checked", "true");
-    // The connected mailbox, on its own lines, with how it is going.
-    expect(within(email).getByText("intake@example.com")).toBeInTheDocument();
-    expect(email).toHaveTextContent("Outlook (Microsoft 365)");
-    expect(email).toHaveTextContent("Last read");
-    expect(email).toHaveTextContent("New-mail notifications renew before");
-    for (const name of [
-      "Send test email",
-      "Reconnect Outlook (Microsoft 365)",
-      "Disconnect",
-    ])
-      expect(within(email).getByRole("button", { name })).toBeInTheDocument();
-    expect(within(email).getByText("example.com")).toBeInTheDocument();
-    expect(
-      within(email).getByRole("button", { name: "Remove example.com" }),
-    ).toBeInTheDocument();
+      within(card("Teams")).getByRole("button", { name: "Set up Teams" }),
+    ).toHaveTextContent(/^Set up$/);
+    // No fields, secrets or steps on the cards themselves.
+    expect(section("Channels").querySelector("input")).toBeNull();
+    expect(screen.queryByLabelText("Signing Secret")).toBeNull();
+    expect(screen.queryByRole("switch", { name: /Record requests/ })).toBeNull();
+    expect(screen.queryByText("How to set it up")).toBeNull();
 
-    const slack = section("Slack");
-    expect(
-      within(slack).getByRole("switch", { name: "Record requests from Slack" }),
-    ).toHaveAttribute("aria-checked", "true");
-    expect(slack).toHaveTextContent(
-      "https://api.example.test/webhooks/intake/slack/0b6f",
-    );
-    expect(
-      within(slack).getByRole("button", { name: "Copy Events Request URL" }),
-    ).toBeInTheDocument();
-    expect(slack).toHaveTextContent("Acme Legal");
-    expect(slack).toHaveTextContent("MikeGC bot user U0BOT");
-
-    // The models are chosen in Model Preferences, not here.
-    expect(screen.queryByRole("button", { name: "Triage" })).toBeNull();
-    // Intake keeps no timezone: dates show where the viewer is.
-    expect(screen.queryByLabelText("Default timezone")).toBeNull();
-    // The rules have a page of their own in the organization's settings,
-    // which their section links to.
+    // The rules have a page of their own in the organization's settings.
     const triage = section("Triage rules");
     const edit = within(triage).getByRole("link", { name: "Edit rules" });
     expect(edit).toHaveAttribute(
@@ -312,203 +297,95 @@ describe("IntakeSettings", () => {
     expect(
       within(triage).getByRole("link", { name: "Model Preferences" }),
     ).toHaveAttribute("href", "/organizations/org-a/settings/models");
-    expect(within(triage).queryByRole("textbox")).toBeNull();
-
-    // There is no Save: nothing has changed, so nothing was sent.
-    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+    // Nothing has changed, so nothing was sent.
     expect(mocks.update).not.toHaveBeenCalled();
   });
 
-  it("shows each section's setup in a small modal from its info button", async () => {
+  it("says on a card what needs attention", async () => {
+    server = settings({
+      email: unconnectedEmail({ needs_reconnect: true }),
+      slack: { ...settings().slack, missing_scopes: ["files:write"] },
+      teams: {
+        ...settings().teams,
+        enabled: true,
+        configured: true,
+        app_id: "app-1",
+        tenant_id: "tenant-1",
+        files_access: false,
+      },
+    });
+    render(<IntakeSettings orgId="org-a" />);
+    await form();
+    expect(card("Email")).toHaveTextContent("Not set up");
+    expect(card("Email")).toHaveTextContent(
+      "Connect your intake mailbox to keep recording email.",
+    );
+    expect(
+      screen.getByRole("button", { name: "Set up Email" }),
+    ).toBeInTheDocument();
+    expect(card("Slack")).toHaveTextContent(
+      "Reinstall the Slack app to send documents.",
+    );
+    expect(card("Teams")).toHaveTextContent("On");
+    expect(card("Teams")).toHaveTextContent(
+      "Document access isn't set up, so MikeGC posts text only.",
+    );
+
+    cleanup();
+    server = settings({
+      email: {
+        ...connectedEmail(),
+        status: {
+          ...connectedEmail().status,
+          error: "Microsoft 365 refused MikeGC's credentials. Reconnect the mailbox.",
+        },
+      },
+    });
+    render(<IntakeSettings orgId="org-a" />);
+    await form();
+    expect(card("Email")).toHaveTextContent(
+      "Microsoft 365 refused MikeGC's credentials.",
+    );
+  });
+
+  it("opens a channel's modal named for it, with its fields and steps, and gives focus back on close", async () => {
     const user = userEvent.setup();
     render(<IntakeSettings orgId="org-a" />);
     await form();
-    const email = section("Email");
-    expect(email).not.toHaveTextContent("People in your company email");
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-
-    await user.click(
-      within(email).getByRole("button", { name: "How to set up Email" }),
+    const manage = screen.getByRole("button", { name: "Manage Slack" });
+    const dialog = await openModal(user, "Manage Slack", "Slack");
+    // Focus moves into the modal.
+    await waitFor(() => expect(dialog).toContainElement(document.activeElement as HTMLElement));
+    expect(
+      within(dialog).getByRole("switch", { name: "Record requests from Slack" }),
+    ).toHaveAttribute("aria-checked", "true");
+    expect(dialog).toHaveTextContent(
+      "https://api.example.test/webhooks/intake/slack/0b6f",
     );
-    const dialog = screen.getByRole("dialog", { name: "Set up Email" });
-    expect(dialog).toHaveTextContent(/^Intake›Settings›Set up Email/);
-    expect(dialog).toHaveTextContent(/People in your company email requests/);
-    expect(dialog).toHaveTextContent("Exchange RBAC for Applications");
-    expect(dialog).toHaveTextContent("domain-wide delegation");
-    expect(within(dialog).getAllByRole("listitem")).toHaveLength(5);
-
-    await user.keyboard("{Escape}");
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-
-    await user.click(
-      within(section("Slack")).getByRole("button", {
-        name: "How to set up Slack",
-      }),
-    );
-    const slackGuide = screen.getByRole("dialog", { name: "Set up Slack" });
-    expect(slackGuide).toHaveTextContent(/People write @MikeGC in Slack/);
-    expect(slackGuide).toHaveTextContent(
+    expect(
+      within(dialog).getByRole("button", { name: "Copy Events Request URL" }),
+    ).toBeInTheDocument();
+    expect(dialog).toHaveTextContent("Acme Legal");
+    expect(dialog).toHaveTextContent("MikeGC bot user U0BOT");
+    // The setup steps are in the modal now.
+    expect(dialog).toHaveTextContent("How to set it up");
+    expect(dialog).toHaveTextContent(
       "app_mention, message.channels and message.groups",
     );
-    await user.keyboard("{Escape}");
-
-    await user.click(
-      within(section("Teams")).getByRole("button", {
-        name: "How to set up Teams",
-      }),
-    );
-    const teamsGuide = screen.getByRole("dialog", { name: "Set up Teams" });
-    expect(teamsGuide).toHaveTextContent("Azure Bot");
-    expect(within(teamsGuide).getAllByRole("listitem")).toHaveLength(5);
+    // Nothing changed: there is nothing to save.
+    expect(within(dialog).getByRole("button", { name: "Save" })).toBeDisabled();
+    await user.click(within(dialog).getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(manage).toHaveFocus();
   });
 
-  it("hides a channel's setup while it is off", async () => {
+  it("never fills in a secret, and saves a typed one only with Save", async () => {
     const user = userEvent.setup();
     render(<IntakeSettings orgId="org-a" />);
     await form();
-    const email = section("Email");
-    expect(
-      within(email).getByRole("switch", { name: "Record requests from email" }),
-    ).toHaveAttribute("aria-checked", "false");
-    // Its connection stays in view; the rest of its setup waits.
-    expect(within(email).getByText("intake@example.com")).toBeInTheDocument();
-    expect(
-      within(email).queryByLabelText("Allowed sender domains"),
-    ).not.toBeInTheDocument();
-    expect(within(email).queryByLabelText("Sender name")).toBeNull();
-
-    const slack = section("Slack");
-    expect(within(slack).getByLabelText("Signing Secret")).toBeInTheDocument();
-    await user.click(
-      within(slack).getByRole("switch", { name: "Record requests from Slack" }),
-    );
-    expect(
-      within(slack).queryByLabelText("Signing Secret"),
-    ).not.toBeInTheDocument();
-    expect(
-      within(slack).queryByRole("button", { name: "Copy Events Request URL" }),
-    ).not.toBeInTheDocument();
-  });
-
-  it("saves a switch by itself, sending only that", async () => {
-    const user = userEvent.setup();
-    render(<IntakeSettings orgId="org-a" />);
-    await form();
-    await user.click(
-      screen.getByRole("switch", { name: "Record requests from email" }),
-    );
-    expect(await screen.findByRole("status")).toHaveTextContent("Saving…");
-    await waitFor(
-      () =>
-        expect(mocks.update).toHaveBeenCalledWith("org-a", {
-          email_enabled: true,
-        }),
-      SAVE_WAIT,
-    );
-    await waitFor(() =>
-      expect(screen.getByRole("status")).toHaveTextContent("Saved"),
-    );
-    expect(mocks.update).toHaveBeenCalledTimes(1);
-    expect(
-      screen.getByRole("switch", { name: "Record requests from email" }),
-    ).toHaveAttribute("aria-checked", "true");
-  });
-
-  it("saves a domain once it is added, never while it is typed", async () => {
-    const user = userEvent.setup();
-    server = emailOn();
-    render(<IntakeSettings orgId="org-a" />);
-    await form();
-    const domain = screen.getByLabelText("Allowed sender domains");
-    await user.type(domain, "Partner.Example.org");
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    expect(mocks.update).not.toHaveBeenCalled();
-
-    // Add is a text button inside the field.
-    const add = screen.getByRole("button", { name: "Add" });
-    expect(domain.parentElement).toContainElement(add);
-    await user.click(add);
-    expect(
-      screen.getByRole("button", { name: "Remove partner.example.org" }),
-    ).toBeInTheDocument();
-    await waitFor(
-      () =>
-        expect(mocks.update).toHaveBeenCalledWith("org-a", {
-          email_allowed_domains: ["example.com", "partner.example.org"],
-        }),
-      SAVE_WAIT,
-    );
-    await user.click(
-      screen.getByRole("button", { name: "Remove example.com" }),
-    );
-    await waitFor(
-      () =>
-        expect(mocks.update).toHaveBeenLastCalledWith("org-a", {
-          email_allowed_domains: ["partner.example.org"],
-        }),
-      SAVE_WAIT,
-    );
-  });
-
-  it("turns a switch back when a save is refused, with no Retry", async () => {
-    const user = userEvent.setup();
-    mocks.update.mockRejectedValueOnce(
-      Object.assign(
-        new Error("Connect the intake mailbox before turning email on."),
-        {
-          status: 400,
-          detail: "Connect the intake mailbox before turning email on.",
-        },
-      ),
-    );
-    render(<IntakeSettings orgId="org-a" />);
-    await form();
-    const toggle = screen.getByRole("switch", {
-      name: "Record requests from email",
-    });
-    await user.click(toggle);
-    expect(await screen.findByRole("alert", {}, SAVE_WAIT)).toBeInTheDocument();
-    expect(toggle).toHaveAttribute("aria-checked", "false");
-    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
-    expect(mocks.update).toHaveBeenCalledTimes(1);
-  });
-
-  it("turns a switch back when a save fails, and Retry sends the same save again", async () => {
-    const user = userEvent.setup();
-    mocks.update.mockRejectedValueOnce(
-      Object.assign(new Error("Bad gateway"), { status: 502 }),
-    );
-    render(<IntakeSettings orgId="org-a" />);
-    await form();
-    const toggle = screen.getByRole("switch", {
-      name: "Record requests from Slack",
-    });
-    await user.click(toggle);
-    await screen.findByRole("alert", {}, SAVE_WAIT);
-    expect(toggle).toHaveAttribute("aria-checked", "true");
-    expect(mocks.update).toHaveBeenCalledWith("org-a", {
-      slack_enabled: false,
-    });
-
-    await user.click(screen.getByRole("button", { name: "Retry" }));
-    expect(screen.queryByRole("alert")).toBeNull();
-    expect(toggle).toHaveAttribute("aria-checked", "false");
-    await waitFor(
-      () => expect(mocks.update).toHaveBeenCalledTimes(2),
-      SAVE_WAIT,
-    );
-    expect(mocks.update).toHaveBeenLastCalledWith("org-a", {
-      slack_enabled: false,
-    });
-  });
-
-  it("never fills in a secret, saves a typed one only once complete, and clears it once saved", async () => {
-    const user = userEvent.setup();
-    render(<IntakeSettings orgId="org-a" />);
-    await form();
-    const slack = section("Slack");
-    const secret = within(slack).getByLabelText("Signing Secret");
-    const token = within(slack).getByLabelText("Bot User OAuth Token");
+    const dialog = await openModal(user, "Manage Slack", "Slack");
+    const secret = within(dialog).getByLabelText("Signing Secret");
+    const token = within(dialog).getByLabelText("Bot User OAuth Token");
     for (const field of [secret, token]) {
       expect(field).toHaveAttribute("type", "password");
       expect(field).toHaveValue("");
@@ -516,89 +393,142 @@ describe("IntakeSettings", () => {
         "Leave empty to keep the saved one.",
       );
     }
-    expect(within(slack).getAllByText("Saved")).toHaveLength(2);
-
-    // Part-typed, it is not sent, however long the pause.
+    expect(within(dialog).getAllByText("Saved")).toHaveLength(2);
     await user.type(secret, " s3cret ");
-    expect(within(slack).getAllByText("Saved")).toHaveLength(1);
+    expect(within(dialog).getAllByText("Saved")).toHaveLength(1);
+    // Typed, it isn't sent until saved, however long the pause.
     await new Promise((resolve) => setTimeout(resolve, 1000));
     expect(mocks.update).not.toHaveBeenCalled();
-
-    // Leaving the field sends it, trimmed, and it is gone once saved.
-    await user.tab();
-    await waitFor(
-      () =>
-        expect(mocks.update).toHaveBeenCalledWith("org-a", {
-          slack_signing_secret: "s3cret",
-        }),
-      SAVE_WAIT,
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(mocks.update).toHaveBeenCalledWith("org-a", {
+        slack_signing_secret: "s3cret",
+      }),
     );
-    await waitFor(() => expect(secret).toHaveValue(""));
-
-    // Enter sends one too.
-    await user.type(token, "xoxb-new{Enter}");
-    await waitFor(
-      () =>
-        expect(mocks.update).toHaveBeenLastCalledWith("org-a", {
-          slack_bot_token: "xoxb-new",
-        }),
-      SAVE_WAIT,
+    // Saved, the modal closes and says so.
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
     );
-    expect(mocks.update).toHaveBeenCalledTimes(2);
+    expect(mocks.success).toHaveBeenCalledWith("Slack settings saved");
+    // Enter in a secret saves it too.
+    const again = await openModal(user, "Manage Slack", "Slack");
+    await user.type(
+      within(again).getByLabelText("Bot User OAuth Token"),
+      "xoxb-new{Enter}",
+    );
+    await waitFor(() =>
+      expect(mocks.update).toHaveBeenLastCalledWith("org-a", {
+        slack_bot_token: "xoxb-new",
+      }),
+    );
   });
 
-  it("asks for the secrets, with no Saved mark, before Slack is set up", async () => {
+  it("discards what wasn't saved when the modal is closed", async () => {
+    const user = userEvent.setup();
+    render(<IntakeSettings orgId="org-a" />);
+    await form();
+    let dialog = await openModal(user, "Manage Slack", "Slack");
+    await user.type(within(dialog).getByLabelText("Signing Secret"), "half");
+    await user.click(
+      within(dialog).getByRole("switch", { name: "Record requests from Slack" }),
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    dialog = await openModal(user, "Manage Slack", "Slack");
+    expect(within(dialog).getByLabelText("Signing Secret")).toHaveValue("");
+    expect(
+      within(dialog).getByRole("switch", { name: "Record requests from Slack" }),
+    ).toHaveAttribute("aria-checked", "true");
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(mocks.update).not.toHaveBeenCalled();
+  });
+
+  it("sets up Teams in one save: its switch, IDs and write-only secret", async () => {
+    const user = userEvent.setup();
+    render(<IntakeSettings orgId="org-a" />);
+    await form();
+    const dialog = await openModal(user, "Set up Teams", "Teams");
+    const toggle = within(dialog).getByRole("switch", {
+      name: "Record requests from Teams",
+    });
+    await user.click(toggle);
+    expect(dialog).toHaveTextContent(
+      "Save the app ID, tenant ID and client secret to finish turning Teams on.",
+    );
+    expect(dialog).toHaveTextContent(
+      "https://api.example.test/webhooks/intake/teams/5e2a",
+    );
+    await user.type(within(dialog).getByLabelText("App ID"), "app-1");
+    await user.type(within(dialog).getByLabelText("Tenant ID"), "tenant-1");
+    const secret = within(dialog).getByLabelText("Client secret");
+    expect(secret).toHaveAttribute("type", "password");
+    await user.type(secret, "s3cret");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(mocks.update).toHaveBeenCalledWith("org-a", {
+        teams_enabled: true,
+        teams_app_id: "app-1",
+        teams_tenant_id: "tenant-1",
+        teams_client_secret: "s3cret",
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    // Set up now, its card offers Manage.
+    expect(card("Teams")).toHaveTextContent("On");
+    const manage = screen.getByRole("button", { name: "Manage Teams" });
+    await user.click(manage);
+    const managing = await screen.findByRole("dialog", { name: "Teams" });
+    expect(managing).toHaveTextContent("Document access");
+    expect(managing).toHaveTextContent("Not checked yet");
+    expect(within(managing).getByLabelText("App ID")).toHaveValue("app-1");
+  });
+
+  it("shows a refused save in the modal and keeps what was typed", async () => {
+    const user = userEvent.setup();
+    const detail =
+      "Save the Slack app's signing secret and bot token before turning Slack on.";
     server = settings({
       slack: {
+        ...settings().slack,
         enabled: false,
-        events_url: "https://api.example.test/webhooks/intake/slack/0b6f",
         configured: false,
         team_id: null,
         team_name: null,
         bot_user_id: null,
-        missing_scopes: [],
-        message_events_seen: false,
       },
     });
-    const user = userEvent.setup();
+    mocks.update.mockRejectedValueOnce(
+      Object.assign(new Error(detail), { status: 400, detail }),
+    );
     render(<IntakeSettings orgId="org-a" />);
     await form();
-    const slack = section("Slack");
-    await user.click(
-      within(slack).getByRole("switch", { name: "Record requests from Slack" }),
-    );
-    expect(slack).toHaveTextContent(
-      "Save the Signing Secret and Bot User OAuth Token to finish turning Slack on.",
-    );
-    expect(within(slack).queryByText("Saved")).not.toBeInTheDocument();
-    expect(slack).not.toHaveTextContent("Connected workspace");
-    expect(within(slack).getByLabelText("Signing Secret")).toHaveAttribute(
+    const dialog = await openModal(user, "Set up Slack", "Slack");
+    // No Saved marks before anything is saved.
+    expect(within(dialog).queryByText("Saved")).not.toBeInTheDocument();
+    expect(within(dialog).getByLabelText("Signing Secret")).toHaveAttribute(
       "placeholder",
       "Paste the app's Signing Secret",
     );
-    // Turned on but not set up, nothing is sent: the API would refuse it.
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    expect(mocks.update).not.toHaveBeenCalled();
-
-    // With both secrets, Slack turns on in the same save.
-    await user.type(within(slack).getByLabelText("Signing Secret"), "s3cret");
-    await user.type(
-      within(slack).getByLabelText("Bot User OAuth Token"),
-      "xoxb-1{Enter}",
+    await user.click(
+      within(dialog).getByRole("switch", { name: "Record requests from Slack" }),
     );
-    await user.tab();
-    await waitFor(
-      () =>
-        expect(mocks.update).toHaveBeenCalledWith("org-a", {
-          slack_enabled: true,
-          slack_signing_secret: "s3cret",
-          slack_bot_token: "xoxb-1",
-        }),
-      SAVE_WAIT,
+    await user.type(within(dialog).getByLabelText("Signing Secret"), "s3cret");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(detail);
+    expect(within(dialog).getByLabelText("Signing Secret")).toHaveValue(
+      "s3cret",
     );
+    expect(mocks.update).toHaveBeenCalledWith("org-a", {
+      slack_enabled: true,
+      slack_signing_secret: "s3cret",
+    });
+    expect(mocks.notify).not.toHaveBeenCalled();
   });
 
-  it("connects an Outlook mailbox, sending what the form holds", async () => {
+  it("connects an Outlook mailbox from the email modal, which then manages it", async () => {
     const user = userEvent.setup();
     server = settings({ email: unconnectedEmail() });
     mocks.connect.mockImplementation(
@@ -617,33 +547,31 @@ describe("IntakeSettings", () => {
     );
     render(<IntakeSettings orgId="org-a" />);
     await form();
-    const email = section("Email");
-    // Nothing is connected, so there is nothing to switch on yet.
+    const dialog = await openModal(user, "Set up Email", "Email");
+    // Nothing to switch on until a mailbox is connected.
     expect(
-      within(email).queryByRole("switch", {
-        name: "Record requests from email",
-      }),
+      within(dialog).queryByRole("switch", { name: "Record requests from email" }),
     ).toBeNull();
     expect(
-      within(email).getByRole("button", {
+      within(dialog).getByRole("button", {
         name: "Connect Gmail (Google Workspace)",
       }),
     ).toBeInTheDocument();
     await user.click(
-      within(email).getByRole("button", {
+      within(dialog).getByRole("button", {
         name: "Connect Outlook (Microsoft 365)",
       }),
     );
-    const connect = within(email).getByRole("button", { name: "Connect" });
+    const connect = within(dialog).getByRole("button", { name: "Connect" });
     // Each field is needed before it can connect.
     expect(connect).toBeDisabled();
     await user.type(
-      within(email).getByLabelText("Intake address"),
+      within(dialog).getByLabelText("Intake address"),
       "intake@company.com",
     );
-    await user.type(within(email).getByLabelText("Tenant ID"), "tenant-9");
-    await user.type(within(email).getByLabelText("Client ID"), "client-9");
-    const secret = within(email).getByLabelText("Client secret");
+    await user.type(within(dialog).getByLabelText("Tenant ID"), "tenant-9");
+    await user.type(within(dialog).getByLabelText("Client ID"), "client-9");
+    const secret = within(dialog).getByLabelText("Client secret");
     expect(secret).toHaveAttribute("type", "password");
     expect(connect).toBeDisabled();
     await user.type(secret, "s3cret");
@@ -658,16 +586,22 @@ describe("IntakeSettings", () => {
         client_secret: "s3cret",
       }),
     );
-    expect(
-      await within(email).findByText("intake@company.com"),
-    ).toBeInTheDocument();
     expect(mocks.success).toHaveBeenCalledWith("Connected intake@company.com");
-    expect(within(email).queryByLabelText("Client secret")).toBeNull();
-    // Connecting changes no other setting.
+    // The modal stays open to finish: the switch, domains, a test.
+    expect(
+      await within(dialog).findByRole("switch", {
+        name: "Record requests from email",
+      }),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText("intake@company.com")).toBeInTheDocument();
+    expect(within(dialog).getByText("company.com")).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText("Client secret")).toBeNull();
+    // And the card behind it says so.
+    expect(card("Email")).toHaveTextContent("intake@company.com · Outlook");
     expect(mocks.update).not.toHaveBeenCalled();
   });
 
-  it("says under the form why a mailbox couldn't connect", async () => {
+  it("says in the modal why a mailbox couldn't connect", async () => {
     const user = userEvent.setup();
     server = settings({ email: unconnectedEmail() });
     const detail =
@@ -677,25 +611,25 @@ describe("IntakeSettings", () => {
     );
     render(<IntakeSettings orgId="org-a" />);
     await form();
-    const email = section("Email");
+    const dialog = await openModal(user, "Set up Email", "Email");
     await user.click(
-      within(email).getByRole("button", {
+      within(dialog).getByRole("button", {
         name: "Connect Outlook (Microsoft 365)",
       }),
     );
     await user.type(
-      within(email).getByLabelText("Intake address"),
+      within(dialog).getByLabelText("Intake address"),
       "intake@company.com",
     );
-    await user.type(within(email).getByLabelText("Tenant ID"), "t");
-    await user.type(within(email).getByLabelText("Client ID"), "c");
-    await user.type(within(email).getByLabelText("Client secret"), "s");
-    await user.click(within(email).getByRole("button", { name: "Connect" }));
-    expect(await within(email).findByRole("alert")).toHaveTextContent(
+    await user.type(within(dialog).getByLabelText("Tenant ID"), "t");
+    await user.type(within(dialog).getByLabelText("Client ID"), "c");
+    await user.type(within(dialog).getByLabelText("Client secret"), "s");
+    await user.click(within(dialog).getByRole("button", { name: "Connect" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
       "Microsoft 365 didn't accept these credentials.",
     );
     // The form stays, with what was typed, to correct.
-    expect(within(email).getByLabelText("Tenant ID")).toHaveValue("t");
+    expect(within(dialog).getByLabelText("Tenant ID")).toHaveValue("t");
     expect(mocks.notify).not.toHaveBeenCalled();
   });
 
@@ -705,22 +639,22 @@ describe("IntakeSettings", () => {
     mocks.connect.mockImplementation(async () => server);
     render(<IntakeSettings orgId="org-a" />);
     await form();
-    let email = section("Email");
+    let dialog = await openModal(user, "Set up Email", "Email");
     await user.click(
-      within(email).getByRole("button", {
+      within(dialog).getByRole("button", {
         name: "Connect Gmail (Google Workspace)",
       }),
     );
-    expect(email).toHaveTextContent("1122334455");
-    expect(email).toHaveTextContent(
+    expect(dialog).toHaveTextContent("1122334455");
+    expect(dialog).toHaveTextContent(
       "https://www.googleapis.com/auth/gmail.modify",
     );
-    expect(within(email).queryByLabelText("Client secret")).toBeNull();
+    expect(within(dialog).queryByLabelText("Client secret")).toBeNull();
     await user.type(
-      within(email).getByLabelText("Intake address"),
+      within(dialog).getByLabelText("Intake address"),
       "intake@company.com",
     );
-    await user.click(within(email).getByRole("button", { name: "Connect" }));
+    await user.click(within(dialog).getByRole("button", { name: "Connect" }));
     await waitFor(() =>
       expect(mocks.connect).toHaveBeenCalledWith("org-a", {
         provider: "gmail",
@@ -732,28 +666,30 @@ describe("IntakeSettings", () => {
     server = settings({ email: unconnectedEmail({ gmail_client_id: null }) });
     render(<IntakeSettings orgId="org-a" />);
     await form();
-    email = section("Email");
+    dialog = await openModal(user, "Set up Email", "Email");
     await user.click(
-      within(email).getByRole("button", {
+      within(dialog).getByRole("button", {
         name: "Connect Gmail (Google Workspace)",
       }),
     );
-    expect(email).toHaveTextContent("INTAKE_GMAIL_SERVICE_ACCOUNT_KEY");
+    expect(dialog).toHaveTextContent("INTAKE_GMAIL_SERVICE_ACCOUNT_KEY");
     expect(
-      within(email).getByRole("button", { name: "Connect" }),
+      within(dialog).getByRole("button", { name: "Connect" }),
     ).toBeDisabled();
   });
 
   it("asks an organization that used Postmark to connect its mailbox", async () => {
+    const user = userEvent.setup();
     server = settings({ email: unconnectedEmail({ needs_reconnect: true }) });
     render(<IntakeSettings orgId="org-a" />);
     await form();
-    expect(section("Email")).toHaveTextContent(
-      "Connect your intake mailbox to keep recording email.",
+    const dialog = await openModal(user, "Set up Email", "Email");
+    expect(dialog).toHaveTextContent(
+      "MikeGC no longer receives mail through Postmark.",
     );
   });
 
-  it("sends a test email and asks before disconnecting", async () => {
+  it("sends a test email and disconnects only after confirming", async () => {
     const user = userEvent.setup();
     mocks.test.mockResolvedValue({ sent_to: "admin@example.com" });
     mocks.disconnect.mockImplementation(async () => {
@@ -762,9 +698,12 @@ describe("IntakeSettings", () => {
     });
     render(<IntakeSettings orgId="org-a" />);
     await form();
-    const email = section("Email");
+    const dialog = await openModal(user, "Manage Email", "Email");
+    expect(dialog).toHaveTextContent("Outlook (Microsoft 365)");
+    expect(dialog).toHaveTextContent("Last read");
+    expect(dialog).toHaveTextContent("New-mail notifications renew before");
     await user.click(
-      within(email).getByRole("button", { name: "Send test email" }),
+      within(dialog).getByRole("button", { name: "Send test email" }),
     );
     await waitFor(() =>
       expect(mocks.success).toHaveBeenCalledWith(
@@ -773,119 +712,85 @@ describe("IntakeSettings", () => {
     );
     expect(mocks.test).toHaveBeenCalledWith("org-a");
 
-    await user.click(within(email).getByRole("button", { name: "Disconnect" }));
+    await user.click(within(dialog).getByRole("button", { name: "Disconnect" }));
+    const confirm = within(dialog).getByRole("group", {
+      name: "Disconnect the intake mailbox?",
+    });
     await user.click(
-      within(
-        screen.getByRole("dialog", { name: "Disconnect the intake mailbox?" }),
-      ).getByRole("button", { name: "Keep connected" }),
+      within(confirm).getByRole("button", { name: "Keep connected" }),
     );
     expect(mocks.disconnect).not.toHaveBeenCalled();
-    await user.click(within(email).getByRole("button", { name: "Disconnect" }));
+    await user.click(within(dialog).getByRole("button", { name: "Disconnect" }));
     await user.click(
       within(
-        screen.getByRole("dialog", { name: "Disconnect the intake mailbox?" }),
+        within(dialog).getByRole("group", {
+          name: "Disconnect the intake mailbox?",
+        }),
       ).getByRole("button", { name: "Disconnect" }),
     );
     await waitFor(() =>
       expect(mocks.disconnect).toHaveBeenCalledWith("org-a"),
     );
     expect(
-      await within(email).findByRole("button", {
+      await within(dialog).findByRole("button", {
         name: "Connect Outlook (Microsoft 365)",
       }),
     ).toBeInTheDocument();
+    expect(card("Email")).toHaveTextContent("Not set up");
   });
 
-  it("saves the sender name once typing pauses", async () => {
+  it("saves the mailbox's switch, sender name and domains together with Save", async () => {
     const user = userEvent.setup();
-    server = emailOn();
     render(<IntakeSettings orgId="org-a" />);
     await form();
-    const name = within(section("Email")).getByLabelText("Sender name");
+    const dialog = await openModal(user, "Manage Email", "Email");
+    await user.click(
+      within(dialog).getByRole("switch", { name: "Record requests from email" }),
+    );
+    const name = within(dialog).getByLabelText("Sender name");
     expect(name).toHaveValue("Legal");
     await user.clear(name);
     await user.type(name, "Legal team");
-    await waitFor(
-      () =>
-        expect(mocks.update).toHaveBeenLastCalledWith("org-a", {
-          email_from_name: "Legal team",
-        }),
-      SAVE_WAIT,
+    const domain = within(dialog).getByLabelText("Allowed sender domains");
+    await user.type(domain, "Partner.Example.org");
+    // Add is a text button inside the field.
+    const add = within(dialog).getByRole("button", { name: "Add" });
+    expect(domain.parentElement).toContainElement(add);
+    await user.click(add);
+    await user.click(
+      within(dialog).getByRole("button", { name: "Remove example.com" }),
     );
+    // A domain typed but not yet added goes with the save too.
+    await user.type(domain, "eu.example.com");
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    expect(mocks.update).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(mocks.update).toHaveBeenCalledWith("org-a", {
+        email_enabled: true,
+        email_allowed_domains: ["partner.example.org", "eu.example.com"],
+        email_from_name: "Legal team",
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(card("Email")).toHaveTextContent("On · intake@example.com");
   });
 
-  it("asks for a Slack reinstall when the token lacks the loop's scopes, or no thread message has come", async () => {
-    server = settings({
-      slack: {
-        ...settings().slack,
-        missing_scopes: ["files:write", "chat:write.customize"],
-        message_events_seen: false,
-      },
-    });
-    render(<IntakeSettings orgId="org-a" />);
-    await form();
-    const slack = section("Slack");
-    expect(slack).toHaveTextContent(
-      "Reinstall the Slack app to send documents.",
-    );
-    expect(slack).toHaveTextContent("files:write, chat:write.customize");
-    expect(slack).toHaveTextContent(
-      "MikeGC hasn't received a thread message yet.",
-    );
-  });
-
-  it("sets up Teams: IDs save once typed in full, the secret is write-only, and Teams turns on with all three", async () => {
+  it("refuses an invalid domain inline, and doesn't save it", async () => {
     const user = userEvent.setup();
     render(<IntakeSettings orgId="org-a" />);
     await form();
-    const teams = section("Teams");
-    expect(within(teams).queryByLabelText("App ID")).toBeNull();
-    await user.click(
-      within(teams).getByRole("switch", { name: "Record requests from Teams" }),
-    );
-    expect(teams).toHaveTextContent(
-      "Save the app ID, tenant ID and client secret to finish turning Teams on.",
-    );
-    expect(teams).toHaveTextContent(
-      "https://api.example.test/webhooks/intake/teams/5e2a",
-    );
-    await user.type(within(teams).getByLabelText("App ID"), "app-1");
-    // Part-typed, nothing is sent.
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    expect(mocks.update).not.toHaveBeenCalled();
-    await user.tab();
-    await waitFor(
-      () =>
-        expect(mocks.update).toHaveBeenCalledWith("org-a", {
-          teams_app_id: "app-1",
-        }),
-      SAVE_WAIT,
-    );
-    await user.type(
-      within(teams).getByLabelText("Tenant ID"),
-      "tenant-1{Enter}",
-    );
-    await waitFor(
-      () =>
-        expect(mocks.update).toHaveBeenLastCalledWith("org-a", {
-          teams_tenant_id: "tenant-1",
-        }),
-      SAVE_WAIT,
-    );
-    const secret = within(teams).getByLabelText("Client secret");
-    expect(secret).toHaveAttribute("type", "password");
-    await user.type(secret, "s3cret{Enter}");
-    await waitFor(
-      () =>
-        expect(mocks.update).toHaveBeenLastCalledWith("org-a", {
-          teams_enabled: true,
-          teams_client_secret: "s3cret",
-        }),
-      SAVE_WAIT,
-    );
-    await waitFor(() => expect(secret).toHaveValue(""));
-    expect(teams).toHaveTextContent("Document access");
-    expect(teams).toHaveTextContent("Not checked yet");
+    const dialog = await openModal(user, "Manage Email", "Email");
+    const domain = within(dialog).getByLabelText("Allowed sender domains");
+    await user.type(domain, "not a domain{Enter}");
+    expect(
+      within(dialog).getByText("Enter a domain like example.com."),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Add" })).toBeDisabled();
+    // Nothing else changed, so there is nothing to save.
+    expect(within(dialog).getByRole("button", { name: "Save" })).toBeDisabled();
   });
 
   it("saves asking requesters for missing details from the Triage rules section", async () => {
@@ -898,6 +803,7 @@ describe("IntakeSettings", () => {
     expect(ask).toHaveAttribute("aria-checked", "true");
     expect(ask).toHaveAccessibleDescription(/two rounds of questions/);
     await user.click(ask);
+    expect(await screen.findByRole("status")).toHaveTextContent("Saving…");
     await waitFor(
       () =>
         expect(mocks.update).toHaveBeenCalledWith("org-a", {
@@ -905,21 +811,53 @@ describe("IntakeSettings", () => {
         }),
       SAVE_WAIT,
     );
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent("Saved"),
+    );
+    expect(mocks.update).toHaveBeenCalledTimes(1);
   });
 
-  it("refuses an invalid domain inline, and doesn't save it", async () => {
+  it("turns the switch back when its save fails, and Retry sends the same save again", async () => {
     const user = userEvent.setup();
-    server = emailOn();
+    mocks.update.mockRejectedValueOnce(
+      Object.assign(new Error("Bad gateway"), { status: 502 }),
+    );
     render(<IntakeSettings orgId="org-a" />);
     await form();
-    const domain = screen.getByLabelText("Allowed sender domains");
-    await user.type(domain, "not a domain{Enter}");
-    expect(
-      screen.getByText("Enter a domain like example.com."),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Add" })).toBeDisabled();
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    expect(mocks.update).not.toHaveBeenCalled();
+    const toggle = screen.getByRole("switch", {
+      name: "Ask requesters for missing details",
+    });
+    await user.click(toggle);
+    await screen.findByRole("alert", {}, SAVE_WAIT);
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    await waitFor(
+      () => expect(mocks.update).toHaveBeenCalledTimes(2),
+      SAVE_WAIT,
+    );
+    expect(mocks.update).toHaveBeenLastCalledWith("org-a", {
+      clarify_enabled: false,
+    });
+  });
+
+  it("never sends a channel back after its modal saved", async () => {
+    const user = userEvent.setup();
+    render(<IntakeSettings orgId="org-a" />);
+    await form();
+    const dialog = await openModal(user, "Manage Email", "Email");
+    await user.click(
+      within(dialog).getByRole("switch", { name: "Record requests from email" }),
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(mocks.update).toHaveBeenCalledWith("org-a", {
+        email_enabled: true,
+      }),
+    );
+    // The page's own autosave then has nothing to send.
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    expect(mocks.update).toHaveBeenCalledTimes(1);
   });
 
   it("tells a member who isn't an owner or admin that they cannot change it", async () => {
@@ -952,13 +890,16 @@ describe("IntakeSettings", () => {
     expect(mocks.automation).toHaveBeenCalledTimes(2);
   });
 
-  it("shows the page's layout while it loads: the first section", () => {
+  it("shows the page's layout while it loads: the channel cards", () => {
     mocks.automation.mockReturnValue(new Promise(() => {}));
     render(<IntakeSettings orgId="org-a" />);
     const skeleton = screen.getByLabelText("Loading the intake settings");
     expect(skeleton).toHaveAttribute("aria-busy", "true");
-    // The save status's line, then Email's heading and card.
+    // The save status's line, then the Channels heading and its three cards.
     expect(skeleton.children).toHaveLength(2);
+    expect(
+      skeleton.querySelectorAll(".rounded-full.h-7.w-20, .h-7.w-20.rounded-full"),
+    ).toHaveLength(3);
     expect(screen.queryByRole("tab")).not.toBeInTheDocument();
   });
 
