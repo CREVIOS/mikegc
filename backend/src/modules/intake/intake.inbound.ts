@@ -334,21 +334,39 @@ export function senderDomainAllowed(
   return allowed.some((d) => domain === d || domain.endsWith(`.${d}`));
 }
 
-/** Readable text from an HTML-only email. */
+const HIDDEN_ELEMENTS = new Set(["script", "style", "head"]);
+const LINE_ENDING_ELEMENTS = /^(p|div|li|tr|h[1-6])$/;
+
+/**
+ * Readable text from an HTML-only email. Read in one pass from each "<" to
+ * the next ">", so every tag goes, nested or broken ones such as
+ * "<scr<b>ipt>" included, and what a script, style or head holds is dropped.
+ */
 export function htmlToText(html: string): string {
-  // Markup is removed until none is left, as removing one tag can join the
-  // pieces of another, such as "<scr<b>ipt>".
-  let text = html;
-  for (let previous = ""; text !== previous; ) {
-    previous = text;
-    text = text
-      .replace(/<(script|style|head)[\s\S]*?<\/\1>/gi, "")
-      .replace(/<br\s*\/?>/gi, "\n")
-      .replace(/<\/(p|div|li|tr|h[1-6])>/gi, "\n")
-      .replace(/<li[^>]*>/gi, "- ")
-      .replace(/<[^>]+>/g, "");
+  const out: string[] = [];
+  // The element whose content is being dropped, until it closes.
+  let hidden: string | null = null;
+  let at = 0;
+  while (at < html.length) {
+    const open = html.indexOf("<", at);
+    if (!hidden) out.push(open === -1 ? html.slice(at) : html.slice(at, open));
+    if (open === -1) break;
+    const close = html.indexOf(">", open + 1);
+    // A tag that never ends: the rest is markup.
+    if (close === -1) break;
+    const tag = html.slice(open + 1, close).trim().toLowerCase();
+    const closing = tag.startsWith("/");
+    const name = (closing ? tag.slice(1) : tag).split(/[\s/]/)[0] ?? "";
+    if (hidden) {
+      if (closing && name === hidden) hidden = null;
+    } else if (!closing && HIDDEN_ELEMENTS.has(name)) hidden = name;
+    else if (name === "br" || (closing && LINE_ENDING_ELEMENTS.test(name)))
+      out.push("\n");
+    else if (!closing && name === "li") out.push("- ");
+    at = close + 1;
   }
-  return text
+  return out
+    .join("")
     .replace(/&nbsp;/gi, " ")
     .replace(/&lt;/gi, "<")
     .replace(/&gt;/gi, ">")

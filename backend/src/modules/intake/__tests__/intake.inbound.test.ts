@@ -359,6 +359,9 @@ describe("htmlToText", () => {
     expect(
       htmlToText("<head><title>x</title></head><p>Hi &amp; thanks</p><ul><li>One</li></ul>"),
     ).toBe("Hi & thanks\n- One");
+    expect(htmlToText("A<script>alert(1)</script><STYLE>p{}</STYLE>B<br/>C<p unclosed")).toBe(
+      "AB\nC",
+    );
     for (const nested of ["<scr<b>ipt>alert(1)</scr</b>ipt>", "<<b>p>text", "<<<a>>b>c"])
       expect(htmlToText(nested)).not.toMatch(/</);
   });
