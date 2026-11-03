@@ -156,10 +156,6 @@ const settings = (
   ...overrides,
 });
 
-/** Saved settings with email on, so its setup shows. */
-const emailOn = () =>
-  settings({ email: { ...settings().email, enabled: true } });
-
 const form = () => screen.findByRole("form", { name: "Automated intake" });
 const section = (name: string) => screen.getByRole("region", { name });
 /** Longer than the autosave's pause after typing. */

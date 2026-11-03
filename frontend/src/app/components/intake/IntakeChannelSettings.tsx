@@ -431,23 +431,6 @@ function IntakeEmailFields({
   const start = (choice: IntakeMailProvider) =>
     onForm(intakeMailboxForm(choice, settings));
 
-  function test() {
-    if (testing) return;
-    setTesting(true);
-    sendIntakeMailboxTest(orgId).then(
-      (sent) => {
-        setTesting(false);
-        notifySuccess(`Test email sent to ${sent.sent_to}`);
-      },
-      (cause) => {
-        setTesting(false);
-        notifyError(cause, {
-          action: "send the test email",
-          onRetry: test,
-        });
-      },
-    );
-  }
   function disconnect() {
     setConfirmingDisconnect(false);
     setDisconnecting(true);
@@ -572,7 +555,7 @@ function IntakeEmailFields({
               size="sm"
               loading={testing}
               disabled={testing || busy || disconnecting}
-              onClick={test}
+              onClick={() => sendTestEmail(orgId, setTesting)}
             >
               Send test email
             </PillButtonUI>
@@ -608,6 +591,27 @@ function IntakeEmailFields({
       />
       <SenderDomains draft={draft} onChange={onChange} />
     </div>
+  );
+}
+
+/**
+ * Send the intake mailbox's test email to the admin and say how it went; a
+ * failure's Retry sends it again. `busy` follows it.
+ */
+function sendTestEmail(orgId: string, busy: (busy: boolean) => void) {
+  busy(true);
+  sendIntakeMailboxTest(orgId).then(
+    (sent) => {
+      busy(false);
+      notifySuccess(`Test email sent to ${sent.sent_to}`);
+    },
+    (cause) => {
+      busy(false);
+      notifyError(cause, {
+        action: "send the test email",
+        onRetry: () => sendTestEmail(orgId, busy),
+      });
+    },
   );
 }
 
