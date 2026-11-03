@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { automatedIntakeRpc, memoryDb, type MemoryDb } from "./memoryDb";
 
 const mocks = vi.hoisted(() => ({
@@ -42,6 +43,7 @@ import type { DbJob } from "../../../lib/dbq/types";
 import {
   handleIntakePreprocess,
   markIntakePreprocessFailed,
+  preprocessNoteId,
   queueIntakePreprocess,
 } from "../intake.preprocess";
 
@@ -255,11 +257,11 @@ describe("AI preprocessing", () => {
     memory.rows("intake_messages").length = 0;
     memory.rows("intake_automation")[0]!.preprocessing_model = null;
     await handleIntakePreprocess(memory.db, job(null));
-    expect(note()!.body).toMatch(/didn't run: no preprocessing model is chosen/);
+    expect(note()!.body).toMatch(/didn't run: no preprocessing model is chosen\. An owner or admin can choose one in Model Preferences\./);
     memory.rows("intake_messages").length = 0;
     memory.rows("intake_automation")[0]!.preprocessing_model = "gpt-6.1-sol";
     await handleIntakePreprocess(memory.db, job(null));
-    expect(note()!.body).toMatch(/didn't run: its model no longer has an API key/);
+    expect(note()!.body).toMatch(/didn't run: its model no longer has an API key\. An owner or admin can choose another in Model Preferences/);
     expect(mocks.completeText).not.toHaveBeenCalled();
     expect(mocks.reviewWithPlaybook).not.toHaveBeenCalled();
   });
@@ -282,11 +284,17 @@ describe("AI preprocessing", () => {
       payload: {
         orgId: org,
         requestId,
-        noteId: expect.any(String),
+        noteId: preprocessNoteId(requestId),
         with: { kind: "playbook", id: "pb-1" },
       },
       dedupeKey: `intake.preprocess:${requestId}`,
       maxAttempts: 5,
     });
+  });
+  it("names a request's note the same each time, so queueing it again posts no second note", () => {
+    const id = preprocessNoteId(requestId);
+    expect(id).toBe(preprocessNoteId(requestId));
+    expect(id).not.toBe(preprocessNoteId(org));
+    expect(z.uuid().safeParse(id).success).toBe(true);
   });
 });

@@ -199,6 +199,25 @@ describe("who manages automated intake", () => {
       },
     });
   });
+  it("offers the viewer's models, while the chosen ones run as whoever saved last", async () => {
+    // The admin made the settings with an Anthropic key; the owner has only OpenAI's.
+    mocks.getEffectiveApiKeys.mockImplementation(async (user: string) =>
+      user === owner ? { openai: "sk-owner" } : { claude: "sk-org" },
+    );
+    await getIntakeAutomation(memory.db, scope(admin));
+    const seen = await getIntakeAutomation(memory.db, scope(owner));
+    expect(seen.ok && seen.data.models.available).not.toContain("claude-haiku-4-5");
+    expect(seen.ok && seen.data.models.available.length).toBeGreaterThan(0);
+    expect(seen).toMatchObject({
+      ok: true,
+      data: { models: { triage: "claude-haiku-4-5", triage_available: true } },
+    });
+    // What the owner is offered, they can save.
+    const pick = seen.ok ? seen.data.models.available[0]! : "";
+    expect(
+      await updateIntakeAutomation(memory.db, scope(owner), { triage_model: pick }),
+    ).toMatchObject({ ok: true, data: { models: { triage: pick, triage_available: true } } });
+  });
   it("lists the 20 most recent messages without their content", async () => {
     memory.tables.intake_inbound = Array.from({ length: 22 }, (_, i) => ({
       id: `00000000-0000-4000-8000-0000000001${String(i).padStart(2, "0")}`,

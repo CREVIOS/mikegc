@@ -104,14 +104,30 @@ async function intakeApiKeys(
   return { apiKeys, available: apiKeys ?? envApiKeys() };
 }
 
+/**
+ * From one lookup of the keys intake runs with as `configuredBy`: the models
+ * triage and preprocessing can be set to, every catalogued model with a key,
+ * and whether a given model has a key.
+ */
+export async function intakeModelKeys(
+  db: Db,
+  orgId: string,
+  configuredBy: string | null,
+): Promise<{ available: string[]; hasKey: (model: string | null) => boolean }> {
+  const keys = (await intakeApiKeys(db, orgId, configuredBy)).available;
+  return {
+    available: builtInModelIds().filter((id) => hasApiKeyForModel(id, keys)),
+    hasKey: (model) => !!model && hasApiKeyForModel(model, keys),
+  };
+}
+
 /** The models triage and preprocessing can be set to: every catalogued model with a key. */
 export async function availableIntakeModels(
   db: Db,
   orgId: string,
   configuredBy: string | null,
 ): Promise<string[]> {
-  const { available } = await intakeApiKeys(db, orgId, configuredBy);
-  return builtInModelIds().filter((id) => hasApiKeyForModel(id, available));
+  return (await intakeModelKeys(db, orgId, configuredBy)).available;
 }
 
 /** What new settings start triage on: a fast, low-cost model with a key, if any. */

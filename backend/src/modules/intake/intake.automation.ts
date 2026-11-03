@@ -25,7 +25,7 @@ import {
   availableIntakeModels,
   defaultPreprocessingModel,
   defaultTriageModel,
-  resolveIntakeModel,
+  intakeModelKeys,
 } from "./intake.triage";
 
 type RuleRow = {
@@ -166,10 +166,11 @@ async function present(
   row: AutomationRow,
 ): Promise<ServiceResult<IntakeAutomationSettings>> {
   try {
-    // As whoever triage runs as; before anyone has saved, the viewer, who
-    // becomes that person when they save.
+    // Whether the chosen models have keys is as whoever they run as; before
+    // anyone has saved, the viewer. The models offered are the viewer's, as
+    // a save checks them and then runs as the admin saving.
     const runsAs = row.configured_by ?? scope.actorId;
-    const [rules, recent, triage, preprocessing, available] = await Promise.all([
+    const [rules, recent, runner, viewer] = await Promise.all([
       db
         .from("intake_assignment_rules")
         .select("condition, assignee_id, preprocess, preprocess_kind, preprocess_ref")
@@ -181,9 +182,10 @@ async function present(
         .eq("org_id", scope.orgId)
         .order("created_at", { ascending: false })
         .limit(20),
-      resolveIntakeModel(db, scope.orgId, runsAs, row.triage_model),
-      resolveIntakeModel(db, scope.orgId, runsAs, row.preprocessing_model),
-      availableIntakeModels(db, scope.orgId, runsAs),
+      intakeModelKeys(db, scope.orgId, runsAs),
+      runsAs === scope.actorId
+        ? null
+        : intakeModelKeys(db, scope.orgId, scope.actorId),
     ]);
     if (rules.error) return internalFailure(rules.error);
     if (recent.error) return internalFailure(recent.error);
@@ -212,11 +214,11 @@ async function present(
         bot_user_id: row.slack_bot_user_id,
       },
       models: {
-        available,
+        available: (viewer ?? runner).available,
         triage: row.triage_model,
-        triage_available: triage !== null,
+        triage_available: runner.hasKey(row.triage_model),
         preprocessing: row.preprocessing_model,
-        preprocessing_available: preprocessing !== null,
+        preprocessing_available: runner.hasKey(row.preprocessing_model),
       },
       rules: ruleRows.map((r, i) => ({
         condition: r.condition,

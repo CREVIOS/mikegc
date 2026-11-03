@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 import type { IntakePreprocessRule } from "@mike/contracts";
 import { getOrgRole, isOrgAdmin } from "../../lib/access";
@@ -116,6 +116,19 @@ export async function namePreprocessRules(
 }
 
 /**
+ * The id of a request's preprocessing note, the same each time it is queued:
+ * a request is preprocessed once, so queueing it again after its note is
+ * posted finds that note. A UUID made from a SHA-256 hash (version 8).
+ */
+export function preprocessNoteId(requestId: string): string {
+  const h = createHash("sha256")
+    .update(`${INTAKE_PREPROCESS_JOB}:${requestId}`)
+    .digest("hex");
+  const variant = ((parseInt(h[16]!, 16) & 0x3) | 0x8).toString(16);
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-8${h.slice(13, 16)}-${variant}${h.slice(17, 20)}-${h.slice(20, 32)}`;
+}
+
+/**
  * Queue a request's preprocessing. With the job runner switched off it runs
  * here, detached, without retries.
  */
@@ -126,7 +139,7 @@ export async function queueIntakePreprocess(
   const payload: JobPayload = {
     orgId: args.orgId,
     requestId: args.requestId,
-    noteId: randomUUID(),
+    noteId: preprocessNoteId(args.requestId),
     with: args.with,
   };
   const dedupeKey = `${INTAKE_PREPROCESS_JOB}:${args.requestId}`;
@@ -394,8 +407,8 @@ async function preprocess(db: Db, job: JobPayload, lastAttempt: boolean) {
       db,
       job,
       chosen
-        ? `${title} didn't run: its model no longer has an API key. An owner or admin can choose another under Models in the Intake settings, or add its key in Bring Your Own Keys.`
-        : `${title} didn't run: no preprocessing model is chosen. An owner or admin can choose one under Models in the Intake settings.`,
+        ? `${title} didn't run: its model no longer has an API key. An owner or admin can choose another in Model Preferences, or add its key in Bring Your Own Keys.`
+        : `${title} didn't run: no preprocessing model is chosen. An owner or admin can choose one in Model Preferences.`,
     );
   const { data: requestRow, error } = await db
     .from("intake_requests")
