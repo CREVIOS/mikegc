@@ -20,7 +20,7 @@ import {
   clip,
   type MailInboundPayload,
 } from "./intake.inboundPayload";
-import { findInbound, insertInbound } from "./intake.inbound";
+import { insertInbound } from "./intake.inbound";
 import {
   discardStaged,
   isAutomaticMail,
@@ -117,9 +117,26 @@ export async function recordMail(
   const source = mailSource(mail.provider);
   const externalId =
     normalizeMessageId(mail.internetMessageId) ?? `${mail.provider}:${mail.providerId}`;
-  const existing = await findInbound(db, settings.org_id, source, externalId);
-  if (!existing.ok) throw failureError(existing);
-  if (existing.data) return "duplicate";
+  const { data: seen, error: seenError } = await db
+    .from("intake_inbound")
+    .select("id, status, kind")
+    .eq("org_id", settings.org_id)
+    .eq("source", source)
+    .eq("external_id", externalId)
+    .maybeSingle();
+  if (seenError) throw seenError;
+  if (seen) {
+    // Read again while still waiting, as when its job couldn't be queued
+    // the first time: queue it again (deduplicated while one is live).
+    const row = seen as { id: string; status: string; kind: string };
+    if (row.status === "pending")
+      await (row.kind === "reply" ? dispatchIntakeReply : dispatchIntakeInbound)(
+        db,
+        settings.org_id,
+        row.id,
+      );
+    return "duplicate";
+  }
   const ignored = async (reason: string): Promise<MailReceipt> => {
     const stored = await insertInbound(db, {
       org_id: settings.org_id,

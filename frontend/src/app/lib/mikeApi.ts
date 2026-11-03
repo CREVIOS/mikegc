@@ -4713,9 +4713,14 @@ export function retryIntakeDelivery(orgId: string, id: string, outboundId: strin
         { method: "POST" },
     );
 }
-/** Clear a request's New reply flag once it has been opened. */
-export function markIntakeReplySeen(orgId: string, id: string) {
+/**
+ * Clear a request's New reply flag once it has been opened, up to the last
+ * reply that was on screen, so a reply arriving meanwhile stays new.
+ */
+export function markIntakeReplySeen(orgId: string, id: string, seenAt: string | null) {
     return apiRequest<{ ok: true }>(intakeRequestPath(orgId, id, "/reply-seen"), {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ seen_at: seenAt }),
     });
 }

@@ -783,6 +783,8 @@ export interface IntakeRequest extends Omit<IntakeRequestSummary, "capabilities"
   /** How many of its automatic rounds of questions MikeGC has asked. */
   clarify_rounds: number;
   clarify_max_rounds: number;
+  /** When the requester last replied, sent back when the request is opened. */
+  last_reply_at: string | null;
   /** The request's thread, or null when it has none to send to. */
   conversation: IntakeConversation | null;
   capabilities: {

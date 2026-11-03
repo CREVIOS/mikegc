@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Hash, Loader2, Mail, MessagesSquare, X } from "lucide-react";
 import type {
   IntakeAutomationSettings,
@@ -16,7 +16,12 @@ import {
   sendIntakeMailboxTest,
   updateIntakeAutomation,
 } from "@/app/lib/mikeApi";
-import { describeError, notifyError } from "@/app/lib/userFacingError";
+import { useAssignLatest } from "@/app/hooks/useLatestRef";
+import {
+  describeError,
+  notifyError,
+  type UserErrorKind,
+} from "@/app/lib/userFacingError";
 import { notifySuccess } from "@/shared/lib/errorNotifier";
 import { GlassCardUI } from "@/shared/ui/GlassCardUI";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
@@ -61,6 +66,11 @@ const CHANNEL_ICONS: Record<IntakeChannelId, ReactNode> = {
 };
 
 type Change = (patch: Partial<IntakeAutomationDraft>) => void;
+/** Failures the dialog's own fields can fix, so they show beside them. */
+const FIELD_PROBLEMS: ReadonlySet<UserErrorKind> = new Set([
+  "validation",
+  "conflict",
+]);
 
 /**
  * The channels MikeGC records requests from, as compact cards: each names
@@ -239,31 +249,73 @@ function IntakeChannelModal({
   const connecting =
     channel === "email" && (!settings.email.provider || !!form);
 
+  // Retry runs this render's save or connect while the modal is open.
+  const latest = useRef<{ save: () => void; connect: () => void } | null>(
+    null,
+  );
+  useEffect(
+    () => () => {
+      latest.current = null;
+    },
+    [],
+  );
+  /**
+   * A problem with what was typed shows beside the fields to correct it;
+   * anything else is a notice, with Retry when retrying can help. Retry once
+   * the modal is closed sends again only what failed.
+   */
+  function failed(
+    cause: unknown,
+    action: string,
+    which: "save" | "connect",
+    resend: () => Promise<IntakeAutomationSettings>,
+    done: string,
+  ) {
+    setSaving(false);
+    const described = describeError(cause, { action });
+    if (FIELD_PROBLEMS.has(described.kind) && latest.current)
+      return void setError(described.message);
+    const retry = () => {
+      if (latest.current) return latest.current[which]();
+      resend().then(
+        (next) => {
+          onSettings(next);
+          notifySuccess(done);
+        },
+        (again) => notifyError(again, { action, onRetry: retry }),
+      );
+    };
+    notifyError(cause, { action, onRetry: retry });
+  }
   function save() {
-    if (!dirty || saving) return;
+    // A sender domain still being typed must be one before anything is sent.
+    if (!dirty || saving || intakeDomainInputError(draft)) return;
     setSaving(true);
     setError(null);
-    updateIntakeAutomation(orgId, pending).then(
+    const changes = pending;
+    const done = `${name} settings saved`;
+    updateIntakeAutomation(orgId, changes).then(
       (next) => {
         onSettings(next);
-        notifySuccess(`${name} settings saved`);
+        notifySuccess(done);
         onClose();
       },
-      (cause) => {
-        // The fields are on screen to correct: the problem shows beside them.
-        setError(
-          describeError(cause, { action: `save the ${name} settings` })
-            .message,
-        );
-        setSaving(false);
-      },
+      (cause) =>
+        failed(
+          cause,
+          `save the ${name} settings`,
+          "save",
+          () => updateIntakeAutomation(orgId, changes),
+          done,
+        ),
     );
   }
   function connect() {
     if (!form || saving) return;
     setSaving(true);
     setError(null);
-    connectIntakeMailbox(orgId, intakeMailboxConnection(form)).then(
+    const connection = intakeMailboxConnection(form);
+    connectIntakeMailbox(orgId, connection).then(
       (next) => {
         onSettings(next);
         // The modal stays open to finish the setup: domains, name, a test.
@@ -272,14 +324,17 @@ function IntakeChannelModal({
         setSaving(false);
         notifySuccess(`Connected ${next.email.mailbox ?? "the mailbox"}`);
       },
-      (cause) => {
-        setError(
-          describeError(cause, { action: "connect the mailbox" }).message,
-        );
-        setSaving(false);
-      },
+      (cause) =>
+        failed(
+          cause,
+          "connect the mailbox",
+          "connect",
+          () => connectIntakeMailbox(orgId, connection),
+          `Connected ${connection.mailbox}`,
+        ),
     );
   }
+  useAssignLatest(latest, { save, connect });
 
   const secretSaved =
     settings.email.provider === "graph" && settings.email.graph.secret_set;
@@ -300,7 +355,7 @@ function IntakeChannelModal({
         label: "Save",
         icon: saving ? <Loader2 className="h-4 w-4 animate-spin" /> : undefined,
         onClick: save,
-        disabled: saving || !dirty,
+        disabled: saving || !dirty || !!intakeDomainInputError(draft),
       };
 
   return (
@@ -584,7 +639,7 @@ function IntakeEmailFields({
         label="Sender name"
         value={draft.fromName}
         placeholder="Legal"
-        maxLength={100}
+        maxLength={80}
         hint={`MikeGC's own emails come from this name at ${settings.mailbox ?? "the intake address"}. A lawyer's message reads "Their name via ${draft.fromName.trim() || "Legal"}".`}
         onChange={(fromName) => onChange({ fromName })}
         onEnter={onSave}

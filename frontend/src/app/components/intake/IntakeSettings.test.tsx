@@ -789,6 +789,82 @@ describe("IntakeSettings", () => {
     expect(within(dialog).getByRole("button", { name: "Save" })).toBeDisabled();
   });
 
+  it("won't save other changes while a typed domain is invalid", async () => {
+    const user = userEvent.setup();
+    render(<IntakeSettings orgId="org-a" />);
+    await form();
+    const dialog = await openModal(user, "Manage Email", "Email");
+    const name = within(dialog).getByLabelText("Sender name");
+    expect(name).toHaveAttribute("maxLength", "80");
+    await user.clear(name);
+    await user.type(name, "Legal Ops");
+    await user.type(
+      within(dialog).getByLabelText("Allowed sender domains"),
+      "not a domain",
+    );
+    expect(within(dialog).getByRole("button", { name: "Save" })).toBeDisabled();
+    // Enter in another field doesn't send the change without the domain.
+    await user.type(name, "{Enter}");
+    expect(mocks.update).not.toHaveBeenCalled();
+  });
+
+  it("raises a save that failed for another reason as a notice with Retry", async () => {
+    const user = userEvent.setup();
+    mocks.update.mockRejectedValueOnce(
+      Object.assign(new Error("Bad gateway"), { status: 502 }),
+    );
+    render(<IntakeSettings orgId="org-a" />);
+    await form();
+    const dialog = await openModal(user, "Manage Slack", "Slack");
+    await user.type(within(dialog).getByLabelText("Signing Secret"), "s3cret");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(mocks.notify).toHaveBeenCalledTimes(1));
+    const [, options] = mocks.notify.mock.calls[0] as [
+      unknown,
+      { action: string; onRetry: () => void },
+    ];
+    expect(options.action).toBe("save the Slack settings");
+    // Nothing on screen is wrong, so nothing is shown beside the fields.
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toBe(dialog);
+    options.onRetry();
+    await waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(2));
+    expect(mocks.update).toHaveBeenLastCalledWith("org-a", {
+      slack_signing_secret: "s3cret",
+    });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("sends only what failed when Retry comes after the modal closed", async () => {
+    const user = userEvent.setup();
+    mocks.update.mockRejectedValueOnce(
+      Object.assign(new Error("Bad gateway"), { status: 502 }),
+    );
+    render(<IntakeSettings orgId="org-a" />);
+    await form();
+    const dialog = await openModal(user, "Manage Slack", "Slack");
+    await user.type(within(dialog).getByLabelText("Signing Secret"), "s3cret");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(mocks.notify).toHaveBeenCalledTimes(1));
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    const [, options] = mocks.notify.mock.calls[0] as [
+      unknown,
+      { onRetry: () => void },
+    ];
+    options.onRetry();
+    await waitFor(() =>
+      expect(mocks.success).toHaveBeenCalledWith("Slack settings saved"),
+    );
+    expect(mocks.update).toHaveBeenCalledTimes(2);
+    expect(mocks.update).toHaveBeenLastCalledWith("org-a", {
+      slack_signing_secret: "s3cret",
+    });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
   it("saves asking requesters for missing details from the Triage rules section", async () => {
     const user = userEvent.setup();
     render(<IntakeSettings orgId="org-a" />);

@@ -13,6 +13,8 @@ import { memoryDb, type MemoryDb } from "../../modules/intake/__tests__/memoryDb
 // ---------------------------------------------------------------------------
 const mocks = vi.hoisted(() => {
   process.env.RATE_LIMIT_SLACK_WEBHOOK_MAX = "3";
+  // Every request in this file counts against the shared per-address ceiling.
+  process.env.RATE_LIMIT_CHANNEL_WEBHOOK_IP_MAX = "40";
   process.env.RATE_LIMIT_GENERAL_MAX = "500";
   return { memory: null as unknown as { db: unknown }, enqueueDbJob: vi.fn() };
 });
@@ -205,5 +207,14 @@ describe("webhook rate limits", () => {
     expect((await slack(busy)).status).toBe(429);
     // Another organization's URL, from the same sending address, still gets through.
     expect((await slack("00000000-0000-4000-8000-0000000000d2")).status).not.toBe(429);
+  });
+  it("still caps one address that rotates webhook URLs", async () => {
+    const statuses: number[] = [];
+    for (let i = 0; i < 45; i++) {
+      const id = `00000000-0000-4000-8000-${String(1000 + i).padStart(12, "0")}`;
+      statuses.push((await request(app).post(`/webhooks/intake/teams/${id}`).send({})).status);
+    }
+    // Each URL is new, so only the per-address ceiling can refuse them.
+    expect(statuses).toContain(429);
   });
 });

@@ -380,6 +380,29 @@ describe("intake route contracts", () => {
       ).status,
     ).toBe(404);
   });
+  it("marks replies seen up to the time the member was shown", async () => {
+    mocks.rpc.mockResolvedValue({ data: null, error: null });
+    const seen = "2026-11-03T10:00:00.123456+00:00";
+    const res = await request(app)
+      .post(`${path}/requests/${id}/reply-seen`)
+      .send({ seen_at: seen });
+    expect(res.status).toBe(200);
+    expect(mocks.rpc).toHaveBeenCalledWith("intake_mark_reply_seen", {
+      p_org: org,
+      p_actor: "signed-in-user",
+      p_request: id,
+      p_seen: seen,
+    });
+    // Without a time, every reply until now is seen.
+    await request(app).post(`${path}/requests/${id}/reply-seen`).expect(200);
+    expect(mocks.rpc.mock.calls.at(-1)?.[1]).toMatchObject({ p_seen: null });
+    mocks.rpc.mockClear();
+    for (const body of [{ seen_at: "yesterday" }, { seen_at: seen, extra: 1 }])
+      expect(
+        (await request(app).post(`${path}/requests/${id}/reply-seen`).send(body)).status,
+      ).toBe(400);
+    expect(mocks.rpc).not.toHaveBeenCalled();
+  });
   it("returns scoped failures from reads and creation", async () => {
     mocks.rpc.mockResolvedValue({ data: null, error: { code: "42501" } });
     for (const suffix of [

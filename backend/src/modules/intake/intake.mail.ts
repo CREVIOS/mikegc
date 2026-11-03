@@ -131,8 +131,11 @@ export function parseMailbox(value: string | null): {
 } {
   if (!value) return { name: null, email: null };
   const email = value.match(/<([^<>\s]+@[^<>\s]+)>/)?.[1] ?? addressList(value)[0] ?? null;
-  const name = value
-    .replace(/<[^>]*>/, "")
+  // The display name is what comes before the address; angle brackets left
+  // in it are dropped one by one, so no markup survives.
+  const bracket = value.indexOf("<");
+  const name = (bracket >= 0 ? value.slice(0, bracket) : value)
+    .replace(/[<>]/g, "")
     .replace(/^["'\s]+|["'\s]+$/g, "")
     .trim();
   const normalized = email?.trim().toLowerCase() ?? null;
@@ -397,7 +400,7 @@ export async function recordEmailMessageIds(
   if (error) throw error;
 }
 
-/** The link whose thread one of these Message-IDs belongs to. */
+/** The link whose thread one of these Message-IDs belongs to, newest first. */
 export async function linkByMessageIds(
   db: Db,
   orgId: string,
@@ -407,12 +410,19 @@ export async function linkByMessageIds(
   if (!normalized.length) return null;
   const { data, error } = await db
     .from("intake_email_message_ids")
-    .select("link_id")
+    .select("message_id, link_id")
     .eq("org_id", orgId)
-    .in("message_id", normalized)
-    .limit(1);
+    .in("message_id", normalized);
   if (error) throw error;
-  return ((data ?? []) as { link_id: string }[])[0]?.link_id ?? null;
+  const links = new Map(
+    ((data ?? []) as { message_id: string; link_id: string }[]).map((r) => [r.message_id, r.link_id]),
+  );
+  // The newest Message-ID it answers decides, as the references are ordered.
+  for (const id of normalized) {
+    const link = links.get(id);
+    if (link) return link;
+  }
+  return null;
 }
 
 /**

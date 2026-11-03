@@ -1375,8 +1375,18 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
     ).toMatchObject({ kind: "reply", author_id: null, author_name: "Jane Business", external_author: { source: "slack" } });
     expect(view()).toMatchObject({ new_reply: true });
     expect(list(2, ",p_new_reply=>true").requests.map((r: { id: string }) => r.id)).toEqual([uid(21)]);
-    sql(`select public.intake_mark_reply_seen(${q(10)},${q(4)},${q(21)})`);
+    // A member who saw only an earlier reply leaves the latest one new.
+    const last = sql(`select last_reply_at from public.intake_requests where id=${q(21)}`);
+    sql(`select public.intake_mark_reply_seen(${q(10)},${q(4)},${q(21)},'${last}'::timestamptz - interval '1 second')`);
+    expect(view()).toMatchObject({ new_reply: true });
+    // A time in the future counts only up to now.
+    sql(`select public.intake_mark_reply_seen(${q(10)},${q(4)},${q(21)},now() + interval '1 day')`);
+    expect(
+      sql(`select reply_seen_at <= now() from public.intake_requests where id=${q(21)}`),
+    ).toBe("t");
     expect(view()).toMatchObject({ new_reply: false });
+    sql(`select public.intake_mark_reply_seen(${q(10)},${q(4)},${q(21)})`);
+    expect(view()).toMatchObject({ new_reply: false, last_reply_at: expect.any(String) });
     expect(list(2, ",p_new_reply=>true").requests).toEqual([]);
     // Settled on the rule's member: back to work, assigned.
     expect(
@@ -1515,6 +1525,12 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
       json(`select public.intake_edit_request(${q(10)},${q(3)},${q(122)},${q(22)},2,'Supplier NDA','Summary','Jane Business',null,null,null);`),
     ).toMatchObject({ preprocess: true });
     expect(clarify(22)).toBe("-:1:true");
+    // It goes back to work as Stop asking would, and the history says so.
+    expect(state(22)).toBe(`in_review:3:${uid(3)}`);
+    expect(
+      sql(`select string_agg(kind||':'||from_state||'>'||to_state, ',' order by created_at, kind)
+        from public.intake_events where request_id=${q(22)} and kind in ('edited','stop_asking')`),
+    ).toBe("edited:needs_information>needs_information,stop_asking:needs_information>in_review");
   });
   it("deletes a request's thread, outbox and Message-IDs with it", () => {
     const link = thread(21, 70, q(3));
@@ -1538,7 +1554,7 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
         "intake_ask_automated(uuid,uuid,uuid,uuid,text,text,boolean,jsonb)",
         "intake_reply_automated(uuid,uuid,uuid,text,jsonb)",
         "intake_record_delivery(uuid,uuid,text,text,text,jsonb)",
-        "intake_mark_reply_seen(uuid,uuid,uuid)",
+        "intake_mark_reply_seen(uuid,uuid,uuid,timestamptz)",
       ])
         expect(sql(`select has_function_privilege('${role}','public.${fn}','EXECUTE')`)).toBe("f");
     }

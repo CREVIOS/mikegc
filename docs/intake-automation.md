@@ -385,10 +385,11 @@ the app's credentials in MikeGC first.
 2. Install the app to the workspace. Copy its **Bot User OAuth Token**
    (`xoxb-…`, under **OAuth & Permissions**) and its **Signing Secret** (under
    **Basic Information**).
-3. In MikeGC, open the organization's **Settings → Intake**, turn on **Record
-   requests from Slack** and paste both. Each saves when you leave its field
-   or press Enter, and Slack turns on once both are saved. MikeGC checks the
-   token with Slack and shows the workspace it belongs to.
+3. In MikeGC, open the organization's **Settings → Intake**, choose **Set up**
+   on the Slack card, paste both, turn on **Record requests from Slack** and
+   choose **Save** (or press Enter in a field). Nothing is saved until then;
+   Cancel, Close or Escape discards it. Slack turns on once both are saved.
+   MikeGC checks the token with Slack and shows the workspace it belongs to.
 4. Back in the Slack app, open **Event Subscriptions**, turn events on, and
    paste MikeGC's **Events Request URL** from the settings page. Slack should
    show it as verified. Under **Subscribe to bot events**, add
@@ -431,9 +432,10 @@ single-tenant. Your Microsoft 365 admin does this once:
 4. Optional, for documents: grant the app the Microsoft Graph application
    permission `Sites.Selected` for the chosen teams' sites (preferred over
    tenant-wide `Files.ReadWrite.All`), with admin consent.
-5. In MikeGC, paste the app ID, tenant ID and client secret into the Teams
-   section and turn Teams on. MikeGC requests a token to check them and shows
-   whether document access works.
+5. In MikeGC, choose **Set up** on the Teams card, paste the app ID, tenant
+   ID and client secret, turn on **Record requests from Teams** and choose
+   **Save**. MikeGC requests a token to check them and shows whether document
+   access works.
 
 Every request from Teams carries a Bot Connector token, which MikeGC checks
 against Bot Framework's signing keys, the bot's app ID, the activity's service
@@ -580,7 +582,9 @@ address, which `RATE_LIMIT_WEBHOOK_MAX` and
 every organization's deliveries from the same addresses, so their webhooks are
 limited per organization's webhook URL instead, 600 a minute by default
 (`RATE_LIMIT_SLACK_WEBHOOK_MAX`, `RATE_LIMIT_TEAMS_WEBHOOK_MAX`,
-`RATE_LIMIT_GRAPH_WEBHOOK_MAX`).
+`RATE_LIMIT_GRAPH_WEBHOOK_MAX`). One sending address is also held to 3,000 a
+minute across all of those URLs together (`RATE_LIMIT_CHANNEL_WEBHOOK_IP_MAX`),
+so a client can't get around the per-URL limit by rotating URLs.
 
 Every webhook must reach the API over public HTTPS. The frontend's `/api`
 gateway forwards them unchanged, including Slack's signature headers and the

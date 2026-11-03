@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 /**
  * A small client for the organization's own Microsoft Entra app: tokens by
  * client credentials, and Microsoft Graph and Bot Connector calls with
@@ -79,7 +81,9 @@ export async function microsoftToken(
       permanent: true,
       sentence: options.sentence,
     });
-  const cacheKey = JSON.stringify([key.tenantId, key.clientId, key.scope, key.clientSecret.length]);
+  // A digest of the secret, never the secret: a new secret gets a new token.
+  const secretDigest = createHash("sha256").update(key.clientSecret).digest("hex");
+  const cacheKey = JSON.stringify([key.tenantId, key.clientId, key.scope, secretDigest]);
   const cached = tokens.get(cacheKey);
   if (cached && cached.expiresAt > Date.now() + 60_000) return cached;
   const body = new URLSearchParams({

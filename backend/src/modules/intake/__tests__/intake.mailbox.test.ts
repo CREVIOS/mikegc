@@ -118,7 +118,14 @@ describe("recording email from the intake mailbox", () => {
         }),
       }),
     ]);
-    expect(kinds()).toEqual(["intake.inbound"]);
+    // Read again while it waits, it is queued again under the same key,
+    // which the queue holds to one live job; once handled, it isn't.
+    const keys = mocks.enqueueDbJob.mock.calls.map(([, input]) => input.dedupeKey);
+    expect(kinds()).toEqual(["intake.inbound", "intake.inbound"]);
+    expect(new Set(keys).size).toBe(1);
+    inbound()[0]!.status = "done";
+    expect(await recordMail(memory.db, settings(), mail())).toBe("duplicate");
+    expect(kinds()).toHaveLength(2);
   });
   it("ignores automatic mail, mail not to the intake address, other domains and an unauthenticated sender", async () => {
     const cases: [Partial<ReadMail>, RegExp][] = [

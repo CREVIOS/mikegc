@@ -26,6 +26,7 @@ import {
   MAX_CLARIFY_ROUNDS,
   checkReadiness,
   stableId,
+  threadText,
   type ReadinessPlaybook,
 } from "./intake.clarify";
 import { clip } from "./intake.inboundPayload";
@@ -407,10 +408,11 @@ async function reviewRequest(args: {
 }): Promise<{ sections: string[]; marked: MarkUp[] }> {
   const sections: string[] = [];
   const marked: MarkUp[] = [];
-  const context = clip(
-    `This document came with an intake request.\nSubject: ${args.request.subject}\n\n${args.request.description}`,
-    4_000,
-  );
+  // The request's latest words matter most, so a long one is cut from the start.
+  const full = `${args.request.subject}\n\n${args.request.description}`;
+  const context = `This document came with an intake request.\nSubject: ${
+    full.length > 3_900 ? `…${full.slice(full.length - 3_900)}` : full
+  }`;
   for (const doc of args.documents) {
     try {
       const review = await reviewWithPlaybook({
@@ -517,6 +519,8 @@ async function preprocess(
   )
     return { skipped: "superseded" };
   const { read, unread } = await readDocuments(db, job, lastAttempt);
+  // Questions asked and the requester's answers, which every stage reads.
+  const thread = await loadThreadEntries(db, job.orgId, job.requestId);
 
   // The readiness check: does the playbook or workflow have what it needs?
   // It asks only while MikeGC may (a thread, asking on, no lawyer yet, a
@@ -533,7 +537,7 @@ async function preprocess(
     const check = await checkReadiness({
       model,
       request,
-      thread: await loadThreadEntries(db, job.orgId, job.requestId),
+      thread,
       documents: read.map((d) => ({ name: d.filename, text: d.text })),
       unread,
       condition: job.condition,
@@ -568,6 +572,13 @@ async function preprocess(
       stage: "readiness",
     });
   await acknowledge();
+  // What preprocessing reads: the request, then its thread with the requester.
+  const withThread = {
+    subject: request.subject,
+    description: thread.length
+      ? `${request.description}\n\n--- Thread with the requester ---\n${threadText(thread)}`
+      : request.description,
+  };
   const stillMissing = missing.length
     ? `Still missing: ${missing.join(" ")}\n\n`
     : "";
@@ -584,7 +595,7 @@ async function preprocess(
       actorId,
       model,
       playbookId: job.with.id,
-      request,
+      request: withThread,
       documents: read,
     });
     return postNote(db, job, `${stillMissing}${title}\n\n${sections.join("\n\n")}${markedLines(marked)}${skippedLine}`);
@@ -592,7 +603,7 @@ async function preprocess(
 
   const { answer, edits } = await answerRequest({
     model,
-    request,
+    request: withThread,
     documents: read,
     instructions: rule?.instructions ?? null,
   });

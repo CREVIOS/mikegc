@@ -9,7 +9,14 @@ vi.mock("../../../lib/storage", async (importOriginal) => ({
 import { encryptString } from "../../../lib/mcp/client";
 import { handleIntakeDeliver } from "../intake.deliver";
 import { clearMicrosoftTokens } from "../intake.microsoft";
-import { shareId, teamsActivity, teamsActivityText, teamsEscape } from "../intake.teams";
+import {
+  shareId,
+  teamsActivity,
+  teamsActivityText,
+  teamsEscape,
+  teamsInboundMessage,
+} from "../intake.teams";
+import type { AutomationRow } from "../intake.settingsRow";
 
 const org = "00000000-0000-4000-8000-000000000001";
 const emma = "00000000-0000-4000-8000-000000000003";
@@ -20,7 +27,9 @@ const env = { ...process.env };
 let memory: MemoryDb;
 let calls: { url: string; method: string; body: unknown }[];
 
-function setup(filesAccess: boolean) {
+type Route = (url: string) => Response | undefined;
+
+function setup(filesAccess: boolean, route: Route = () => undefined, outbound: Record<string, unknown>[] = []) {
   const secret = encryptString("teams-secret");
   memory = memoryDb(
     {
@@ -60,6 +69,7 @@ function setup(filesAccess: boolean) {
       document_versions: [{ id: "v0", filename: "nda.docx", file_type: "docx", size_bytes: 3, storage_path: "documents/x/nda.docx", deleted_at: null }],
       intake_outbound: [
         { id: outboundId, org_id: org, request_id: requestId, link_id: "link-1", message_id: "m1", author_id: emma, kind: "answer", documents: [{ document_id: "d0", version_id: "v0" }], status: "pending", external_id: null, attempted_at: null },
+        ...outbound,
       ],
     },
     requesterLoopRpc(),
@@ -71,6 +81,8 @@ function setup(filesAccess: boolean) {
       const target = String(url);
       const json = typeof init?.body === "string" && init.body.startsWith("{");
       calls.push({ url: target, method: init?.method ?? "GET", body: json ? JSON.parse(String(init!.body)) : null });
+      const routed = route(target);
+      if (routed) return routed;
       if (target.startsWith("https://login.microsoftonline.com/"))
         return Response.json({ access_token: "h.e30.s", expires_in: 3600 });
       if (target.endsWith("/filesFolder"))
@@ -144,6 +156,117 @@ describe("replying in Teams", () => {
       "Documents from Legal: nda.docx. Ask Legal for a copy.",
     );
     expect(memory.rows("intake_outbound")[0]).toMatchObject({ status: "sent", documents: [{ left_out: true }] });
+  });
+});
+
+describe("when Microsoft refuses a document or a retry finds a message", () => {
+  const graphThread = "https://graph.microsoft.com/v1.0/teams/group-1/channels/19%3Aabc%40thread.tacv2/messages/1";
+  it("names a document Microsoft refuses in the reply, which still posts", async () => {
+    setup(true, (url) =>
+      url.includes(":/content") ? Response.json({ error: { code: "accessDenied" } }, { status: 403 }) : undefined,
+    );
+    await deliver();
+    const post = calls.find((c) => c.url.endsWith("/activities"))!;
+    expect((post.body as { text: string }).text).toContain(
+      "Documents from Legal: nda.docx. Ask Legal for a copy.",
+    );
+    expect(memory.rows("intake_outbound")[0]).toMatchObject({ status: "sent", documents: [{ left_out: true }] });
+  });
+  it("retries a document upload that may pass later, before posting anything", async () => {
+    setup(true, (url) => (url.includes(":/content") ? new Response("", { status: 503 }) : undefined));
+    await expect(deliver()).rejects.toThrow();
+    expect(calls.some((c) => c.url.endsWith("/activities"))).toBe(false);
+    expect(memory.rows("intake_outbound")[0]).toMatchObject({ status: "pending", external_id: null });
+  });
+  it("doesn't take a message another reply in the thread already owns as this one's", async () => {
+    const earlier = new Date(Date.now() - 30_000).toISOString();
+    setup(
+      false,
+      (url) => {
+        if (url === graphThread) return Response.json({ id: "1", createdDateTime: earlier, body: { content: "Help with the NDA" } });
+        if (url.startsWith(`${graphThread}/replies`))
+          return Response.json({
+            value: [
+              {
+                id: "owned-1",
+                createdDateTime: earlier,
+                from: { application: { id: appId } },
+                body: { content: "Emma Chen (Legal):<br>Approved *with* edits." },
+              },
+            ],
+          });
+        return undefined;
+      },
+      [{ id: "00000000-0000-4000-8000-0000000000f2", org_id: org, request_id: requestId, link_id: "link-1", message_id: "m0", author_id: emma, kind: "answer", documents: [], status: "sent", external_id: "owned-1", attempted_at: earlier }],
+    );
+    memory.rows("intake_outbound")[0]!.attempted_at = earlier;
+    await deliver();
+    // The earlier answer's message is left to it, so this one is posted.
+    expect(calls.some((c) => c.url.startsWith(`${graphThread}/replies`))).toBe(true);
+    expect(calls.some((c) => c.url.endsWith("/activities"))).toBe(true);
+    expect(memory.rows("intake_outbound")[0]).toMatchObject({ status: "sent", external_id: "1793611111000" });
+  });
+});
+
+describe("reading a Teams thread for a new request", () => {
+  const graph = "https://graph.microsoft.com/v1.0/teams/group-1/channels/19%3Aabc%40thread.tacv2/messages/1";
+  const settings = () => memory.rows("intake_automation")[0] as unknown as AutomationRow;
+  const payload = {
+    kind: "teams" as const,
+    tenant_id: "tenant-1",
+    service_url: "https://smba.trafficmanager.net/emea/",
+    conversation_id: "19:abc@thread.tacv2;messageid=1",
+    team_id: "team-1",
+    aad_group_id: "group-1",
+    channel_id: "19:abc@thread.tacv2",
+    root_message_id: "1",
+    team_name: null,
+    channel_name: null,
+    activity_id: "3",
+    from: { id: "29:jane", aad_object_id: null, name: "Jane Business" },
+    date: "2026-11-03T10:05:00Z",
+    text: "please review it",
+    files: [],
+  };
+  const root = {
+    id: "1",
+    createdDateTime: "2026-11-03T10:00:00Z",
+    from: { user: { displayName: "Ana Sales" } },
+    body: { content: "<p>Can someone check the <b>Acme NDA</b>?</p>" },
+  };
+  it("takes out only MikeGC's own mention, as Graph lists it", async () => {
+    setup(false, (url) => {
+      if (url === graph) return Response.json(root);
+      if (url.startsWith(`${graph}/replies`))
+        return Response.json({
+          value: [
+            {
+              id: "3",
+              createdDateTime: payload.date,
+              from: { user: { displayName: "Jane Business" } },
+              body: { content: '<at id="0">MikeGC</at> please ask <at id="1">Ben Ops</at> too' },
+              mentions: [
+                { id: 0, mentionText: "MikeGC", mentioned: { application: { id: appId } } },
+                { id: 1, mentionText: "Ben Ops", mentioned: { user: { id: "u-ben" } } },
+              ],
+            },
+          ],
+        });
+      return undefined;
+    });
+    const message = await teamsInboundMessage(settings(), { ...payload, completed: [] } as never);
+    expect(message.text).toContain("Can someone check the Acme NDA?");
+    expect(message.text).toContain("please ask Ben Ops too");
+    expect(message.text).not.toContain("MikeGC");
+  });
+  it("ends with the signed mention when Graph's copy of the thread stops short of it", async () => {
+    setup(false, (url) => {
+      if (url === graph) return Response.json(root);
+      if (url.startsWith(`${graph}/replies`)) return Response.json({ value: [] });
+      return undefined;
+    });
+    const message = await teamsInboundMessage(settings(), { ...payload, completed: [] } as never);
+    expect(message.text).toMatch(/Can someone check the Acme NDA\?[\s\S]*Jane Business, .*:\nplease review it$/);
   });
 });
 

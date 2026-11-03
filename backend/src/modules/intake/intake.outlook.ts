@@ -289,11 +289,23 @@ export async function graphUnsubscribe(credentials: GraphCredentials, subscripti
 
 /** Mark a recorded email with the "MikeGC" category, so the mailbox shows it. */
 export async function graphMarkRecorded(credentials: GraphCredentials, messageId: string) {
-  await microsoftFetch(`${mailboxUrl(credentials.mailbox)}/messages/${encodeURIComponent(messageId)}`, {
-    token: await token(credentials),
-    method: "PATCH",
-    json: { categories: ["MikeGC"] },
-  }).catch(() => undefined);
+  try {
+    const t = await token(credentials);
+    const url = `${mailboxUrl(credentials.mailbox)}/messages/${encodeURIComponent(messageId)}`;
+    // Keep the categories the mailbox already gave it.
+    const current = await microsoftFetch<{ categories?: unknown }>(`${url}?$select=categories`, { token: t });
+    const categories = Array.isArray(current?.categories)
+      ? current.categories.filter((c): c is string => typeof c === "string")
+      : [];
+    if (categories.includes("MikeGC")) return;
+    await microsoftFetch(url, {
+      token: t,
+      method: "PATCH",
+      json: { categories: [...categories, "MikeGC"] },
+    });
+  } catch {
+    // A missing category never stops recording.
+  }
 }
 
 /** A test email from the intake mailbox to the admin connecting it. */

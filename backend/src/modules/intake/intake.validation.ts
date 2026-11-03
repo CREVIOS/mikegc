@@ -227,3 +227,8 @@ export const intakeMailboxConnection = z.discriminatedUnion("provider", [
     })
     .strict(),
 ]);
+
+/** The reply a member saw: the request's last reply time when it opened. */
+export const intakeReplySeen = z
+  .object({ seen_at: z.iso.datetime({ offset: true }).nullable().optional() })
+  .strict();

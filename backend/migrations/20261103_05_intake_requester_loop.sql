@@ -331,17 +331,20 @@ begin
   return false;
 end $$;
 
--- Opening a request clears its New reply flag.
-create or replace function public.intake_mark_reply_seen(p_org uuid, p_actor uuid, p_request uuid)
+drop function if exists public.intake_mark_reply_seen(uuid, uuid, uuid);
+-- Opening a request clears its New reply flag, up to the reply the page
+-- showed (p_seen, its last_reply_at), so a reply arriving meanwhile stays new.
+create or replace function public.intake_mark_reply_seen(p_org uuid, p_actor uuid, p_request uuid,
+  p_seen timestamptz default null)
 returns void language plpgsql set search_path = public, pg_temp as $$
 begin
   perform 1 from public.organizations where id = p_org for share;
   if not public.intake_can_read(p_org, p_actor, p_request) then
     raise exception 'Request not found' using errcode = 'P0002';
   end if;
-  update public.intake_requests set reply_seen_at = now()
+  update public.intake_requests set reply_seen_at = least(coalesce(p_seen, now()), now())
     where org_id = p_org and id = p_request and last_reply_at is not null
-      and (reply_seen_at is null or reply_seen_at < last_reply_at);
+      and (reply_seen_at is null or reply_seen_at < least(coalesce(p_seen, now()), now()));
 end $$;
 
 -- A document MikeGC made from an attachment, linked to its request and, for
@@ -566,7 +569,7 @@ create or replace function public.intake_edit_request(p_org uuid, p_actor uuid, 
   p_subject text, p_description text, p_requester_name text, p_requester_email text default null,
   p_requester_team text default null, p_date date default null)
 returns jsonb language plpgsql set search_path = public, pg_temp as $$
-declare r public.intake_requests; input jsonb; replay jsonb; receipt jsonb; extra jsonb;
+declare r public.intake_requests; input jsonb; replay jsonb; receipt jsonb; extra jsonb; next_state text;
 begin
   perform public.intake_lock_org(p_org, p_actor);
   if not public.intake_can_read(p_org, p_actor, p_request) then
@@ -583,14 +586,22 @@ begin
   end if;
   perform public.intake_check_details(p_subject, p_description, p_requester_name,
     p_requester_email, p_requester_team);
+  -- Editing stops MikeGC asking; a request only it was waiting on goes back
+  -- to work, as Stop asking does.
+  next_state := case when r.clarify_stage is not null and r.state = 'needs_information'
+    then case when r.assignee_id is null then 'submitted' else 'in_review' end else r.state end;
   update public.intake_requests set subject = p_subject, description = p_description,
     requester_name = p_requester_name, requester_email = p_requester_email, requester_team = p_requester_team,
-    requested_by_date = p_date, clarify_stage = null, clarify_stopped = true,
+    requested_by_date = p_date, clarify_stage = null, clarify_stopped = true, state = next_state,
     reply_seen_at = case when last_reply_at is null then reply_seen_at else now() end,
     version = version + 1, updated_at = now()
     where id = p_request;
   insert into public.intake_events(org_id, request_id, actor_id, kind, from_state, to_state, assignee_id)
     values(p_org, p_request, p_actor, 'edited', r.state, r.state, r.assignee_id);
+  if next_state <> r.state then
+    insert into public.intake_events(org_id, request_id, actor_id, kind, from_state, to_state, assignee_id)
+      values(p_org, p_request, p_actor, 'stop_asking', r.state, next_state, r.assignee_id);
+  end if;
   receipt := public.intake_record_command(p_org, p_actor, p_command, p_request, 'edit', input, r.version + 1);
   extra := jsonb_build_object('outbound_id', null, 'preprocess', r.clarify_stage = 'readiness');
   update public.intake_commands c set result = c.result || extra
@@ -633,6 +644,7 @@ returns jsonb language sql stable set search_path = public, pg_temp as $$
     'created_at', r.created_at, 'updated_at', r.updated_at,
     'clarify_stage', r.clarify_stage, 'clarify_rounds', r.clarify_rounds, 'clarify_max_rounds', 2,
     'new_reply', r.last_reply_at is not null and (r.reply_seen_at is null or r.reply_seen_at < r.last_reply_at),
+    'last_reply_at', r.last_reply_at,
     'conversation', public.intake_conversation(r),
     'capabilities', jsonb_build_object(
       'edit', r.state not in ('resolved', 'cancelled'),

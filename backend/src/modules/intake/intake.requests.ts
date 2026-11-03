@@ -12,7 +12,7 @@ import type {
 import type { Db } from "../../lib/supabase";
 import { safeError } from "../../lib/safeError";
 import { failure, ok, type ServiceResult } from "../../lib/serviceResult";
-import { dispatchIntakeDeliver } from "./intake.deliver";
+import { dispatchIntakeDeliverOrFail } from "./intake.deliver";
 import { queueNextIntakePreprocess } from "./intake.preprocess";
 import { intakeRpc } from "./intake.shared";
 import type {
@@ -211,13 +211,15 @@ async function afterCommand(
 ): Promise<ServiceResult<IntakeReceipt>> {
   if (!result.ok) return result;
   const { preprocess, ...receipt } = result.data;
-  try {
-    if (receipt.outbound_id)
-      await dispatchIntakeDeliver(db, scope.orgId, receipt.outbound_id);
-    if (preprocess) await queueNextIntakePreprocess(db, scope.orgId, requestId);
-  } catch (error) {
-    console.warn("[intake] follow-up not queued", safeError(error));
-  }
+  // A message that can't be queued is marked failed, which offers Retry.
+  if (receipt.outbound_id)
+    await dispatchIntakeDeliverOrFail(db, scope.orgId, receipt.outbound_id).catch((error) =>
+      console.warn("[intake] delivery not queued", safeError(error)),
+    );
+  if (preprocess)
+    await queueNextIntakePreprocess(db, scope.orgId, requestId).catch((error) =>
+      console.warn("[intake] preprocessing not queued", safeError(error)),
+    );
   return ok(receipt);
 }
 
@@ -281,19 +283,25 @@ export async function retryIntakeDelivery(
     p_outbound: outboundId,
   });
   if (!result.ok) return result;
-  if (result.data) await dispatchIntakeDeliver(db, scope.orgId, outboundId);
+  if (result.data) await dispatchIntakeDeliverOrFail(db, scope.orgId, outboundId);
   return ok({ retried: result.data });
 }
 
-/** Opening a request clears its New reply flag in the queue. */
+/**
+ * Opening a request clears its New reply flag in the queue. `seenAt` is the
+ * last reply the member was shown, so a reply that arrives while the page
+ * loads stays new; without it, every reply until now counts as seen.
+ */
 export async function markIntakeReplySeen(
   db: Db,
   scope: IntakeScope,
   requestId: string,
+  seenAt: string | null = null,
 ): Promise<ServiceResult<{ ok: true }>> {
   const result = await intakeRpc<null>(db, "intake_mark_reply_seen", {
     ...scoped(scope),
     p_request: requestId,
+    p_seen: seenAt,
   });
   return result.ok ? ok({ ok: true }) : result;
 }

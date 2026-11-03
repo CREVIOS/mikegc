@@ -40,6 +40,7 @@ import {
   intakeList,
   intakeMailboxConnection,
   intakePage,
+  intakeReplySeen,
   intakeSubmit,
   intakeWorkspace,
   type IntakeCommandAction,
@@ -283,9 +284,17 @@ intakeRouter.post(
 intakeRouter.post(
   "/:orgId/requests/:requestId/reply-seen",
   asyncRoute(async (req, res) => {
+    const parsed = intakeReplySeen.safeParse(req.body ?? {});
+    if (!parsed.success)
+      return void res.status(400).json({ detail: "Invalid reply time." });
     send(
       res,
-      await markIntakeReplySeen(createServerSupabase(), scopeOf(res), req.params.requestId),
+      await markIntakeReplySeen(
+        createServerSupabase(),
+        scopeOf(res),
+        req.params.requestId,
+        parsed.data.seen_at ?? null,
+      ),
     );
   }),
 );

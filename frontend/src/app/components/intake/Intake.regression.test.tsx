@@ -250,6 +250,7 @@ const request = (overrides: Partial<IntakeRequest> = {}): IntakeRequest => ({
   clarify_stage: null,
   clarify_rounds: 0,
   clarify_max_rounds: 2,
+  last_reply_at: null,
   new_reply: false,
   conversation: null,
   capabilities,
@@ -3202,10 +3203,17 @@ describe("requester loop", () => {
   });
 
   it("clears the New reply flag when a request with one opens", async () => {
-    mocks.request.mockResolvedValue(threaded({ new_reply: true }));
+    mocks.request.mockResolvedValue(
+      threaded({ new_reply: true, last_reply_at: "2026-11-03T10:00:00.000Z" }),
+    );
     const { unmount } = render(detail());
+    // Only the reply on screen is seen; a later one stays new.
     await waitFor(() =>
-      expect(mocks.replySeen).toHaveBeenCalledWith("org-a", "request-a"),
+      expect(mocks.replySeen).toHaveBeenCalledWith(
+        "org-a",
+        "request-a",
+        "2026-11-03T10:00:00.000Z",
+      ),
     );
     unmount();
     mocks.replySeen.mockClear();

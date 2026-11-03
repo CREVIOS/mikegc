@@ -102,7 +102,8 @@ export async function settleClarify(
 
 /**
  * The thread after a request, oldest first: MikeGC's and members' questions
- * to the requester and the requester's replies, as the stages read it.
+ * to the requester and the requester's replies, as the stages read it; the
+ * 50 newest when there are more.
  */
 export async function loadThreadEntries(
   db: Db,
@@ -115,11 +116,12 @@ export async function loadThreadEntries(
     .eq("org_id", orgId)
     .eq("request_id", requestId)
     .in("kind", ["question", "reply"])
-    .order("created_at", { ascending: true })
+    // The 50 newest, read back oldest first.
+    .order("created_at", { ascending: false })
     .limit(50);
   if (error) throw error;
   return (
-    (data ?? []) as {
+    [...((data ?? []) as unknown[])].reverse() as {
       kind: "question" | "reply";
       body: string;
       created_at: string;

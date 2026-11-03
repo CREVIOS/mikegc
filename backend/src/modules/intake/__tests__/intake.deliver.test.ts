@@ -1,7 +1,11 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { memoryDb, requesterLoopRpc, type MemoryDb } from "./memoryDb";
 
-const mocks = vi.hoisted(() => ({ downloadFile: vi.fn() }));
+const mocks = vi.hoisted(() => ({ downloadFile: vi.fn(), enqueueDbJob: vi.fn() }));
+vi.mock("../../../lib/dbq/enqueue", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../lib/dbq/enqueue")>()),
+  enqueueDbJob: mocks.enqueueDbJob,
+}));
 vi.mock("../../../lib/storage", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../lib/storage")>()),
   downloadFile: mocks.downloadFile,
@@ -9,7 +13,11 @@ vi.mock("../../../lib/storage", async (importOriginal) => ({
 import { NonRetryableJobError } from "../../../lib/dbq/runner";
 import type { DbJob } from "../../../lib/dbq/types";
 import { encryptString } from "../../../lib/mcp/client";
-import { handleIntakeDeliver, markIntakeDeliverFailed } from "../intake.deliver";
+import {
+  dispatchIntakeDeliverOrFail,
+  handleIntakeDeliver,
+  markIntakeDeliverFailed,
+} from "../intake.deliver";
 
 const org = "00000000-0000-4000-8000-000000000001";
 const emma = "00000000-0000-4000-8000-000000000003";
@@ -218,6 +226,41 @@ describe("sending a message to the requester", () => {
     expect(outbox()).toMatchObject({ status: "pending" });
     await markIntakeDeliverFailed(memory.db, job(5));
     expect(outbox()).toMatchObject({ status: "failed", error: "MikeGC couldn't reach Slack. Try again." });
+  });
+  it("marks a message it couldn't queue as failed, so the request offers Retry", async () => {
+    setup();
+    process.env.DB_JOBS_ENABLED = "true";
+    mocks.enqueueDbJob.mockRejectedValueOnce(new Error("connection reset"));
+    await expect(dispatchIntakeDeliverOrFail(memory.db, org, outboundId)).rejects.toThrow("connection reset");
+    expect(outbox()).toMatchObject({ status: "failed", error: "MikeGC couldn't queue this message. Try again." });
+    // Queued, it is left as it is.
+    mocks.enqueueDbJob.mockResolvedValueOnce({ id: "job-2", deduped: false });
+    memory.rows("intake_outbound")[0]!.status = "pending";
+    await dispatchIntakeDeliverOrFail(memory.db, org, outboundId);
+    expect(outbox()).toMatchObject({ status: "pending" });
+    expect(mocks.enqueueDbJob).toHaveBeenLastCalledWith(
+      memory.db,
+      expect.objectContaining({ kind: "intake.deliver", dedupeKey: `intake.deliver:${outboundId}` }),
+    );
+  });
+  it("posts nothing on a retry it can't tell landed, and says to check the thread", async () => {
+    setup();
+    memory.rows("intake_outbound")[0]!.attempted_at = new Date(Date.now() - 60_000).toISOString();
+    // A thread longer than the five pages a retry reads, without the message.
+    stubSlack({
+      "conversations.replies": () => ({
+        ok: true,
+        messages: [{ ts: "1.0", text: "unrelated" }],
+        response_metadata: { next_cursor: "more" },
+      }),
+    });
+    await expect(handleIntakeDeliver(memory.db, job(2))).rejects.toBeInstanceOf(NonRetryableJobError);
+    expect(slackCalls.filter((c) => c.method === "conversations.replies")).toHaveLength(5);
+    expect(slackCalls.some((c) => c.method === "chat.postMessage")).toBe(false);
+    expect(outbox()).toMatchObject({
+      status: "failed",
+      error: expect.stringContaining("MikeGC couldn't tell whether this reached the Slack thread."),
+    });
   });
   it("sends nothing once Slack is switched off", async () => {
     setup();

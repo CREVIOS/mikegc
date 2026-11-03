@@ -289,6 +289,31 @@ export async function markIntakeDeliverFailed(db: Db, job: DbJob): Promise<void>
   );
 }
 
+/**
+ * Queue an outbox row's delivery for a member's command. If it can't be
+ * queued, the row is marked failed, so the request offers Retry rather than
+ * showing it as sending for good; the queueing error is then thrown.
+ */
+export async function dispatchIntakeDeliverOrFail(
+  db: Db,
+  orgId: string,
+  outboundId: string,
+): Promise<void> {
+  try {
+    await dispatchIntakeDeliver(db, orgId, outboundId);
+  } catch (error) {
+    await intakeRpc<boolean>(db, "intake_record_delivery", {
+      p_org: orgId,
+      p_outbound: outboundId,
+      p_status: "failed",
+      p_external_id: null,
+      p_error: "MikeGC couldn't queue this message. Try again.",
+      p_documents: null,
+    }).catch(() => undefined);
+    throw error;
+  }
+}
+
 /** Queue an outbox row's delivery. */
 export async function dispatchIntakeDeliver(
   db: Db,

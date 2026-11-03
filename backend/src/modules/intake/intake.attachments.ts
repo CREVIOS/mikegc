@@ -109,17 +109,23 @@ export async function addDocument(
 ): Promise<boolean> {
   const { orgId, entry } = args;
   const documentId = entry.document_id;
-  const { error: insertError } = await db.from("documents").upsert(
-    {
-      id: documentId,
-      user_id: null,
-      org_id: orgId,
-      status: "processing",
-      library_kind: "intake_attachment",
-    },
-    { onConflict: "id", ignoreDuplicates: true },
-  );
+  const { data: inserted, error: insertError } = await db
+    .from("documents")
+    .upsert(
+      {
+        id: documentId,
+        user_id: null,
+        org_id: orgId,
+        status: "processing",
+        library_kind: "intake_attachment",
+      },
+      { onConflict: "id", ignoreDuplicates: true },
+    )
+    .select("id");
   if (insertError) throw insertError;
+  // A retry finds the document an earlier attempt made; only this call's own
+  // new row is removed when linking fails.
+  const created = Array.isArray(inserted) && inserted.length > 0;
   const attached = await intakeRpc<null>(db, "intake_attach_automated", {
     p_org: orgId,
     p_request: args.requestId,
@@ -127,7 +133,7 @@ export async function addDocument(
     p_message: args.messageId ?? null,
   });
   if (!attached.ok) {
-    await db.from("documents").delete().eq("id", documentId);
+    if (created) await db.from("documents").delete().eq("id", documentId);
     if (attached.kind === "not_found") return false;
     if (attached.kind === "error") throw attached.error;
     throw new IntakeAutomationError(RECORDED_INCOMPLETE);

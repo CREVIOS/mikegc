@@ -129,7 +129,6 @@ export function teamsActivityText(activity: TeamsActivity, appId: string): strin
     if (e.type === "mention" && mentioned?.id === `28:${appId}` && typeof e.text === "string")
       source = source.split(e.text).join("");
   }
-  source = source.replace(/<at>[^<]{0,200}<\/at>/gi, (tag) => tag.replace(/<\/?at>/gi, ""));
   return clip(cleanText(htmlToText(source)), MAX_MESSAGE_CHARS);
 }
 
@@ -282,6 +281,11 @@ export async function checkTeamsCredentials(args: {
 type GraphChatMessage = {
   id: string;
   createdDateTime?: string;
+  mentions?: {
+    id?: number;
+    mentionText?: string;
+    mentioned?: { application?: { id?: string } | null } | null;
+  }[];
   from?: {
     user?: { id?: string; displayName?: string } | null;
     application?: { id?: string; displayName?: string } | null;
@@ -313,17 +317,17 @@ async function graphThread(
   return [root, ...replies.sort((a, b) => at(a) - at(b))];
 }
 
-const graphText = (m: GraphChatMessage, appId: string) =>
-  clip(
-    cleanText(
-      htmlToText(
-        (m.body?.content ?? "").replace(/<at[^>]*>[^<]{0,200}<\/at>/gi, (tag) =>
-          tag.includes(appId) ? "" : tag.replace(/<[^>]+>/g, ""),
-        ),
-      ),
-    ),
-    MAX_MESSAGE_CHARS,
-  );
+/**
+ * A Graph message's text: the bot's own mentions taken out exactly as Graph
+ * lists them, and the rest of the HTML read as text.
+ */
+function graphText(m: GraphChatMessage, appId: string): string {
+  let html = m.body?.content ?? "";
+  for (const mention of m.mentions ?? [])
+    if (mention.mentioned?.application?.id === appId && typeof mention.id === "number")
+      html = html.split(`<at id="${mention.id}">${mention.mentionText ?? ""}</at>`).join("");
+  return clip(cleanText(htmlToText(html)), MAX_MESSAGE_CHARS);
+}
 
 /**
  * The Teams request: the mentioning message, or, for a mention in a reply,
@@ -355,6 +359,7 @@ export async function teamsInboundMessage(
         .filter((m) => m.from?.application?.id !== appId)
         .filter((m) => !mention || (Date.parse(m.createdDateTime ?? "") || 0) <= mention + 1000)
         .map((m) => ({
+          id: m.id,
           author: m.from?.user?.displayName ?? "Teams user",
           at: new Date(m.createdDateTime ?? payload.date),
           text: graphText(m, appId),
@@ -363,7 +368,12 @@ export async function teamsInboundMessage(
             .map((a) => ({ name: clip(cleanText(a.name ?? ""), 255) || "Teams file", size: null, url: a.contentUrl! })),
         }))
         .filter((m) => m.text.trim() || m.files.length);
-      if (read.length) entries = read;
+      // The thread as far as Graph shows it, ending with the signed mention
+      // even when Graph's copy of the thread stops short of it.
+      if (read.length)
+        entries = read.some((m) => m.id === payload.activity_id)
+          ? read
+          : [...read, entries[0]!];
     } catch (error) {
       if (error instanceof MicrosoftApiError && error.code === "not_configured") throw error;
       // Recorded from the mention alone.
@@ -632,13 +642,19 @@ export const teamsAdapter: ChannelAdapter = {
       const canUpload = ctx.settings.teams_files_access === true;
       for (const doc of documents) {
         if (doc.externalId || doc.leftOut || !canUpload) continue;
-        doc.externalId = await uploadToChannel(
-          ctx.settings,
-          address,
-          message.requestSubject,
-          doc,
-          await ctx.readDocument(doc),
-        );
+        try {
+          doc.externalId = await uploadToChannel(
+            ctx.settings,
+            address,
+            message.requestSubject,
+            doc,
+            await ctx.readDocument(doc),
+          );
+        } catch (error) {
+          // A document Microsoft refuses is named in the reply instead, so the
+          // reply still goes; anything that may pass on a retry is retried.
+          if (!(error instanceof MicrosoftApiError && error.permanent)) throw error;
+        }
         await ctx.saveProgress({ documents });
       }
       const withheld = documents.filter((d) => !d.externalId && !d.leftOut);
@@ -672,6 +688,18 @@ export const teamsAdapter: ChannelAdapter = {
     const address = teamsAddress(link);
     if (!address.aad_group_id || !address.channel_id || !ctx.settings.teams_app_id) return null;
     const since = attemptedAt ? Date.parse(attemptedAt) - 60_000 : 0;
+    // Teams messages other outbox rows in this thread already own.
+    const { data: owned, error: ownedError } = await ctx.db
+      .from("intake_outbound")
+      .select("id, external_id")
+      .eq("link_id", link.id)
+      .not("external_id", "is", null);
+    if (ownedError) throw ownedError;
+    const taken = new Set(
+      ((owned ?? []) as { id: string; external_id: string | null }[])
+        .filter((row) => row.id !== message.id && row.external_id)
+        .map((row) => row.external_id!),
+    );
     const expected = normalized(
       teamsMessageText(message, { fromName: ctx.fromName, files: [], withheld: [] }),
     ).slice(0, 120);
@@ -683,6 +711,7 @@ export const teamsAdapter: ChannelAdapter = {
       });
       const found = thread.find(
         (m) =>
+          !taken.has(m.id) &&
           m.from?.application?.id === ctx.settings.teams_app_id &&
           (Date.parse(m.createdDateTime ?? "") || 0) >= since &&
           normalized(m.body?.content ?? "").startsWith(expected.slice(0, 60)),

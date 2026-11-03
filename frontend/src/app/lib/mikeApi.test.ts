@@ -3711,7 +3711,7 @@ describe("intake API boundary", () => {
             [()=>commandIntakeRequest(scope,id,"resolve",reply),"requests/request%2Fid/resolve","POST",reply],
             [()=>commandIntakeRequest(scope,id,"stop_asking",stop),"requests/request%2Fid/stop_asking","POST",stop],
             [()=>retryIntakeDelivery(scope,id,"out/1"),"requests/request%2Fid/outbound/out%2F1/retry","POST"],
-            [()=>markIntakeReplySeen(scope,id),"requests/request%2Fid/reply-seen","POST"],
+            [()=>markIntakeReplySeen(scope,id,"2026-11-03T10:00:00.123456+00:00"),"requests/request%2Fid/reply-seen","POST",{seen_at:"2026-11-03T10:00:00.123456+00:00"}],
             [()=>listIntakeRequests(scope,{new_reply:true}),`requests?new_reply=true&${zone}`,"GET"],
         ];
         for(const [run,path,method,body] of cases) {

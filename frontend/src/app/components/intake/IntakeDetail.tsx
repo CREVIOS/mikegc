@@ -303,7 +303,7 @@ export function Detail({
       if (said) setAnnouncement(said);
       // Opening the request clears its New reply flag in the queue.
       if (r.new_reply)
-        void markIntakeReplySeen(orgId, requestId).catch(() => {
+        void markIntakeReplySeen(orgId, requestId, r.last_reply_at).catch(() => {
           // Only the queue's marker stays; the request itself is on screen.
         });
     } catch (e) {

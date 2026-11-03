@@ -296,7 +296,9 @@ const SLACK_TS_PATTERN = /^\d{1,12}\.\d{1,8}$/;
 
 /**
  * The ts of MikeGC's message in a thread carrying `outboundId` in its
- * metadata, posted after `oldest`; null when none landed.
+ * metadata, posted after `oldest`; null when none landed. A thread too busy
+ * to search to the end throws "search_incomplete": whether it landed is
+ * unknown, and posting again could repeat it.
  */
 export async function slackFindByMetadata(
   token: string,
@@ -322,9 +324,9 @@ export async function slackFindByMetadata(
     );
     if (found) return found.ts;
     cursor = data.response_metadata?.next_cursor || undefined;
-    if (!cursor) break;
+    if (!cursor) return null;
   }
-  return null;
+  throw new SlackApiError("search_incomplete");
 }
 
 /** One message of a thread by its ts, or null when it is gone. */
@@ -586,6 +588,11 @@ export function slackDeliveryError(error: unknown, channelName: string | null): 
   if (code === "missing_scope" || code === "no_permission")
     return new ChannelDeliveryError(
       "The Slack app is missing a permission. Reinstall it from the manifest in the setup guide.",
+      true,
+    );
+  if (code === "search_incomplete")
+    return new ChannelDeliveryError(
+      "MikeGC couldn't tell whether this reached the Slack thread. Check the thread, and copy the text if it isn't there.",
       true,
     );
   if (code === "restricted_action" || code === "msg_too_long" || code === "invalid_blocks")
