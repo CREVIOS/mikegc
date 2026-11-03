@@ -489,20 +489,3 @@ export function intakeAutosaveDraft(
         : draft.teamsEnabled,
   };
 }
-
-/**
- * The draft once the mailbox was connected or disconnected outside
- * autosave: the email fields take what the server now has.
- */
-export function intakeDraftWithEmail(
-  draft: IntakeAutomationDraft,
-  settings: IntakeAutomationSettings,
-): IntakeAutomationDraft {
-  const fresh = intakeAutomationDraft(settings);
-  return {
-    ...draft,
-    emailEnabled: fresh.emailEnabled,
-    domains: fresh.domains,
-    fromName: fresh.fromName,
-  };
-}

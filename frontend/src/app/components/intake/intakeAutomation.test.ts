@@ -8,7 +8,6 @@ vi.mock("@/app/contexts/WorkspaceContext", () => ({
 import {
   MAX_INTAKE_DOMAINS,
   NOTHING_COMMITTED,
-  intakeDraftWithEmail,
   intakeAutomationChanges,
   intakeAutomationDraft,
   intakeDomainInputError,
@@ -600,29 +599,6 @@ describe("the requester loop's settings", () => {
       teamsAppId: "app-1",
       teamsTenantId: "tenant-1",
       teamsSecret: "",
-    });
-  });
-
-  it("takes the email fields the server has after the mailbox changes", () => {
-    const draft = {
-      ...intakeAutomationDraft(saved),
-      domains: ["old.example"],
-      fromName: "Old",
-      slackEnabled: true,
-    };
-    const next = intakeDraftWithEmail(draft, {
-      ...saved,
-      email: {
-        ...saved.email,
-        allowed_domains: ["company.com"],
-        from_name: "Legal",
-      },
-    });
-    expect(next).toMatchObject({
-      domains: ["company.com"],
-      fromName: "Legal",
-      // Unrelated edits stay.
-      slackEnabled: true,
     });
   });
 });
