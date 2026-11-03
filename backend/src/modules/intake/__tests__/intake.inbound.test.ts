@@ -32,6 +32,7 @@ vi.mock("../../user/user.service", () => ({
   envApiKeys: vi.fn(() => ({})),
 }));
 import { encryptString } from "../../../lib/mcp/client";
+import { htmlToText } from "../intake.inbound";
 import { intakeWebhooksRouter } from "../intake.webhooks.routes";
 
 const org = "00000000-0000-4000-8000-000000000001";
@@ -350,5 +351,15 @@ describe("inbound email", () => {
     expect(logged).toHaveBeenCalled();
     expect(JSON.stringify(logged.mock.calls.map((c) => c.map(String)))).not.toContain(token);
     expect(JSON.stringify(logged.mock.calls[0]?.[1] ?? {})).toContain(":token");
+  });
+});
+
+describe("htmlToText", () => {
+  it("reads an HTML email as text, leaving no markup even when tags are nested", () => {
+    expect(
+      htmlToText("<head><title>x</title></head><p>Hi &amp; thanks</p><ul><li>One</li></ul>"),
+    ).toBe("Hi & thanks\n- One");
+    for (const nested of ["<scr<b>ipt>alert(1)</scr</b>ipt>", "<<b>p>text", "<<<a>>b>c"])
+      expect(htmlToText(nested)).not.toMatch(/</);
   });
 });

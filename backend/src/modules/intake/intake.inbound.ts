@@ -336,12 +336,19 @@ export function senderDomainAllowed(
 
 /** Readable text from an HTML-only email. */
 export function htmlToText(html: string): string {
-  return html
-    .replace(/<(script|style|head)[\s\S]*?<\/\1>/gi, "")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/(p|div|li|tr|h[1-6])>/gi, "\n")
-    .replace(/<li[^>]*>/gi, "- ")
-    .replace(/<[^>]+>/g, "")
+  // Markup is removed until none is left, as removing one tag can join the
+  // pieces of another, such as "<scr<b>ipt>".
+  let text = html;
+  for (let previous = ""; text !== previous; ) {
+    previous = text;
+    text = text
+      .replace(/<(script|style|head)[\s\S]*?<\/\1>/gi, "")
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/(p|div|li|tr|h[1-6])>/gi, "\n")
+      .replace(/<li[^>]*>/gi, "- ")
+      .replace(/<[^>]+>/g, "");
+  }
+  return text
     .replace(/&nbsp;/gi, " ")
     .replace(/&lt;/gi, "<")
     .replace(/&gt;/gi, ">")
