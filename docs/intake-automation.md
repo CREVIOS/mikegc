@@ -36,9 +36,12 @@ channel is a card that says whether it is set up and what needs attention, with
 one button: **Set up** before the channel is configured, **Manage** after. The
 button opens a dialog with everything for that channel: its switch, its IDs and
 secrets (write-only, never shown again), the URL to give Slack, Teams or
-Microsoft, notices about missing permissions, and the setup steps. Details and
-secrets are saved with the dialog's button; closing it without saving discards
-them. Triage rules save by themselves as before.
+Microsoft, notices about missing permissions, the email sender name and
+domains, and the setup steps. Everything in the dialog, its switch included,
+is saved with its **Save** button (an email mailbox is connected with
+**Connect**); Cancel, Close or Escape discards what wasn't saved. Triage rules,
+with the **Ask requesters for missing details** switch, save by themselves as
+before.
 A channel turned on starts once it is set up: email once its mailbox is
 connected, Slack once both its secrets are saved, Teams once its app ID,
 tenant ID and secret are saved and Microsoft accepts them. Who each request goes to, and

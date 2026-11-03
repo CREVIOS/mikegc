@@ -28,6 +28,7 @@ list is `/intake/requests`; `/intake` redirects there with its query.
 | `status` | `submitted`, `in_review` or `needs_information` |
 | `assignee` | a member's user ID |
 | `requester` | one requester's name, matched without case |
+| `reply` | `new`: only requests with a requester's reply nobody has opened yet |
 | `sort` | `updated_asc` or `target` (most recently updated first when absent) |
 | `q` | the search text |
 
