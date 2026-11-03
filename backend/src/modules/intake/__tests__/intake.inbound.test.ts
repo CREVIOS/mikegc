@@ -351,6 +351,12 @@ describe("inbound email", () => {
     expect(logged).toHaveBeenCalled();
     expect(JSON.stringify(logged.mock.calls.map((c) => c.map(String)))).not.toContain(token);
     expect(JSON.stringify(logged.mock.calls[0]?.[1] ?? {})).toContain(":token");
+    // A percent-encoded token is the same credential, and is kept out too.
+    logged.mockClear();
+    const encoded = `%${token.charCodeAt(0).toString(16).toUpperCase()}${token.slice(1)}`;
+    expect((await postEmail(email(), encoded)).status).toBe(500);
+    const lines = JSON.stringify(logged.mock.calls.map((c) => c.map(String)));
+    expect(lines).not.toContain(token.slice(1));
   });
 });
 

@@ -235,20 +235,25 @@ async function readDocuments(
   return { read, unread };
 }
 
+/** What marking up a document did: its tracked changes, or why none were written. */
+type MarkUp = { name: string; changes: number } | { name: string; failed: string };
+
 /**
  * Mark up a Word document MikeGC has not marked up before. One someone has
  * already revised is left as it is: preprocessing reads the document as it
- * arrived.
+ * arrived. Null when there was nothing to write.
  */
 async function markUp(
   db: Db,
   orgId: string,
   doc: ReadDocument,
   edits: EditInput[],
-): Promise<number> {
-  if (!doc.isDocx || doc.versionCount !== 1 || edits.length === 0) return 0;
+): Promise<MarkUp | null> {
+  if (!doc.isDocx || doc.versionCount !== 1 || edits.length === 0) return null;
   const result = await applyOrgTrackedEdits({ db, orgId, doc, author: AUTHOR, edits });
-  return result.ok ? result.annotations.length : 0;
+  if (!result.ok) return { name: doc.filename, failed: result.error };
+  const changes = result.annotations.length;
+  return changes ? { name: doc.filename, changes } : null;
 }
 
 const SYSTEM_PROMPT = `You preprocess requests sent to an in-house legal team, before a lawyer picks them up. Read the request and its documents, then answer with one JSON object and nothing else:
@@ -330,9 +335,9 @@ async function reviewRequest(args: {
   playbookId: string;
   request: { subject: string; description: string };
   documents: ReadDocument[];
-}): Promise<{ sections: string[]; marked: { name: string; changes: number }[] }> {
+}): Promise<{ sections: string[]; marked: MarkUp[] }> {
   const sections: string[] = [];
-  const marked: { name: string; changes: number }[] = [];
+  const marked: MarkUp[] = [];
   const context = clip(
     `This document came with an intake request.\nSubject: ${args.request.subject}\n\n${args.request.description}`,
     4_000,
@@ -349,14 +354,16 @@ async function reviewRequest(args: {
         model: args.model.model,
         reviewMode: "permissive",
         reviewScope: "issues",
+        // The intake organization's keys, even for a personal playbook.
+        keysOrgId: args.job.orgId,
       });
-      const changes = await markUp(
+      const result = await markUp(
         args.db,
         args.job.orgId,
         doc,
         playbookFindingEdits(review.findings).map((p) => p.edit),
       );
-      if (changes) marked.push({ name: doc.filename, changes });
+      if (result) marked.push(result);
       const issues = review.findings.filter((f) =>
         ["needs_review", "unacceptable", "missing_required"].includes(f.status),
       );
@@ -445,21 +452,25 @@ async function preprocess(db: Db, job: JobPayload, lastAttempt: boolean) {
     documents: read,
     instructions: rule?.instructions ?? null,
   });
-  const marked: { name: string; changes: number }[] = [];
+  const marked: MarkUp[] = [];
   for (const [index, list] of edits) {
-    const changes = await markUp(db, job.orgId, read[index]!, list);
-    if (changes) marked.push({ name: read[index]!.filename, changes });
+    const result = await markUp(db, job.orgId, read[index]!, list);
+    if (result) marked.push(result);
   }
   return postNote(db, job, `${title}\n\n${answer}${markedLines(marked)}${skippedLine}`);
 }
 
-function markedLines(marked: { name: string; changes: number }[]) {
-  if (marked.length === 0) return "";
+/** The documents marked up, then any whose tracked changes couldn't be written. */
+function markedLines(marked: MarkUp[]) {
+  const done = marked.flatMap((m) =>
+    "changes" in m
+      ? [`- ${m.name}: ${m.changes} ${m.changes === 1 ? "change" : "changes"}`]
+      : [],
+  );
+  const failed = marked.flatMap((m) => ("failed" in m ? [`- ${m.name}: ${m.failed}`] : []));
   return (
-    "\n\nMarked up with tracked changes:\n" +
-    marked
-      .map((m) => `- ${m.name}: ${m.changes} ${m.changes === 1 ? "change" : "changes"}`)
-      .join("\n")
+    (done.length ? `\n\nMarked up with tracked changes:\n${done.join("\n")}` : "") +
+    (failed.length ? `\n\nCouldn't mark up:\n${failed.join("\n")}` : "")
   );
 }
 

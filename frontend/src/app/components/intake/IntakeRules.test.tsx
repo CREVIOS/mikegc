@@ -281,6 +281,32 @@ describe("IntakeRules", () => {
     expect(screen.getByText("No")).toHaveClass("bg-gray-100", "rounded-full");
   });
 
+  it("shows the rules while the workflows and playbooks are still being listed", async () => {
+    const user = userEvent.setup();
+    mocks.workflows.mockReturnValue(new Promise(() => {}));
+    mocks.playbooks.mockReturnValue(new Promise(() => {}));
+    server = settings([
+      rule("NDAs", "lawyer-a", {
+        preprocess: true,
+        preprocess_with: {
+          kind: "playbook",
+          id: "pb-1",
+          name: "Supplier NDA playbook",
+        },
+      }),
+    ]);
+    render(<IntakeRules orgId="org-a" />);
+    expect(await table()).toHaveValue("NDAs");
+    // A rule names its own workflow or playbook until the lists arrive.
+    await user.click(
+      screen.getByRole("button", {
+        name: "Rule 1 preprocessing rule: Supplier NDA playbook",
+      }),
+    );
+    expect(screen.getAllByRole("menuitem", { name: "Loading…" })).toHaveLength(
+      2,
+    );
+  });
   it("names a workflow or playbook the admin can't open as such", async () => {
     server = settings([
       rule("NDAs", "lawyer-a", {

@@ -159,9 +159,13 @@ export async function resolveIntakeModel(
   return hasApiKeyForModel(model, available) ? { model, apiKeys } : null;
 }
 
-/** Today in UTC, as YYYY-MM-DD, which relative dates in a message count from. */
-function today(now: Date): string {
-  return now.toISOString().slice(0, 10);
+/**
+ * The day relative dates in a message count from, in UTC as YYYY-MM-DD: the
+ * day it was sent, so "by Friday" means the Friday after it was written even
+ * when it is read later. A sent time after `now` counts as `now`.
+ */
+function today(sentAt: Date, now: Date): string {
+  return (sentAt > now ? now : sentAt).toISOString().slice(0, 10);
 }
 
 /**
@@ -268,7 +272,7 @@ export function buildTriagePrompt(args: {
   }));
   const body = clip(message.text, PROMPT_MESSAGE_CHARS);
   const user = [
-    `TODAY: ${today(args.now)} (UTC)`,
+    `TODAY: ${today(message.sentAt, args.now)} (UTC)`,
     `RULES: ${JSON.stringify(rules)}`,
     `ATTACHMENTS: ${JSON.stringify(attachments)}`,
     `DATA ${boundary} BEGIN`,

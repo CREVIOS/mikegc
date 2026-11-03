@@ -133,12 +133,19 @@ type Choices = {
   playbooks: { id: string; name: string }[];
   /** They couldn't be listed; a rule keeps what it has. */
   failed: boolean;
+  /** Still being listed, apart from the rules, which show without them. */
+  loading: boolean;
+};
+const LISTING_CHOICES: Choices = {
+  workflows: [],
+  playbooks: [],
+  failed: false,
+  loading: true,
 };
 
 type Loaded = {
   settings: IntakeAutomationSettings;
   members: IntakeMember[];
-  choices: Choices;
 };
 
 type Filters = {
@@ -272,15 +279,14 @@ export function IntakeRules({ orgId }: { orgId: string }) {
   // The rule being dragged, and where it would land.
   const [dragged, setDragged] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
+  const [choices, setChoices] = useState<Choices>(LISTING_CHOICES);
 
   useEffect(() => {
     let active = true;
     Promise.allSettled([
       getIntakeAutomation(orgId),
       getIntakeMembers(orgId),
-      listWorkflows("assistant", orgId),
-      listPlaybooks(orgId),
-    ]).then(([settings, members, workflows, playbooks]) => {
+    ]).then(([settings, members]) => {
       if (!active) return;
       if (settings.status === "rejected" || members.status === "rejected") {
         const failed =
@@ -295,31 +301,7 @@ export function IntakeRules({ orgId }: { orgId: string }) {
         );
         return;
       }
-      setLoaded({
-        settings: settings.value,
-        members: members.value,
-        choices: {
-          // Catalog workflows aren't the organization's to run.
-          workflows:
-            workflows.status === "fulfilled"
-              ? workflows.value
-                  .filter(
-                    (w: Workflow) =>
-                      !w.is_system && w.metadata.type === "assistant",
-                  )
-                  .map((w: Workflow) => ({ id: w.id, name: w.metadata.title }))
-              : [],
-          playbooks:
-            playbooks.status === "fulfilled"
-              ? playbooks.value.map((p: Playbook) => ({
-                  id: p.id,
-                  name: p.name,
-                }))
-              : [],
-          failed:
-            workflows.status === "rejected" || playbooks.status === "rejected",
-        },
-      });
+      setLoaded({ settings: settings.value, members: members.value });
       setDraft(intakeAutomationDraft(settings.value));
       setFailure(null);
     });
@@ -327,6 +309,39 @@ export function IntakeRules({ orgId }: { orgId: string }) {
       active = false;
     };
   }, [orgId, reload]);
+  // What preprocessing can follow is listed apart, so a slow list never
+  // holds up the rules; a rule names its own until the lists arrive.
+  useEffect(() => {
+    let active = true;
+    Promise.allSettled([
+      listWorkflows("assistant", orgId),
+      listPlaybooks(orgId),
+    ]).then(([workflows, playbooks]) => {
+      if (!active) return;
+      setChoices({
+        // Catalog workflows aren't the organization's to run.
+        workflows:
+          workflows.status === "fulfilled"
+            ? workflows.value
+                .filter(
+                  (w: Workflow) =>
+                    !w.is_system && w.metadata.type === "assistant",
+                )
+                .map((w: Workflow) => ({ id: w.id, name: w.metadata.title }))
+            : [],
+        playbooks:
+          playbooks.status === "fulfilled"
+            ? playbooks.value.map((p: Playbook) => ({ id: p.id, name: p.name }))
+            : [],
+        failed:
+          workflows.status === "rejected" || playbooks.status === "rejected",
+        loading: false,
+      });
+    });
+    return () => {
+      active = false;
+    };
+  }, [orgId]);
 
   const saving = useIntakeAutomationAutosave({
     orgId,
@@ -389,7 +404,6 @@ export function IntakeRules({ orgId }: { orgId: string }) {
     setSelected(new Set());
   };
 
-  const choices = loaded?.choices;
   const query = search.trim().toLowerCase();
   // Each rule keeps its number, its place in the order, while filtered.
   const numbered = rules.map((rule, index) => ({ rule, index }));
@@ -418,18 +432,16 @@ export function IntakeRules({ orgId }: { orgId: string }) {
       label: intakeMemberName(member),
     }));
   const preprocessWithOptions: TableFilterOption<string>[] = [];
-  if (choices) {
-    const seen = new Set<string>();
-    for (const rule of rules) {
-      if (!rule.preprocess) continue;
-      const key = refKey(rule.preprocessWith) || "none";
-      if (seen.has(key)) continue;
-      seen.add(key);
-      preprocessWithOptions.push({
-        value: key,
-        label: preprocessLabel(rule.preprocessWith, choices) ?? "None",
-      });
-    }
+  const seen = new Set<string>();
+  for (const rule of rules) {
+    if (!rule.preprocess) continue;
+    const key = refKey(rule.preprocessWith) || "none";
+    if (seen.has(key)) continue;
+    seen.add(key);
+    preprocessWithOptions.push({
+      value: key,
+      label: preprocessLabel(rule.preprocessWith, choices) ?? "None",
+    });
   }
 
   const ready = loaded && draft;
@@ -684,7 +696,7 @@ export function IntakeRules({ orgId }: { orgId: string }) {
                 rule={rule}
                 number={index + 1}
                 members={loaded.members}
-                choices={loaded.choices}
+                choices={choices}
                 selected={selected.has(rule.key)}
                 onSelect={(on) =>
                   setSelected((current) => {
@@ -926,9 +938,11 @@ function RuleRow({
         />
         {unfinished && (
           <p id={hintId} className="mt-0.5 text-xs text-gray-500">
-            {rule.assigneeId
-              ? "Add a condition to save this rule."
-              : "Choose who to assign to save this rule."}
+            {rule.saved
+              ? "Until it has a condition, this rule keeps its saved one."
+              : rule.assigneeId
+                ? "Add a condition to save this rule."
+                : "Choose who to assign to save this rule."}
           </p>
         )}
       </TableCell>
@@ -1323,7 +1337,9 @@ function PreprocessWithField({
             Workflows
           </DropdownLabel>
           {choices.workflows.length === 0 && (
-            <DropdownItem disabled>No assistant workflows</DropdownItem>
+            <DropdownItem disabled>
+              {choices.loading ? "Loading…" : "No assistant workflows"}
+            </DropdownItem>
           )}
           {choices.workflows.map((c) => (
             <DropdownRadioItem
@@ -1339,7 +1355,9 @@ function PreprocessWithField({
             Playbooks
           </DropdownLabel>
           {choices.playbooks.length === 0 && (
-            <DropdownItem disabled>No playbooks</DropdownItem>
+            <DropdownItem disabled>
+              {choices.loading ? "Loading…" : "No playbooks"}
+            </DropdownItem>
           )}
           {choices.playbooks.map((c) => (
             <DropdownRadioItem

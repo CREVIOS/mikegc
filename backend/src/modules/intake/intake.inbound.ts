@@ -160,7 +160,7 @@ function slackFiles(files: unknown[] | undefined): SlackInboundPayload["files"] 
     return [
       {
         id: typeof file.id === "string" ? file.id.slice(0, 40) : null,
-        name: cleanText(name).slice(0, 255) || "Slack file",
+        name: clip(cleanText(name), 255) || "Slack file",
         size: typeof file.size === "number" && file.size >= 0 ? file.size : null,
         url:
           typeof file.url_private_download === "string"
@@ -317,7 +317,7 @@ function sender(mail: PostmarkInbound): EmailInboundPayload["from"] {
   const name = (mail.FromFull?.Name || mail.FromName || "").trim();
   return {
     email: /^[^@\s]+@[^@\s]+$/.test(email) && email.length <= 320 ? email : null,
-    name: name ? cleanText(name).slice(0, 200) : null,
+    name: name ? clip(cleanText(name), 200) : null,
   };
 }
 
@@ -538,7 +538,7 @@ export async function receiveInboundEmail(
   const payload: EmailInboundPayload = {
     kind: "email",
     from,
-    subject: mail.Subject?.trim() ? cleanText(mail.Subject.trim()).slice(0, 1000) : null,
+    subject: mail.Subject?.trim() ? clip(cleanText(mail.Subject.trim()), 1000) : null,
     date: (Number.isNaN(sent.getTime()) ? new Date() : sent).toISOString(),
     text: clip(cleanText(text), MAX_MESSAGE_CHARS),
     ...staged,

@@ -13,6 +13,7 @@ import {
   intakeDraftAfterFailure,
   intakeAutosaveDraft,
   intakeDraftAfterSave,
+  intakeDraftWithSwitches,
   moveIntakeRule,
   newIntakeRule,
   normalizeIntakeDomain,
@@ -240,9 +241,13 @@ describe("intakeDraftAfterSave", () => {
     const next = intakeDraftAfterSave(draft, sent, kept);
     // A pause after a space keeps the space; the same rules keep their keys.
     expect(next.rules).toEqual([
-      typing,
+      { ...typing, saved: { condition: "Disputes", assigneeId: "a" } },
       unfinished,
-      { ...cleaned, condition: "Leases" },
+      {
+        ...cleaned,
+        condition: "Leases",
+        saved: { condition: "Leases", assigneeId: "b" },
+      },
     ]);
     expect(intakeAutomationChanges(kept, next)).toEqual({});
   });
@@ -353,6 +358,65 @@ describe("intakeDraftAfterFailure", () => {
     });
   });
 });
+describe("intakeDraftWithSwitches", () => {
+  it("sets a failed switch and model again, unless one was changed since", () => {
+    const sent = { slack_enabled: true, triage_model: "claude-sonnet-5-5" };
+    // The failure turned both back; the model was then chosen again.
+    const draft = {
+      ...intakeAutomationDraft(saved),
+      preprocessingModel: null,
+      triageModel: "gpt-6",
+    };
+    expect(intakeDraftWithSwitches(draft, sent, saved)).toEqual({
+      ...draft,
+      slackEnabled: true,
+      triageModel: "gpt-6",
+    });
+    expect(
+      intakeDraftWithSwitches(intakeAutomationDraft(saved), sent, saved),
+    ).toMatchObject({ slackEnabled: true, triageModel: "claude-sonnet-5-5" });
+  });
+});
+
+describe("a saved rule being retyped", () => {
+  it("keeps saving as it was while its condition is cleared, and other rules still save", () => {
+    const draft = intakeAutomationDraft(saved);
+    const cleared = {
+      ...draft,
+      rules: [{ ...draft.rules[0]!, condition: "" }],
+    };
+    // Nothing to save: clearing it doesn't delete it.
+    expect(intakeAutomationChanges(saved, cleared)).toEqual({});
+    const another = newIntakeRule({ condition: "Leases", assigneeId: "b" });
+    expect(
+      intakeAutomationChanges(saved, {
+        ...cleared,
+        rules: [...cleared.rules, another],
+      }).rules,
+    ).toEqual([
+      {
+        condition: "NDAs",
+        assignee_id: "a",
+        preprocess: false,
+        preprocess_with: null,
+      },
+      {
+        condition: "Leases",
+        assignee_id: "b",
+        preprocess: false,
+        preprocess_with: null,
+      },
+    ]);
+    // Retyped, it saves as the new text.
+    expect(
+      intakeAutomationChanges(saved, {
+        ...draft,
+        rules: [{ ...draft.rules[0]!, condition: "NDAs and leases" }],
+      }).rules?.[0],
+    ).toMatchObject({ condition: "NDAs and leases" });
+  });
+});
+
 describe("intakeAutosaveDraft", () => {
   const none = { signingSecret: false, botToken: false };
   const unset: IntakeAutomationSettings = {

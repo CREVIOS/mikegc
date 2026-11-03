@@ -81,6 +81,11 @@ export type DocumentEntry = z.infer<typeof documentEntry>;
 const progress = {
   plan: triagePlan.optional(),
   documents: z.record(z.string(), documentEntry).optional(),
+  /**
+   * Set once the request is recorded. The message's link to it is cleared if
+   * the request is deleted, and this tells that apart from never recorded.
+   */
+  recorded: z.boolean().optional(),
   /** Set once the Slack thread has MikeGC's answer, so it is sent once. */
   replied: z.boolean().optional(),
   /** Set once AI preprocessing is queued, so it is queued once. */

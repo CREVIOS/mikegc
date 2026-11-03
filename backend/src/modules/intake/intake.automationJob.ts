@@ -149,13 +149,20 @@ async function savePayload(db: Db, id: string, payload: InboundPayload) {
   if (error) throw error;
 }
 
-/** Leave the waiting state for good, dropping the content. */
+/**
+ * Leave the waiting state for good, dropping the content. An email's staged
+ * attachments are released first: if settling then fails, the message is
+ * settled again and released again, which is harmless, rather than settled
+ * with its staged files left behind.
+ */
 async function settle(
   db: Db,
   id: string,
   status: "done" | "failed",
   error: string | null,
+  payload: unknown,
 ) {
+  await releaseStaged(db, payload);
   const { error: updateError } = await db
     .from("intake_inbound")
     .update({
@@ -169,7 +176,7 @@ async function settle(
   if (updateError) throw updateError;
 }
 
-/** Remove an email's staged attachments once nothing will read them. */
+/** Remove an email's staged attachments, once nothing will read them. */
 async function releaseStaged(db: Db, payload: unknown) {
   const keys = stagedKeys(payload);
   if (keys.length) await enqueueStorageCleanup(db, keys);
@@ -242,7 +249,7 @@ function fileRefs(files: SlackFile[] | undefined): SlackInboundPayload["files"] 
     .filter((f) => f.mode !== "tombstone" && f.mode !== "external" && !f.is_external)
     .map((f) => ({
       id: f.id ?? null,
-      name: cleanText(f.name || f.title || "").slice(0, 255) || "Slack file",
+      name: clip(cleanText(f.name || f.title || ""), 255) || "Slack file",
       size: typeof f.size === "number" ? f.size : null,
       url: f.url_private_download ?? null,
     }));
@@ -284,7 +291,10 @@ async function slackMessage(
         files: fileRefs(m.files),
       }))
       .filter((m) => m.text.trim() || m.files.length);
-    if (read.length) messages = read;
+    // The thread as far as it could be read, ending with the mention even
+    // when the read stopped short of it.
+    if (read.length)
+      messages = read.some((m) => m.ts === payload.ts) ? read : [...read, messages[0]!];
   }
   const requester = messages[0]!.user ?? payload.user;
   const ids = [
@@ -601,7 +611,16 @@ async function processInbound(db: Db, row: InboundRow): Promise<Record<string, u
     await savePayload(db, row.id, payload);
   }
   const plan = payload.plan;
+  // Recorded, then deleted before this run: it stays deleted.
+  if (payload.recorded && !row.request_id) {
+    await settle(db, row.id, "done", null, payload);
+    return { request_id: null, deleted: true };
+  }
   const requestId = row.request_id ?? (await submit(db, row, plan));
+  if (!payload.recorded) {
+    payload.recorded = true;
+    await savePayload(db, row.id, payload);
+  }
   await addDocuments(db, row, payload, plan, requestId, slackToken);
   // Once its documents are attached, so preprocessing reads them.
   if (plan.preprocess && !payload.preprocessQueued) {
@@ -619,8 +638,7 @@ async function processInbound(db: Db, row: InboundRow): Promise<Record<string, u
     payload.replied = true;
     await savePayload(db, row.id, payload);
   }
-  await settle(db, row.id, "done", null);
-  await releaseStaged(db, payload);
+  await settle(db, row.id, "done", null, payload);
   return { request_id: requestId, triaged: plan.triaged };
 }
 
@@ -682,8 +700,7 @@ export async function markIntakeInboundFailed(db: Db, job: DbJob): Promise<void>
       console.warn("[intake-automation] failure reply not sent", safeError(error));
     }
   }
-  await settle(db, row.id, "failed", reason);
-  await releaseStaged(db, row.payload);
+  await settle(db, row.id, "failed", reason, row.payload);
 }
 
 /**

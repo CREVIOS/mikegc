@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import type {
   IntakeAssignmentRule,
   IntakeAutomationSettings,
@@ -365,25 +365,33 @@ export async function updateIntakeAutomation(
       );
     patch.slack_enabled = input.slack_enabled;
   }
-  // Both run as the admin saving, so a model chosen must have their key.
+  // Both run as the admin saving, so a model chosen must have their key, and
+  // so must one kept when this save makes intake run as someone new.
   const chosenModels = (["triage_model", "preprocessing_model"] as const).filter(
     (field) => input[field] !== undefined,
   );
-  if (chosenModels.some((field) => input[field] !== null)) {
+  const runnerChanges = row.configured_by !== scope.actorId;
+  const checked = (["triage_model", "preprocessing_model"] as const).flatMap(
+    (field) => {
+      const kept = input[field] === undefined;
+      const model = kept ? (runnerChanges ? row[field] : null) : input[field];
+      return model ? [{ field, model, kept }] : [];
+    },
+  );
+  if (checked.length) {
     let available: string[];
     try {
       available = await availableIntakeModels(db, scope.orgId, scope.actorId);
     } catch (error) {
       return internalFailure(error);
     }
-    if (
-      chosenModels.some(
-        (field) => input[field] !== null && !available.includes(input[field]!),
-      )
-    )
+    const missing = checked.find((c) => !available.includes(c.model));
+    if (missing)
       return failure(
         "validation",
-        "Choose a model your organization has a key for.",
+        missing.kept
+          ? `${missing.field === "triage_model" ? "Triage" : "AI preprocessing"} uses a model you don't have a key for, and saving makes intake run as you. Choose another model in Model Preferences first.`
+          : "Choose a model your organization has a key for.",
       );
   }
   for (const field of chosenModels) patch[field] = input[field];
@@ -479,35 +487,25 @@ export async function updateIntakeAutomation(
 }
 
 /**
- * The organization's rules become `rules`, in order. The new rules are
- * written before the old ones go, so a failure never leaves none.
+ * The organization's rules become `rules`, in order, in one transaction that
+ * holds its settings row: a failure leaves the rules as they were, and two
+ * saves at once take turns rather than each deleting the other's rules.
  */
 async function replaceRules(
   db: Db,
   orgId: string,
   rules: IntakeAssignmentRule[],
 ): Promise<ServiceResult<null>> {
-  const now = new Date().toISOString();
-  const ids = rules.map(() => randomUUID());
-  if (rules.length) {
-    const { error } = await db.from("intake_assignment_rules").insert(
-      rules.map((r, position) => ({
-        id: ids[position],
-        org_id: orgId,
-        position,
-        condition: r.condition,
-        assignee_id: r.assignee_id,
-        preprocess: r.preprocess,
-        preprocess_kind: r.preprocess_with?.kind ?? null,
-        preprocess_ref: r.preprocess_with?.id ?? null,
-        updated_at: now,
-      })),
-    );
-    if (error) return internalFailure(error);
-  }
-  let remove = db.from("intake_assignment_rules").delete().eq("org_id", orgId);
-  if (ids.length) remove = remove.not("id", "in", `(${ids.join(",")})`);
-  const { error } = await remove;
+  const { error } = await db.rpc("intake_replace_rules", {
+    p_org: orgId,
+    p_rules: rules.map((r) => ({
+      condition: r.condition,
+      assignee_id: r.assignee_id,
+      preprocess: r.preprocess,
+      preprocess_kind: r.preprocess_with?.kind ?? null,
+      preprocess_ref: r.preprocess_with?.id ?? null,
+    })),
+  });
   if (error) return internalFailure(error);
   return ok(null);
 }

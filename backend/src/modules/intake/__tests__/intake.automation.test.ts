@@ -3,7 +3,7 @@ import express from "express";
 import request from "supertest";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { IntakeAssignmentRule } from "@mike/contracts";
-import { memoryDb, type MemoryDb } from "./memoryDb";
+import { intakeRulesRpc, memoryDb, type MemoryDb } from "./memoryDb";
 
 const mocks = vi.hoisted(() => ({
   memory: null as unknown as { db: unknown },
@@ -82,13 +82,16 @@ beforeEach(() => {
   process.env.API_PUBLIC_URL = "https://app.example.com/api/";
   mocks.envApiKeys.mockReturnValue({});
   mocks.getEffectiveApiKeys.mockResolvedValue({ claude: "sk-org" });
-  memory = memoryDb({
-    org_members: [
-      { org_id: org, user_id: owner, role: "owner" },
-      { org_id: org, user_id: admin, role: "admin" },
-      { org_id: org, user_id: member, role: "member" },
-    ],
-  });
+  memory = memoryDb(
+    {
+      org_members: [
+        { org_id: org, user_id: owner, role: "owner" },
+        { org_id: org, user_id: admin, role: "admin" },
+        { org_id: org, user_id: member, role: "member" },
+      ],
+    },
+    intakeRulesRpc,
+  );
   mocks.memory = memory;
   vi.stubGlobal(
     "fetch",
@@ -212,11 +215,27 @@ describe("who manages automated intake", () => {
       ok: true,
       data: { models: { triage: "claude-haiku-4-5", triage_available: true } },
     });
-    // What the owner is offered, they can save.
+    // Saving makes intake run as the owner, so a model they keep needs their
+    // key too: changing triage alone leaves preprocessing on the admin's model.
     const pick = seen.ok ? seen.data.models.available[0]! : "";
     expect(
       await updateIntakeAutomation(memory.db, scope(owner), { triage_model: pick }),
+    ).toMatchObject({
+      ok: false,
+      kind: "validation",
+      detail:
+        "AI preprocessing uses a model you don't have a key for, and saving makes intake run as you. Choose another model in Model Preferences first.",
+    });
+    // So does an unrelated save, which would otherwise quietly stop triage.
+    expect(
+      await updateIntakeAutomation(memory.db, scope(owner), { email_allowed_domains: ["acme.test"] }),
+    ).toMatchObject({ ok: false, detail: expect.stringMatching(/^Triage uses a model/) });
+    expect(row()).toMatchObject({ configured_by: admin, triage_model: "claude-haiku-4-5" });
+    // What the owner is offered, they can save.
+    expect(
+      await updateIntakeAutomation(memory.db, scope(owner), { triage_model: pick, preprocessing_model: null }),
     ).toMatchObject({ ok: true, data: { models: { triage: pick, triage_available: true } } });
+    expect(row()).toMatchObject({ configured_by: owner });
   });
   it("lists the 20 most recent messages without their content", async () => {
     memory.tables.intake_inbound = Array.from({ length: 22 }, (_, i) => ({
@@ -455,16 +474,16 @@ describe("other settings", () => {
     await updateIntakeAutomation(memory.db, scope(owner), {
       rules: [rule("NDAs", member)],
     });
-    memory.intercept = ({ table, op }) =>
-      table === "intake_assignment_rules" && op === "insert"
-        ? { message: "database unavailable" }
-        : undefined;
+    // The rules are replaced in one database transaction, which rolls back.
+    vi.spyOn(memory.db, "rpc").mockResolvedValueOnce({
+      data: null,
+      error: { message: "database unavailable" },
+    } as never);
     expect(
       await updateIntakeAutomation(memory.db, scope(owner), {
         rules: [rule("Disputes", admin)],
       }),
     ).toMatchObject({ ok: false });
-    memory.intercept = undefined;
     expect(memory.rows("intake_assignment_rules")).toMatchObject([
       { condition: "NDAs", assignee_id: member, position: 0 },
     ]);

@@ -100,11 +100,12 @@ export function useIntakeAutomationAutosave({
       });
     },
   });
-  // Retry turns the failed switches again; with the text kept on screen, the
-  // whole failed save goes again.
+  // Retry turns the failed switches and models again, unless one was changed
+  // since; with the text kept on screen, the whole failed save goes again.
   const retry = (sent: IntakeAutomationUpdate) => {
     setSaveError(null);
-    onDraft((current) => intakeDraftWithSwitches(current, sent));
+    if (settings)
+      onDraft((current) => intakeDraftWithSwitches(current, sent, settings));
     autosave.retry();
   };
   return { autosave, saveError, retry };

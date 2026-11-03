@@ -2234,6 +2234,11 @@ export type PlaybookReviewRequest = {
   reviewMode: "strict" | "permissive";
   /** "issues" reports only what needs attention; the run records which. */
   reviewScope?: "full" | "issues";
+  /**
+   * The organization whose keys the review runs with, for a caller working
+   * in one, such as intake; by default the playbook's own.
+   */
+  keysOrgId?: string;
   db?: Db;
 };
 
@@ -2321,7 +2326,7 @@ export async function beginPlaybookReview(args: PlaybookReviewRequest) {
     args.userId,
     args.model,
     db,
-    playbook.orgId,
+    args.keysOrgId ?? playbook.orgId,
   );
   if (JSON.stringify(content).length > 100_000)
     throw new PlaybookRequestError(

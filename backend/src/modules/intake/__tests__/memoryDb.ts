@@ -218,6 +218,20 @@ export function memoryDb(
   return memory;
 }
 
+/** intake_replace_rules as the migration defines it: the rules become those given, in order. */
+export const intakeRulesRpc: Record<string, RpcHandler> = {
+  intake_replace_rules: (args, memory) => {
+    if (!memory.rows("intake_automation").some((r) => r.org_id === args.p_org))
+      return { data: null, error: { code: "P0002" } };
+    const rules = args.p_rules as Row[];
+    memory.tables.intake_assignment_rules = [
+      ...memory.rows("intake_assignment_rules").filter((r) => r.org_id !== args.p_org),
+      ...rules.map((r, position) => ({ id: `rule-${position}`, org_id: args.p_org, position, ...r })),
+    ];
+    return { data: null, error: null };
+  },
+};
+
 /**
  * The automated-intake SQL functions as the migration defines them, enough
  * for unit tests: one request per message, documents linked once.

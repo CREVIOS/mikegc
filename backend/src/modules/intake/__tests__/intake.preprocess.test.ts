@@ -181,6 +181,25 @@ describe("AI preprocessing", () => {
     );
   });
 
+  it("says which documents couldn't be marked up, and why", async () => {
+    mocks.completeText.mockResolvedValue(
+      JSON.stringify({
+        answer: "Shorten the term.",
+        edits: [{ document: 1, find: "five years", replace: "two years" }],
+      }),
+    );
+    mocks.applyOrgTrackedEdits.mockResolvedValueOnce({
+      ok: false,
+      error: "This document changed. Read the latest version and try again.",
+    });
+    await handleIntakePreprocess(memory.db, job({ kind: "workflow", id: "wf-1" }));
+    expect(note()!.body).toBe(
+      "AI preprocessing, following the workflow “NDA first pass”\n\n" +
+        "Shorten the term.\n\n" +
+        "Couldn't mark up:\n- nda.docx: This document changed. Read the latest version and try again.",
+    );
+  });
+
   it("reviews each document with a playbook, marking up the Word ones", async () => {
     mocks.reviewWithPlaybook.mockImplementation(async ({ documentName }: { documentName: string }) => ({
       summary: `${documentName} needs changes.`,
@@ -201,6 +220,8 @@ describe("AI preprocessing", () => {
       documentName: "nda.docx",
       reviewMode: "permissive",
       reviewScope: "issues",
+      // The intake organization's keys, whoever's playbook it is.
+      keysOrgId: org,
     });
     expect(mocks.applyOrgTrackedEdits).toHaveBeenCalledTimes(1);
     expect(mocks.completeText).not.toHaveBeenCalled();

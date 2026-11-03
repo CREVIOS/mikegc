@@ -129,6 +129,8 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
     sql(migration("20261102_04_intake_remove_timezone.sql"));
     sql(migration("20261102_05_intake_rule_preprocessing.sql"));
     sql(migration("20261102_05_intake_rule_preprocessing.sql"));
+    sql(migration("20261103_04_intake_replace_rules.sql"));
+    sql(migration("20261103_04_intake_replace_rules.sql"));
   }, 60000);
   afterAll(() => {
     execFileSync("docker", [
@@ -1230,6 +1232,30 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
     expect(() => add("'playbook'", "null")).toThrow(/23514/);
     expect(() => add("'macro'", "'m-1'")).toThrow(/23514/);
     sql(`delete from public.intake_assignment_rules where org_id=${q(10)}`);
+  });
+  it("replaces an organization's rules in one transaction, keeping them when the new ones are refused", () => {
+    sql(`insert into public.intake_automation(org_id) values(${q(10)}) on conflict do nothing`);
+    const replace = (rules: unknown[]) =>
+      sql(`select public.intake_replace_rules(${q(10)}, '${JSON.stringify(rules)}'::jsonb)`);
+    replace([
+      { condition: "NDAs", assignee_id: uid(2), preprocess: true, preprocess_kind: "playbook", preprocess_ref: "pb-1" },
+      { condition: "Employment", assignee_id: uid(3), preprocess: false, preprocess_kind: null, preprocess_ref: null },
+    ]);
+    const saved = () =>
+      json(`select jsonb_agg(jsonb_build_object('position',position,'condition',condition,'kind',preprocess_kind) order by position)
+        from public.intake_assignment_rules where org_id=${q(10)}`);
+    expect(saved()).toEqual([
+      { position: 0, condition: "NDAs", kind: "playbook" },
+      { position: 1, condition: "Employment", kind: null },
+    ]);
+    // A rule the table refuses rolls back the deletion too.
+    expect(() =>
+      replace([{ condition: "Disputes", assignee_id: uid(2), preprocess: true, preprocess_kind: "macro", preprocess_ref: "m-1" }]),
+    ).toThrow(/23514/);
+    expect(saved()).toHaveLength(2);
+    expect(() => sql(`select public.intake_replace_rules(${q(99)}, '[]'::jsonb)`)).toThrow(/P0002/);
+    replace([]);
+    expect(sql(`select count(*) from public.intake_assignment_rules where org_id=${q(10)}`)).toBe("0");
   });
   it("forgets a member's rules once they leave", () => {
     sql(`insert into public.intake_assignment_rules(org_id,position,condition,assignee_id)

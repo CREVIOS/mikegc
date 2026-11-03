@@ -374,6 +374,22 @@ describe("recording an email", () => {
     // A third run finds nothing to do.
     await expect(handleIntakeInbound(memory.db, job())).resolves.toEqual({ skipped: "done" });
   });
+  it("keeps a request deleted after it was recorded deleted when the job retries", async () => {
+    setup({ payload: emailPayload(), model: false });
+    mocks.createDocumentVersion.mockRejectedValueOnce(new Error("storage hiccup"));
+    await expect(handleIntakeInbound(memory.db, job())).rejects.toThrow("storage hiccup");
+    expect(row().payload).toMatchObject({ recorded: true });
+    // A reviewer deletes it before the retry, which clears the message's link.
+    memory.tables.intake_requests = [];
+    row().request_id = null;
+    await expect(handleIntakeInbound(memory.db, job())).resolves.toEqual({
+      request_id: null,
+      deleted: true,
+    });
+    expect(memory.rows("intake_requests")).toEqual([]);
+    expect(row()).toMatchObject({ status: "done", payload: null });
+    expect(mocks.enqueueStorageCleanup).toHaveBeenCalled();
+  });
   it("skips a message that is gone or already handled", async () => {
     setup({ payload: emailPayload() });
     memory.tables.intake_inbound = [];
@@ -385,6 +401,19 @@ describe("recording an email", () => {
 });
 
 describe("recording a Slack thread", () => {
+  it("keeps the mention when the thread read stops short of it", async () => {
+    setup({ payload: slackPayload(), source: "slack", model: false });
+    stubSlack({
+      "conversations.replies": () => ({
+        ok: true,
+        messages: [{ ts: "1793610840.000100", user: "U1", text: "Need the Supplier Co NDA signed off" }],
+      }),
+    });
+    await handleIntakeInbound(memory.db, job());
+    const [request] = memory.rows("intake_requests");
+    expect(request).toMatchObject({ requester_name: "Jane Business" });
+    expect(request!.description).toContain("Ravi Sales, 2 Nov 2026, 09:15 UTC:\ncan Legal look at this?");
+  });
   it("records the thread up to the mention, with its first author as requester, and replies once", async () => {
     setup({ payload: slackPayload(), source: "slack", model: false });
     await handleIntakeInbound(memory.db, job());
@@ -488,8 +517,11 @@ describe("when a message fails for good", () => {
     });
     expect(String(slackReplies.text)).toMatch(/^Logged for Legal: </);
   });
-  it("releases an email's staged attachments", async () => {
+  it("releases an email's staged attachments before it settles, so settling can't leave them behind", async () => {
     setup({ payload: emailPayload() });
+    mocks.enqueueStorageCleanup.mockImplementationOnce(async () => {
+      expect(row().status).toBe("pending");
+    });
     await markIntakeInboundFailed(memory.db, job());
     expect(row()).toMatchObject({
       status: "failed",

@@ -25,6 +25,11 @@ export type IntakeRuleDraft = {
   preprocess: boolean;
   /** The workflow or playbook it follows, with its name when known. */
   preprocessWith: IntakePreprocessRule | null;
+  /**
+   * The condition and member it was last saved with; null until it saves.
+   * While its condition is cleared to be retyped, it keeps saving as this.
+   */
+  saved?: { condition: string; assigneeId: string } | null;
 };
 
 let ruleKeys = 0;
@@ -58,6 +63,7 @@ export function newIntakeRule(
     assigneeId: null,
     preprocess: false,
     preprocessWith: null,
+    saved: null,
     ...rule,
     key: `rule-${ruleKeys}`,
   };
@@ -100,6 +106,7 @@ export function intakeAutomationDraft(
         assigneeId: rule.assignee_id,
         preprocess: rule.preprocess,
         preprocessWith: rule.preprocess_with,
+        saved: { condition: rule.condition, assigneeId: rule.assignee_id },
       }),
     ),
   };
@@ -144,17 +151,28 @@ export function isCompleteIntakeRule(rule: IntakeRuleDraft) {
   return !!rule.condition.trim() && !!rule.assigneeId;
 }
 
+/**
+ * Whether a rule is sent when the rules save: once complete, and while a
+ * saved rule is incomplete only for being retyped, as it was saved.
+ */
+function savesRule(rule: IntakeRuleDraft) {
+  return isCompleteIntakeRule(rule) || !!rule.saved;
+}
+
 /** The rules that save, in order, as the API takes them. */
 function savedRules(rules: IntakeRuleDraft[]): IntakeAssignmentRule[] {
-  return rules.filter(isCompleteIntakeRule).map((rule) => ({
-    condition: rule.condition.trim(),
-    assignee_id: rule.assigneeId!,
-    preprocess: rule.preprocess,
-    // The name is for showing; the saved reference is its kind and id.
-    preprocess_with: rule.preprocessWith
-      ? { kind: rule.preprocessWith.kind, id: rule.preprocessWith.id }
-      : null,
-  }));
+  return rules.filter(savesRule).map((rule) => {
+    const complete = isCompleteIntakeRule(rule);
+    return {
+      condition: complete ? rule.condition.trim() : rule.saved!.condition,
+      assignee_id: complete ? rule.assigneeId! : rule.saved!.assigneeId,
+      preprocess: rule.preprocess,
+      // The name is for showing; the saved reference is its kind and id.
+      preprocess_with: rule.preprocessWith
+        ? { kind: rule.preprocessWith.kind, id: rule.preprocessWith.id }
+        : null,
+    };
+  });
 }
 
 function sameReference(
@@ -251,7 +269,7 @@ export function intakeDraftAfterSave(
  * The draft's rules with the conditions and names the server kept, such as
  * without characters it does not store. Text that differs only in surrounding space
  * stays as typed, so a pause mid-sentence never loses its space; rules not
- * yet complete stay where they are.
+ * yet complete stay as typed, remembering what they saved as.
  */
 function rulesAsSaved(
   rules: IntakeRuleDraft[],
@@ -260,10 +278,15 @@ function rulesAsSaved(
   if (savedRules(rules).length !== saved.length) return rules;
   let index = 0;
   return rules.map((rule) => {
-    if (!isCompleteIntakeRule(rule)) return rule;
+    if (!savesRule(rule)) return rule;
     const kept = saved[index++];
     // The saved rule names its workflow or playbook as the server sees it.
-    const named = { ...rule, preprocessWith: kept.preprocess_with };
+    const named = {
+      ...rule,
+      preprocessWith: kept.preprocess_with,
+      saved: { condition: kept.condition, assigneeId: kept.assignee_id },
+    };
+    if (!isCompleteIntakeRule(rule)) return named;
     return rule.condition.trim() === kept.condition
       ? named
       : { ...named, condition: kept.condition, assigneeId: kept.assignee_id };
@@ -298,21 +321,40 @@ export function intakeDraftAfterFailure(
   return next;
 }
 
-/** The draft with the switches `sent` turned again, to retry a failed save. */
+/**
+ * The draft with the switches and models `sent` changed set again, to
+ * retry a failed save. One changed again since the failure turned it back
+ * keeps the newer choice.
+ */
 export function intakeDraftWithSwitches(
   draft: IntakeAutomationDraft,
   sent: IntakeAutomationUpdate,
+  saved: IntakeAutomationSettings,
 ): IntakeAutomationDraft {
+  const again = <T>(sentValue: T | undefined, current: T, savedValue: T) =>
+    sentValue !== undefined && current === savedValue ? sentValue : current;
   return {
     ...draft,
-    emailEnabled: sent.email_enabled ?? draft.emailEnabled,
-    slackEnabled: sent.slack_enabled ?? draft.slackEnabled,
-    triageModel:
-      sent.triage_model !== undefined ? sent.triage_model : draft.triageModel,
-    preprocessingModel:
-      sent.preprocessing_model !== undefined
-        ? sent.preprocessing_model
-        : draft.preprocessingModel,
+    emailEnabled: again(
+      sent.email_enabled,
+      draft.emailEnabled,
+      saved.email.enabled,
+    ),
+    slackEnabled: again(
+      sent.slack_enabled,
+      draft.slackEnabled,
+      saved.slack.enabled,
+    ),
+    triageModel: again(
+      sent.triage_model,
+      draft.triageModel,
+      saved.models.triage,
+    ),
+    preprocessingModel: again(
+      sent.preprocessing_model,
+      draft.preprocessingModel,
+      saved.models.preprocessing,
+    ),
   };
 }
 

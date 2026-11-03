@@ -249,17 +249,20 @@ Apply `backend/migrations/20261102_02_intake_automation.sql`,
 `backend/migrations/20261102_04_intake_remove_timezone.sql`,
 `backend/migrations/20261102_05_intake_rule_preprocessing.sql`,
 `backend/migrations/20261103_01_intake_triage_always_on.sql`,
-`backend/migrations/20261103_02_intake_triage_model.sql` and
-`backend/migrations/20261103_03_intake_preprocessing_model.sql` before starting
+`backend/migrations/20261103_02_intake_triage_model.sql`,
+`backend/migrations/20261103_03_intake_preprocessing_model.sql` and
+`backend/migrations/20261103_04_intake_replace_rules.sql` before starting
 the new build. The second turns any note of what a member handles into a rule
-assigning to them. The third removes the timezone that requests kept with
+assigning to them, and stops if an organization has more than 100 notes, more
+than the 100 rules it can hold. The third removes the timezone that requests kept with
 their target date, which is overdue once it has passed where the viewer is.
 The fourth adds AI preprocessing to rules and lets MikeGC post notes. The
 fifth removes the switch that turned AI triage off, so it runs for every
 organization, including any that had switched it off. The sixth adds the
 triage model, and the seventh the preprocessing model; settings that already
 exist have neither, so an admin chooses them before triage and preprocessing
-run again. No new environment variables are required: the webhook URLs are
+run again. The eighth saves an organization's rules in one transaction, so
+two saves at once can't delete each other's rules. No new environment variables are required: the webhook URLs are
 built from `API_PUBLIC_URL`, the request links in Slack replies from
 `FRONTEND_URL`, and secrets are encrypted with `MCP_CONNECTORS_ENCRYPTION_SECRET`
 (or `USER_API_KEYS_ENCRYPTION_SECRET`). Webhook deliveries have their own rate

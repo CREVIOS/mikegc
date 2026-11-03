@@ -40,7 +40,8 @@ intakeWebhooksRouter.post(
 const takeEmailToken: RequestHandler = (req, res, next) => {
   const token = String(req.params.token ?? "");
   res.locals.intakeEmailToken = token;
-  if (token) req.originalUrl = req.originalUrl.split(token).join(":token");
+  // The path's own segment, however it was percent-encoded, not the decoded token.
+  req.originalUrl = req.originalUrl.replace(/(\/email\/)[^/?#]*/, "$1:token");
   next();
 };
 

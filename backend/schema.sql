@@ -11844,6 +11844,25 @@ create table if not exists public.intake_assignment_rules (
 create index if not exists intake_assignment_rules_org on public.intake_assignment_rules(org_id, position);
 create index if not exists intake_assignment_rules_assignee on public.intake_assignment_rules(assignee_id);
 
+-- An organization's rules are replaced in one transaction that holds its
+-- settings row, so two saves at once take turns rather than each deleting
+-- the rules the other wrote.
+create or replace function public.intake_replace_rules(p_org uuid, p_rules jsonb)
+returns void language plpgsql set search_path = public, pg_temp as $$
+begin
+  perform 1 from public.intake_automation where org_id = p_org for update;
+  if not found then raise exception 'Intake settings not found' using errcode = 'P0002'; end if;
+  if jsonb_typeof(p_rules) is distinct from 'array' then
+    raise exception 'Invalid rules' using errcode = '22023';
+  end if;
+  delete from public.intake_assignment_rules where org_id = p_org;
+  insert into public.intake_assignment_rules(org_id, position, condition, assignee_id,
+      preprocess, preprocess_kind, preprocess_ref)
+    select p_org, (r.ordinality - 1)::integer, r.value->>'condition', (r.value->>'assignee_id')::uuid,
+        coalesce((r.value->>'preprocess')::boolean, false), r.value->>'preprocess_kind', r.value->>'preprocess_ref'
+      from jsonb_array_elements(p_rules) with ordinality as r(value, ordinality);
+end $$;
+
 -- Each message received for intake, once: a webhook delivered again finds
 -- its row and records nothing new. The payload is kept only until the
 -- message is handled; the request then holds its content.
@@ -12166,5 +12185,6 @@ insert into public.schema_migrations (filename) values
   ('20261102_05_intake_rule_preprocessing.sql'),
   ('20261103_01_intake_triage_always_on.sql'),
   ('20261103_02_intake_triage_model.sql'),
-  ('20261103_03_intake_preprocessing_model.sql')
+  ('20261103_03_intake_preprocessing_model.sql'),
+  ('20261103_04_intake_replace_rules.sql')
 on conflict (filename) do nothing;
