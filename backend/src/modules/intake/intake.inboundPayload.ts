@@ -49,8 +49,19 @@ export const triagePlan = z.object({
   requester_name: z.string(),
   requester_email: z.string().nullable(),
   requested_by_date: z.string().nullable(),
-  timezone: z.string().nullable(),
   assignee_id: z.string().nullable(),
+  /**
+   * AI preprocessing, when the rule that assigned the request asks for it,
+   * with the workflow or playbook to follow, if any.
+   */
+  preprocess: z
+    .object({
+      with: z
+        .object({ kind: z.enum(["workflow", "playbook"]), id: z.string() })
+        .nullable(),
+    })
+    .nullable()
+    .default(null),
   /** Indexes into `candidates` of the attachments to add. */
   attachments: z.array(z.number().int().nonnegative()),
   candidates: z.array(candidate),
@@ -72,6 +83,8 @@ const progress = {
   documents: z.record(z.string(), documentEntry).optional(),
   /** Set once the Slack thread has MikeGC's answer, so it is sent once. */
   replied: z.boolean().optional(),
+  /** Set once AI preprocessing is queued, so it is queued once. */
+  preprocessQueued: z.boolean().optional(),
 };
 
 export const slackInboundPayload = z.object({

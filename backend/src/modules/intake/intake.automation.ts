@@ -1,5 +1,6 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type {
+  IntakeAssignmentRule,
   IntakeAutomationSettings,
   IntakeAutomationUpdate,
   IntakeEmailWebhook,
@@ -19,7 +20,26 @@ import type { Db } from "../../lib/supabase";
 import type { IntakeScope } from "./intake.requests";
 import { cleanText } from "./intake.inboundPayload";
 import { SLACK_TOKEN_ERRORS, SlackApiError, slackAuthTest } from "./intake.slack";
-import { resolveTriageModel } from "./intake.triage";
+import { namePreprocessRules, openPreprocessRule } from "./intake.preprocess";
+import {
+  availableIntakeModels,
+  defaultPreprocessingModel,
+  defaultTriageModel,
+  resolveIntakeModel,
+} from "./intake.triage";
+
+type RuleRow = {
+  condition: string;
+  assignee_id: string;
+  preprocess: boolean;
+  preprocess_kind: "workflow" | "playbook" | null;
+  preprocess_ref: string | null;
+};
+
+const preprocessRef = (r: RuleRow) =>
+  r.preprocess_kind && r.preprocess_ref
+    ? { kind: r.preprocess_kind, id: r.preprocess_ref }
+    : null;
 
 /**
  * Automated intake's settings, which an organization's owners and admins
@@ -44,8 +64,9 @@ export type AutomationRow = {
   slack_bot_token_encrypted: string | null;
   slack_bot_token_iv: string | null;
   slack_bot_token_tag: string | null;
-  triage_enabled: boolean;
-  default_timezone: string | null;
+  /** The models triage and preprocessing run with; neither runs without one. */
+  triage_model: string | null;
+  preprocessing_model: string | null;
   configured_by: string | null;
 };
 
@@ -54,7 +75,7 @@ const COLUMNS =
   "slack_enabled, slack_webhook_id, slack_team_id, slack_team_name, slack_bot_user_id, " +
   "slack_signing_secret_encrypted, slack_signing_secret_iv, slack_signing_secret_tag, " +
   "slack_bot_token_encrypted, slack_bot_token_iv, slack_bot_token_tag, " +
-  "triage_enabled, default_timezone, configured_by";
+  "triage_model, preprocessing_model, configured_by";
 
 /** The organization's settings, or null before anyone has opened them. */
 export async function loadAutomationRow(
@@ -106,16 +127,30 @@ async function denied(db: Db, scope: IntakeScope): Promise<ServiceFailure | null
   return isOrgAdmin(role) ? null : FORBIDDEN;
 }
 
-/** The settings row, made on first use so the Slack URL has its id. */
+/**
+ * The settings row, made on first use so the Slack URL has its id. A new row
+ * starts triage on a fast, low-cost model and preprocessing on a stronger one
+ * that the admin opening it has keys for, with them as the person both run as.
+ */
 async function ensureRow(
   db: Db,
-  orgId: string,
+  scope: IntakeScope,
 ): Promise<ServiceResult<AutomationRow>> {
-  const made = await db
-    .from("intake_automation")
-    .upsert({ org_id: orgId }, { onConflict: "org_id", ignoreDuplicates: true });
-  if (made.error) return internalFailure(made.error);
+  const orgId = scope.orgId;
   try {
+    const existing = await loadAutomationRow(db, orgId);
+    if (existing) return ok(existing);
+    const available = await availableIntakeModels(db, orgId, scope.actorId);
+    const made = await db.from("intake_automation").upsert(
+      {
+        org_id: orgId,
+        triage_model: defaultTriageModel(available),
+        preprocessing_model: defaultPreprocessingModel(available),
+        configured_by: scope.actorId,
+      },
+      { onConflict: "org_id", ignoreDuplicates: true },
+    );
+    if (made.error) return internalFailure(made.error);
     const row = await loadAutomationRow(db, orgId);
     return row
       ? ok(row)
@@ -131,24 +166,34 @@ async function present(
   row: AutomationRow,
 ): Promise<ServiceResult<IntakeAutomationSettings>> {
   try {
-    const [focus, recent, model] = await Promise.all([
+    // As whoever triage runs as; before anyone has saved, the viewer, who
+    // becomes that person when they save.
+    const runsAs = row.configured_by ?? scope.actorId;
+    const [rules, recent, triage, preprocessing, available] = await Promise.all([
       db
-        .from("intake_member_focus")
-        .select("user_id, focus")
+        .from("intake_assignment_rules")
+        .select("condition, assignee_id, preprocess, preprocess_kind, preprocess_ref")
         .eq("org_id", scope.orgId)
-        .order("updated_at", { ascending: true }),
+        .order("position", { ascending: true }),
       db
         .from("intake_inbound")
         .select("id, source, status, error, request_id, created_at")
         .eq("org_id", scope.orgId)
         .order("created_at", { ascending: false })
         .limit(20),
-      // As whoever triage runs as; before anyone has saved, the viewer, who
-      // becomes that person when they save.
-      resolveTriageModel(db, scope.orgId, row.configured_by ?? scope.actorId),
+      resolveIntakeModel(db, scope.orgId, runsAs, row.triage_model),
+      resolveIntakeModel(db, scope.orgId, runsAs, row.preprocessing_model),
+      availableIntakeModels(db, scope.orgId, runsAs),
     ]);
-    if (focus.error) return internalFailure(focus.error);
+    if (rules.error) return internalFailure(rules.error);
     if (recent.error) return internalFailure(recent.error);
+    const ruleRows = (rules.data ?? []) as RuleRow[];
+    // Named as the viewer can see them; one they cannot open has no name.
+    const named = await namePreprocessRules(
+      db,
+      scope.actorId,
+      ruleRows.map(preprocessRef),
+    );
     return ok({
       email: {
         enabled: row.email_enabled,
@@ -166,14 +211,19 @@ async function present(
         team_name: row.slack_team_name,
         bot_user_id: row.slack_bot_user_id,
       },
-      triage: {
-        enabled: row.triage_enabled,
-        default_timezone: row.default_timezone,
-        model_available: model !== null,
+      models: {
+        available,
+        triage: row.triage_model,
+        triage_available: triage !== null,
+        preprocessing: row.preprocessing_model,
+        preprocessing_available: preprocessing !== null,
       },
-      focus: ((focus.data ?? []) as { user_id: string; focus: string }[]).map(
-        (f) => ({ user_id: f.user_id, focus: f.focus }),
-      ),
+      rules: ruleRows.map((r, i) => ({
+        condition: r.condition,
+        assignee_id: r.assignee_id,
+        preprocess: r.preprocess,
+        preprocess_with: named[i] ?? null,
+      })),
       recent: ((recent.data ?? []) as IntakeInboundSummary[]).map((r) => ({
         id: r.id,
         source: r.source,
@@ -194,7 +244,7 @@ export async function getIntakeAutomation(
 ): Promise<ServiceResult<IntakeAutomationSettings>> {
   const refused = await denied(db, scope);
   if (refused) return refused;
-  const row = await ensureRow(db, scope.orgId);
+  const row = await ensureRow(db, scope);
   if (!row.ok) return row;
   return present(db, scope, row.data);
 }
@@ -220,15 +270,6 @@ export function normalizeDomains(
   if (domains.length > 50)
     return failure("validation", "List at most 50 sender domains.");
   return ok(domains);
-}
-
-export function isValidTimezone(value: string): boolean {
-  try {
-    new Intl.DateTimeFormat("en", { timeZone: value });
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 const ENCRYPTION_UNAVAILABLE = failure(
@@ -271,7 +312,7 @@ async function checkBotToken(
 
 /**
  * Save a change to automated intake. Everything is checked before anything
- * is written: domains, the timezone, the focus members and, when a bot token
+ * is written: domains, the rules' members and, when a bot token
  * is given, the token itself with Slack. The saving admin becomes the person
  * triage runs as.
  */
@@ -282,7 +323,7 @@ export async function updateIntakeAutomation(
 ): Promise<ServiceResult<IntakeAutomationSettings>> {
   const refused = await denied(db, scope);
   if (refused) return refused;
-  const current = await ensureRow(db, scope.orgId);
+  const current = await ensureRow(db, scope);
   if (!current.ok) return current;
   const row = current.data;
   const patch: Record<string, unknown> = {
@@ -295,14 +336,6 @@ export async function updateIntakeAutomation(
     if (!domains.ok) return domains;
     patch.email_allowed_domains = domains.data;
   }
-  if (input.default_timezone !== undefined) {
-    const zone = input.default_timezone?.trim() || null;
-    if (zone && !isValidTimezone(zone))
-      return failure("validation", "Choose a valid timezone.");
-    patch.default_timezone = zone;
-  }
-  if (input.triage_enabled !== undefined)
-    patch.triage_enabled = input.triage_enabled;
   if (input.slack_signing_secret !== undefined) {
     const sealed = encrypted("slack_signing_secret", input.slack_signing_secret.trim());
     if (!sealed) return ENCRYPTION_UNAVAILABLE;
@@ -330,35 +363,89 @@ export async function updateIntakeAutomation(
       );
     patch.slack_enabled = input.slack_enabled;
   }
-  let focus: { user_id: string; focus: string }[] | null = null;
-  if (input.focus !== undefined) {
-    focus = input.focus.map((f) => ({
-      user_id: f.user_id,
-      focus: cleanText(f.focus).trim(),
-    }));
-    if (focus.some((f) => f.focus.length < 1 || f.focus.length > 500))
+  // Both run as the admin saving, so a model chosen must have their key.
+  const chosenModels = (["triage_model", "preprocessing_model"] as const).filter(
+    (field) => input[field] !== undefined,
+  );
+  if (chosenModels.some((field) => input[field] !== null)) {
+    let available: string[];
+    try {
+      available = await availableIntakeModels(db, scope.orgId, scope.actorId);
+    } catch (error) {
+      return internalFailure(error);
+    }
+    if (
+      chosenModels.some(
+        (field) => input[field] !== null && !available.includes(input[field]!),
+      )
+    )
       return failure(
         "validation",
-        "Describe what each member handles in 1 to 500 characters.",
+        "Choose a model your organization has a key for.",
       );
-    if (new Set(focus.map((f) => f.user_id)).size !== focus.length)
-      return failure("validation", "Give each member one focus.");
-    if (focus.length) {
+  }
+  for (const field of chosenModels) patch[field] = input[field];
+  let rules: IntakeAssignmentRule[] | null = null;
+  if (input.rules !== undefined) {
+    rules = input.rules.map((r) => ({
+      condition: cleanText(r.condition).trim(),
+      assignee_id: r.assignee_id,
+      preprocess: r.preprocess,
+      preprocess_with: r.preprocess_with
+        ? { kind: r.preprocess_with.kind, id: r.preprocess_with.id.trim() }
+        : null,
+    }));
+    if (rules.some((r) => r.condition.length < 1 || r.condition.length > 500))
+      return failure(
+        "validation",
+        "Give each rule a condition of 1 to 500 characters.",
+      );
+    if (rules.length > 100)
+      return failure("validation", "Add at most 100 rules.");
+    const assignees = [...new Set(rules.map((r) => r.assignee_id))];
+    if (assignees.length) {
       const { data, error } = await db
         .from("org_members")
         .select("user_id")
         .eq("org_id", scope.orgId)
-        .in(
-          "user_id",
-          focus.map((f) => f.user_id),
-        );
+        .in("user_id", assignees);
       if (error) return internalFailure(error);
       const members = new Set(((data ?? []) as { user_id: string }[]).map((m) => m.user_id));
-      if (focus.some((f) => !members.has(f.user_id)))
+      if (assignees.some((id) => !members.has(id)))
         return failure(
           "validation",
-          "Focus can only be set for members of the organization.",
+          "Rules can only assign to members of the organization.",
         );
+    }
+    // A workflow or playbook newly named must open for the admin saving it,
+    // as preprocessing runs as them. One already saved stays, so an admin
+    // who cannot open it can still change the other rules.
+    const { data: saved, error: savedError } = await db
+      .from("intake_assignment_rules")
+      .select("preprocess_kind, preprocess_ref")
+      .eq("org_id", scope.orgId);
+    if (savedError) return internalFailure(savedError);
+    const known = new Set(
+      ((saved ?? []) as { preprocess_kind: string | null; preprocess_ref: string | null }[])
+        .filter((r) => r.preprocess_kind && r.preprocess_ref)
+        .map((r) => `${r.preprocess_kind}:${r.preprocess_ref}`),
+    );
+    const added = new Map<string, { kind: "workflow" | "playbook"; id: string }>();
+    for (const r of rules)
+      if (r.preprocess_with && !known.has(`${r.preprocess_with.kind}:${r.preprocess_with.id}`))
+        added.set(`${r.preprocess_with.kind}:${r.preprocess_with.id}`, r.preprocess_with);
+    for (const ref of added.values()) {
+      try {
+        if (!(await openPreprocessRule(db, scope.actorId, ref)))
+          return failure(
+            "validation",
+            ref.kind === "playbook"
+              ? "Choose a playbook you can open."
+              : "Choose an assistant workflow you can open.",
+          );
+      } catch (error) {
+        return internalFailure(error);
+      }
     }
   }
   // Checked with Slack last, once everything local is known to be valid.
@@ -380,32 +467,44 @@ export async function updateIntakeAutomation(
     .update(patch)
     .eq("org_id", scope.orgId);
   if (error) return internalFailure(error);
-  if (focus) {
-    const saved = await replaceFocus(db, scope.orgId, focus);
+  if (rules) {
+    const saved = await replaceRules(db, scope.orgId, rules);
     if (!saved.ok) return saved;
   }
-  const updated = await ensureRow(db, scope.orgId);
+  const updated = await ensureRow(db, scope);
   if (!updated.ok) return updated;
   return present(db, scope, updated.data);
 }
 
-/** Every member's focus becomes `focus`; a member left out has none. */
-async function replaceFocus(
+/**
+ * The organization's rules become `rules`, in order. The new rules are
+ * written before the old ones go, so a failure never leaves none.
+ */
+async function replaceRules(
   db: Db,
   orgId: string,
-  focus: { user_id: string; focus: string }[],
+  rules: IntakeAssignmentRule[],
 ): Promise<ServiceResult<null>> {
   const now = new Date().toISOString();
-  if (focus.length) {
-    const { error } = await db.from("intake_member_focus").upsert(
-      focus.map((f) => ({ org_id: orgId, ...f, updated_at: now })),
-      { onConflict: "org_id,user_id" },
+  const ids = rules.map(() => randomUUID());
+  if (rules.length) {
+    const { error } = await db.from("intake_assignment_rules").insert(
+      rules.map((r, position) => ({
+        id: ids[position],
+        org_id: orgId,
+        position,
+        condition: r.condition,
+        assignee_id: r.assignee_id,
+        preprocess: r.preprocess,
+        preprocess_kind: r.preprocess_with?.kind ?? null,
+        preprocess_ref: r.preprocess_with?.id ?? null,
+        updated_at: now,
+      })),
     );
     if (error) return internalFailure(error);
   }
-  let remove = db.from("intake_member_focus").delete().eq("org_id", orgId);
-  if (focus.length)
-    remove = remove.not("user_id", "in", `(${focus.map((f) => f.user_id).join(",")})`);
+  let remove = db.from("intake_assignment_rules").delete().eq("org_id", orgId);
+  if (ids.length) remove = remove.not("id", "in", `(${ids.join(",")})`);
   const { error } = await remove;
   if (error) return internalFailure(error);
   return ok(null);
@@ -421,7 +520,7 @@ export async function generateIntakeEmailWebhook(
 ): Promise<ServiceResult<IntakeEmailWebhook>> {
   const refused = await denied(db, scope);
   if (refused) return refused;
-  const current = await ensureRow(db, scope.orgId);
+  const current = await ensureRow(db, scope);
   if (!current.ok) return current;
   const token = randomBytes(32).toString("base64url");
   const hint = token.slice(-4);

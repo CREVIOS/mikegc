@@ -146,7 +146,6 @@ const DETAIL_KEYS = [
   "requester_email",
   "requester_team",
   "requested_by_date",
-  "timezone",
 ] as const satisfies readonly (keyof IntakeDetails)[];
 function detailsOf(request: IntakeDetails): IntakeDetails {
   return {
@@ -156,20 +155,6 @@ function detailsOf(request: IntakeDetails): IntakeDetails {
     requester_email: request.requester_email,
     requester_team: request.requester_team,
     requested_by_date: request.requested_by_date,
-    timezone: request.timezone,
-  };
-}
-/**
- * A target date always has a timezone and no date has none, however the
- * edits that made them were queued: a date set where there was none takes
- * the viewer's timezone.
- */
-function datedTogether(details: IntakeDetails): IntakeDetails {
-  if (!details.requested_by_date) return { ...details, timezone: null };
-  if (details.timezone) return details;
-  return {
-    ...details,
-    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   };
 }
 type Closing = "resolve" | "cancel";
@@ -422,7 +407,7 @@ export function Detail({
   }
   function sendDetails(patch: Partial<IntakeDetails>) {
     if (!request) return;
-    const details = datedTogether({ ...detailsOf(request), ...patch });
+    const details = { ...detailsOf(request), ...patch };
     // A field left after Enter, or an edit queued behind its own save, can
     // name only what is saved already: sending it would record a change.
     if (DETAIL_KEYS.every((key) => details[key] === request[key])) return;
@@ -581,6 +566,11 @@ export function Detail({
             title: "Back to Intake",
           },
           {
+            label: "Requests",
+            onClick: () => router.push(INTAKE_REQUESTS_PATH),
+            title: "Back to requests",
+          },
+          {
             label: request?.subject,
             title: request?.subject,
             loading: !request && !error,
@@ -709,7 +699,7 @@ export function Detail({
                   locked={operation.locked}
                   onSave={(description) => saveDetails({ description })}
                 />
-                <div className="p-5">
+                <div className="px-5 py-4">
                   <IntakeDocuments
                     documents={documents}
                     uploading={upload.uploading.map((u) => u.file)}
@@ -726,11 +716,11 @@ export function Detail({
               <section aria-labelledby="intake-activity">
                 <h2
                   id="intake-activity"
-                  className={`${SECTION_HEADING} px-5 pt-5`}
+                  className={`${SECTION_HEADING} px-5 pt-4`}
                 >
                   Activity
                 </h2>
-                <ol className="relative space-y-4 p-5 pt-3 before:absolute before:bottom-7 before:left-[31px] before:top-6 before:w-px before:bg-gray-200">
+                <ol className="relative space-y-4 px-5 pb-4 pt-3 before:absolute before:bottom-6 before:left-[31px] before:top-6 before:w-px before:bg-gray-200">
                   {timeline.map((entry) => {
                     const line =
                       "event" in entry
@@ -741,7 +731,9 @@ export function Detail({
                         <IntakeActorAvatar
                           name={line.actor}
                           mikegc={
-                            "event" in entry && isMikeGCEvent(entry.event)
+                            "event" in entry
+                              ? isMikeGCEvent(entry.event)
+                              : !!entry.message.automated
                           }
                           photo={
                             members.find(
@@ -798,7 +790,7 @@ export function Detail({
                 </ol>
                 {/* A closed request is reopened here rather than noted. */}
                 {closed && caps.reopen && (
-                  <div className="border-t border-gray-100 p-5">
+                  <div className="border-t border-gray-100 px-5 py-4">
                     <button
                       type="button"
                       disabled={operation.locked}
@@ -975,7 +967,7 @@ function DetailSkeleton({ children }: { children?: ReactNode }) {
     <DetailColumns
       title={<SkeletonLine className="h-7 w-2/3 rounded-lg" />}
       details={
-        <div className="space-y-4 p-5" aria-hidden="true">
+        <div className="space-y-4 px-5 py-4" aria-hidden="true">
           {[
             "w-28",
             "h-9 w-full",
@@ -998,23 +990,23 @@ function DetailSkeleton({ children }: { children?: ReactNode }) {
       </span>
       <div className="space-y-5" aria-hidden="true">
         <GlassCardUI>
-          <div className="space-y-2 p-5">
+          <div className="space-y-2 px-5 py-4">
             <SkeletonLine className="w-16" />
             <SkeletonLine className="w-full" />
             <SkeletonLine className="w-5/6" />
           </div>
-          <div className="space-y-2 border-t border-gray-100 p-5">
+          <div className="space-y-2 border-t border-gray-100 px-5 py-4">
             <SkeletonLine className="w-20" />
             <SkeletonLine className="h-[5.25rem] w-full rounded-xl" />
           </div>
         </GlassCardUI>
         <GlassCardUI>
-          <div className="space-y-4 p-5">
+          <div className="space-y-4 px-5 py-4">
             <SkeletonLine className="w-16" />
             <SkeletonLine className="w-64" />
             <SkeletonLine className="w-3/4" />
           </div>
-          <div className="space-y-2 border-t border-gray-100 p-5">
+          <div className="space-y-2 border-t border-gray-100 px-5 py-4">
             <SkeletonLine className="w-20" />
             <SkeletonLine className="h-32 w-full rounded-lg" />
           </div>

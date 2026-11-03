@@ -2092,23 +2092,15 @@ async function loadReviewDocument(
 }
 
 /**
- * Applies each finding's suggested language to the reviewed document as one
- * set of tracked changes, and links every change to its finding. A finding
- * whose text cannot be located keeps its suggestion as text.
+ * The tracked changes a review's findings suggest, each with the index of
+ * its finding: replacement language for a quoted clause, or a missing clause
+ * inserted after the one the model named.
  */
-async function applyReviewEdits(args: {
-  db: Db;
-  userId: string;
-  userEmail?: string | null;
-  documentId: string;
-  expectedVersion: { id: string; storagePath: string };
-  findings: PlaybookFinding[];
-}): Promise<{
-  findings: PlaybookFinding[];
-  version: { id: string; number: number; downloadUrl: string } | null;
-}> {
+export function playbookFindingEdits(
+  findings: PlaybookFinding[],
+): { index: number; edit: EditInput }[] {
   const planned: { index: number; edit: EditInput }[] = [];
-  args.findings.forEach((finding, index) => {
+  findings.forEach((finding, index) => {
     const suggestion = finding.suggestedText.trim();
     if (!suggestion) return;
     if (finding.status === "missing_required") {
@@ -2141,6 +2133,26 @@ async function applyReviewEdits(args: {
       });
     }
   });
+  return planned;
+}
+
+/**
+ * Applies each finding's suggested language to the reviewed document as one
+ * set of tracked changes, and links every change to its finding. A finding
+ * whose text cannot be located keeps its suggestion as text.
+ */
+async function applyReviewEdits(args: {
+  db: Db;
+  userId: string;
+  userEmail?: string | null;
+  documentId: string;
+  expectedVersion: { id: string; storagePath: string };
+  findings: PlaybookFinding[];
+}): Promise<{
+  findings: PlaybookFinding[];
+  version: { id: string; number: number; downloadUrl: string } | null;
+}> {
+  const planned = playbookFindingEdits(args.findings);
   if (!planned.length) return { findings: args.findings, version: null };
   const result = await applyTrackedEditsToDocument({
     documentId: args.documentId,

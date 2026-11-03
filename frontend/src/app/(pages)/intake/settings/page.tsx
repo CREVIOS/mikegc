@@ -1,5 +1,5 @@
-import { IntakeSettingsPage } from "@/app/components/intake/IntakeSettings";
-/** How MikeGC records requests from email and Slack, for owners and admins. */
+import { IntakeSettingsRedirect } from "@/app/components/intake/IntakeSettingsRedirect";
+/** Intake's settings are in the workspace's settings now. */
 export default function Page() {
-  return <IntakeSettingsPage />;
+  return <IntakeSettingsRedirect to="settings" />;
 }

@@ -8,13 +8,15 @@ const period = <T extends number>(choices: readonly T[], fallback: T) =>
     .number()
     .refine((v): v is T => choices.includes(v as T))
     .default(fallback);
+/** The viewer's timezone, as the browser names it; the database checks it. */
+const viewerTimezone = z.string().min(1).max(64).default("UTC");
 /**
- * The viewer's timezone, which the dashboard counts its weeks in, and the
- * periods its figures cover.
+ * The viewer's timezone, which the dashboard counts its weeks and overdue
+ * requests in, and the periods its figures cover.
  */
 export const intakeDashboardQuery = z
   .object({
-    timezone: z.string().min(1).max(64).default("UTC"),
+    timezone: viewerTimezone,
     weeks: period([4, 8, 12, 26] as const, 8),
     created_days: period([7, 30, 90, 365] as const, 30),
     resolved_days: period([7, 30, 90, 365] as const, 30),
@@ -50,23 +52,11 @@ export const intakeList = z.object({
     .optional(),
   /** One requester's name, matched without case. */
   requester: z.string().trim().min(1).max(200).optional(),
+  /** The viewer's, in which a target date that has passed is overdue. */
+  timezone: viewerTimezone,
   cursor: z.string().max(200).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
-/** A business target date needs an IANA timezone so it means one calendar day. */
-const datedTogether = (v: {
-  requested_by_date: string | null;
-  timezone: string | null;
-}) => (v.requested_by_date === null) === (v.timezone === null);
-const knownTimezone = (v: { timezone: string | null }) => {
-  if (v.timezone === null) return true;
-  try {
-    new Intl.DateTimeFormat("en", { timeZone: v.timezone });
-    return true;
-  } catch {
-    return false;
-  }
-};
 const details = {
   subject: text(200),
   description: text(20000),
@@ -81,8 +71,8 @@ const details = {
     .nullable()
     .default(null),
   requester_team: text(200).nullable().default(null),
+  /** A calendar date, overdue once it has passed where the viewer is. */
   requested_by_date: z.iso.date().nullable().default(null),
-  timezone: z.string().min(1).max(100).nullable().default(null),
 };
 export const intakeSubmit = z
   .object({
@@ -91,18 +81,14 @@ export const intakeSubmit = z
     command_id: intakeId,
     assignee_id: intakeId.nullable().default(null),
   })
-  .strict()
-  .refine(datedTogether)
-  .refine(knownTimezone);
+  .strict();
 export const intakeEdit = z
   .object({
     ...details,
     command_id: intakeId,
     expected_version: z.number().int().positive(),
   })
-  .strict()
-  .refine(datedTogether)
-  .refine(knownTimezone);
+  .strict();
 const versioned = {
   command_id: intakeId,
   expected_version: z.number().int().positive(),
@@ -147,23 +133,29 @@ export const intakeAutomationUpdate = z
       .max(300)
       .regex(/^xoxb-[\x21-\x7e]+$/)
       .optional(),
-    triage_enabled: z.boolean().optional(),
-    default_timezone: z
-      .string()
-      .trim()
-      .min(1)
-      .max(100)
-      .refine((v) => knownTimezone({ timezone: v }))
-      .nullable()
-      .optional(),
-    focus: z
+    triage_model: z.string().trim().min(1).max(200).nullable().optional(),
+    preprocessing_model: z.string().trim().min(1).max(200).nullable().optional(),
+    rules: z
       .array(
         z
-          .object({ user_id: intakeId, focus: z.string().trim().min(1).max(500) })
+          .object({
+            condition: z.string().trim().min(1).max(500),
+            assignee_id: intakeId,
+            preprocess: z.boolean().default(false),
+            preprocess_with: z
+              .object({
+                kind: z.enum(["workflow", "playbook"]),
+                id: z.string().trim().min(1).max(200),
+                // Shown to the reader; the saved reference is kind and id.
+                name: z.string().max(500).nullable().optional(),
+              })
+              .strict()
+              .nullable()
+              .default(null),
+          })
           .strict(),
       )
-      .max(500)
-      .refine((f) => new Set(f.map((x) => x.user_id)).size === f.length)
+      .max(100)
       .optional(),
   })
   .strict();
@@ -171,8 +163,7 @@ const AUTOMATION_PROBLEMS: Record<string, string> = {
   email_allowed_domains: "List at most 50 sender domains.",
   slack_signing_secret: "Paste the Slack app's signing secret.",
   slack_bot_token: "Paste the Bot User OAuth Token, which starts with xoxb-.",
-  default_timezone: "Choose a valid timezone.",
-  focus: "Describe what each member handles in 1 to 500 characters, once per member.",
+  rules: "Give each rule a condition of 1 to 500 characters and a member, with at most 100 rules.",
 };
 /** What to fix in a rejected automation change, by its first problem. */
 export function automationUpdateProblem(error: z.ZodError): string {

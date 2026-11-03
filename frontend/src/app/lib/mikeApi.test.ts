@@ -3676,16 +3676,18 @@ describe("intake API boundary", () => {
         const details = {
             subject: "Subject", description: "Exact  text.",
             requester_name: "Jane", requester_email: null, requester_team: null,
-            requested_by_date: null, timezone: null,
+            requested_by_date: null,
         };
+        // The list sends the viewer's timezone, which its Overdue filter is judged in.
+        const zone = new URLSearchParams({ timezone: Intl.DateTimeFormat().resolvedOptions().timeZone });
         const submission = { ...details, id, command_id: "create", assignee_id: null };
         const edit = { ...details, command_id: "edit", expected_version: 3 };
         const command = { command_id: "resolve", expected_version: 2, body: "Exact resolution.\n" };
         const note = { command_id: "note", body: "Called Jane." };
         const cases: [() => Promise<unknown>, string, string, unknown?][] = [
             [()=>getIntakeMembers(scope),"members","GET"],
-            [()=>listIntakeRequests(scope),"requests","GET"],
-            [()=>listIntakeRequests(scope,{search:"a & b",state:"in_review",assignee:"unassigned",sort:"target",cursor:"abc"}),"requests?search=a+%26+b&state=in_review&assignee=unassigned&sort=target&cursor=abc","GET"],
+            [()=>listIntakeRequests(scope),`requests?${zone}`,"GET"],
+            [()=>listIntakeRequests(scope,{search:"a & b",state:"in_review",assignee:"unassigned",sort:"target",cursor:"abc"}),`requests?search=a+%26+b&state=in_review&assignee=unassigned&sort=target&cursor=abc&${zone}`,"GET"],
             [()=>submitIntakeRequest(scope,submission),"requests","POST",submission],
             [()=>getIntakeRequest(scope,id),"requests/request%2Fid","GET"],
             [()=>editIntakeRequest(scope,id,edit),"requests/request%2Fid","PATCH",edit],
@@ -3718,7 +3720,7 @@ describe("intake API boundary", () => {
         expect(call.init.method ?? "GET").toBe("GET");
 
         // Only the fields given are sent; the rest keep their saved value.
-        const update = { email_enabled: true, slack_bot_token: "xoxb-1", default_timezone: null, focus: [{ user_id: "u1", focus: "NDAs" }] };
+        const update = { email_enabled: true, slack_bot_token: "xoxb-1", rules: [{ condition: "NDAs", assignee_id: "u1", preprocess: true, preprocess_with: { kind: "playbook" as const, id: "pb-1" } }] };
         await expect(updateIntakeAutomation("personal", update)).resolves.toEqual(settings);
         call = lastFetchCall();
         expect(call.url).toBe("/api/intake/personal/automation");

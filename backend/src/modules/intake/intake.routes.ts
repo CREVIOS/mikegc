@@ -170,7 +170,7 @@ intakeRouter.post(
     if (!parsed.success)
       return void res.status(400).json({
         detail:
-          "Enter a subject, the request, the requester's name and a valid email, target date and timezone if needed.",
+          "Enter a subject, the request, the requester's name and a valid email and target date if needed.",
       });
     const result = await submitIntakeRequest(
       createServerSupabase(),

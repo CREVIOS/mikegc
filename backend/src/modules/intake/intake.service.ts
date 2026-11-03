@@ -33,3 +33,7 @@ export {
   handleIntakeInbound,
   markIntakeInboundFailed,
 } from "./intake.automationJob";
+export {
+  handleIntakePreprocess,
+  markIntakePreprocessFailed,
+} from "./intake.preprocess";

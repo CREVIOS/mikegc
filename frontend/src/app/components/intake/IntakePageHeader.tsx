@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { Settings } from "lucide-react";
 import {
   PageHeader,
   type PageHeaderAction,
@@ -13,15 +14,14 @@ import { isOrgAdmin } from "@/app/lib/permissions";
 import {
   INTAKE_DASHBOARD_PATH,
   INTAKE_REQUESTS_PATH,
-  INTAKE_SETTINGS_PATH,
+  intakeSettingsHref,
 } from "./intakeQuery";
 
-export type IntakePage = "requests" | "dashboard" | "settings";
+export type IntakePage = "requests" | "dashboard";
 
 const PAGES: { page: IntakePage; label: string; href: string }[] = [
   { page: "requests", label: "Requests", href: INTAKE_REQUESTS_PATH },
   { page: "dashboard", label: "Dashboard", href: INTAKE_DASHBOARD_PATH },
-  { page: "settings", label: "Settings", href: INTAKE_SETTINGS_PATH },
 ];
 
 /**
@@ -37,9 +37,9 @@ export function useCanManageIntake() {
 
 /**
  * The Intake pages' header: Intake › the page as breadcrumbs, buttons that
- * switch between the requests list, the dashboard and, for those who may
- * change it, automated intake's settings, then the page's own actions and,
- * on the requests list, New request.
+ * switch between the requests list and the dashboard, then the page's own
+ * actions, for those who may change it a way to automated intake's settings
+ * (in the workspace's settings), and on the requests list, New request.
  */
 export function IntakePageHeader({
   page,
@@ -50,13 +50,9 @@ export function IntakePageHeader({
   actions?: PageHeaderAction[];
 }) {
   const router = useRouter();
+  const { workspaceId } = useWorkspace();
   const canManage = useCanManageIntake();
   const current = PAGES.find((item) => item.page === page)!;
-  // Settings is offered only to those who may change it; anyone else who
-  // opens it by link is told so on the page.
-  const switches = PAGES.filter(
-    (item) => item.page !== "settings" || canManage || page === "settings",
-  );
   return (
     <>
       {/* Breadcrumbs are not a heading; this names the page for assistive technology. */}
@@ -75,7 +71,7 @@ export function IntakePageHeader({
           { label: current.label, title: current.label },
         ]}
         actionGroups={[
-          switches.map((item) => ({
+          PAGES.map((item) => ({
             title: item.label,
             label: item.label,
             pressed: page === item.page,
@@ -85,6 +81,13 @@ export function IntakePageHeader({
           })),
           [
             ...actions,
+            canManage &&
+              !!workspaceId && {
+                icon: <Settings aria-hidden="true" className="h-4 w-4" />,
+                iconOnly: true,
+                title: "Intake settings",
+                onClick: () => router.push(intakeSettingsHref(workspaceId)),
+              },
             // New request belongs to the list; the dashboard only reports.
             page === "requests" && {
               type: "new",

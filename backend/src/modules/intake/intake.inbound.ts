@@ -321,12 +321,14 @@ function sender(mail: PostmarkInbound): EmailInboundPayload["from"] {
   };
 }
 
-/** Whether the sender's domain, or a parent domain, is on the list. */
+/**
+ * Whether the sender's domain, or a parent domain, is on the list. An empty
+ * list accepts no one: mail is recorded only from domains an admin named.
+ */
 export function senderDomainAllowed(
   email: string | null,
   allowed: string[],
 ): boolean {
-  if (allowed.length === 0) return true;
   const domain = email?.split("@").pop()?.toLowerCase();
   if (!domain) return false;
   return allowed.some((d) => domain === d || domain.endsWith(`.${d}`));
@@ -482,6 +484,10 @@ export async function receiveInboundEmail(
   };
   if (isAutomaticEmail(mail)) return ignored(AUTOMATIC_EMAIL);
   const allowed = settings.email_allowed_domains ?? [];
+  if (allowed.length === 0)
+    return ignored(
+      "No sender domains are accepted yet. Add one in Intake settings.",
+    );
   if (!senderDomainAllowed(from.email, allowed)) {
     const domain = from.email?.split("@").pop()?.slice(0, 60);
     return ignored(

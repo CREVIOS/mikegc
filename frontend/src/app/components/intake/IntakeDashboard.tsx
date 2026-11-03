@@ -429,7 +429,7 @@ function Card({
   const heading = useId();
   return (
     <GlassCardUI>
-      <section aria-labelledby={heading} className="flex h-full flex-col p-5">
+      <section aria-labelledby={heading} className="flex h-full flex-col px-5 py-4">
         <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
           <div>
             <h2 id={heading} className={SECTION_HEADING}>
@@ -897,7 +897,7 @@ function DashboardSkeleton({ personal }: { personal: boolean }) {
       <div className={cn("grid @[52rem]:grid-cols-2", CARD_GAP_CLASS)}>
         {[0, 1].map((card) => (
           <GlassCardUI key={card}>
-            <div className="space-y-4 p-5">
+            <div className="space-y-4 px-5 py-4">
               <SkeletonLine className="w-36" />
               <div className="h-40 animate-pulse rounded-lg bg-gray-100 motion-reduce:animate-none" />
             </div>
@@ -906,7 +906,7 @@ function DashboardSkeleton({ personal }: { personal: boolean }) {
       </div>
       {!personal && (
         <GlassCardUI>
-          <div className="space-y-3 p-5">
+          <div className="space-y-3 px-5 py-4">
             <SkeletonLine className="w-24" />
             {[0, 1, 2].map((row) => (
               <SkeletonLine key={row} className="w-full" />

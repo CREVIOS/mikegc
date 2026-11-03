@@ -156,7 +156,6 @@ describe("intake route contracts", () => {
       p_requester_email: null,
       p_requester_team: null,
       p_date: null,
-      p_timezone: null,
       p_assignee: null,
     });
     mocks.rpc.mockResolvedValueOnce({
@@ -171,8 +170,9 @@ describe("intake route contracts", () => {
     { requester_name: "  " },
     { requester_name: undefined },
     { requester_email: "not an email" },
-    { requested_by_date: "2026-12-01" },
-    { requested_by_date: "2026-12-01", timezone: "Mars/Base" },
+    { requested_by_date: "2026-02-30" },
+    // A request keeps no timezone, so one is an unknown field.
+    { requested_by_date: "2026-12-01", timezone: "Europe/London" },
     { assignee_id: "not-a-uuid" },
   ])("rejects invalid request details %j", async (change) => {
     const body = { ...details, id, command_id, ...change };
@@ -217,7 +217,7 @@ describe("intake route contracts", () => {
       error: null,
     });
     const first = await request(app).get(
-      `${path}/requests?assignee=unassigned&scope=open&search=nda&sort=updated&limit=1`,
+      `${path}/requests?assignee=unassigned&scope=overdue&search=nda&sort=updated&limit=1&timezone=Asia%2FTokyo`,
     );
     expect(first.status).toBe(200);
     expect(first.body.requests).toEqual([{ id }]);
@@ -231,8 +231,10 @@ describe("intake route contracts", () => {
       p_after_key: null,
       p_after_id: null,
       p_limit: 1,
-      p_scope: "open",
+      p_scope: "overdue",
       p_requester: null,
+      // Overdue is judged where the viewer is.
+      p_timezone: "Asia/Tokyo",
     });
     await request(app).get(`${path}/requests?requester=%20Jane%20Business%20`);
     expect(mocks.rpc.mock.calls.at(-1)?.[1]).toMatchObject({
@@ -277,7 +279,6 @@ describe("intake route contracts", () => {
       requester_email: "jane@acme.test",
       requester_team: "Procurement",
       requested_by_date: "2026-12-01",
-      timezone: "Europe/London",
       command_id,
       expected_version: 3,
     };
@@ -291,7 +292,6 @@ describe("intake route contracts", () => {
         p_version: 3,
         p_requester_email: "jane@acme.test",
         p_date: "2026-12-01",
-        p_timezone: "Europe/London",
       }),
     );
     expect(

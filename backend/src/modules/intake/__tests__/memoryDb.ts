@@ -24,7 +24,7 @@ export type MemoryDb = {
 const UNIQUE: Record<string, string[][]> = {
   intake_inbound: [["id"], ["org_id", "source", "external_id"]],
   intake_automation: [["org_id"], ["slack_webhook_id"], ["email_token_hash"]],
-  intake_member_focus: [["org_id", "user_id"]],
+  intake_assignment_rules: [["id"]],
   documents: [["id"]],
   intake_requests: [["id"]],
 };
@@ -54,8 +54,8 @@ const DEFAULTS: Record<string, () => Row> = {
     slack_bot_token_encrypted: null,
     slack_bot_token_iv: null,
     slack_bot_token_tag: null,
-    triage_enabled: true,
-    default_timezone: null,
+    triage_model: null,
+    preprocessing_model: null,
     configured_by: null,
   }),
   documents: () => ({ id: randomUUID() }),
@@ -244,7 +244,6 @@ export const automatedIntakeRpc: Record<string, RpcHandler> = {
       requester_name: args.p_requester_name,
       requester_email: args.p_requester_email ?? null,
       requested_by_date: args.p_date ?? null,
-      timezone: args.p_timezone ?? null,
       assignee_id: assignee,
       state: assignee ? "in_review" : "submitted",
     });
@@ -267,5 +266,23 @@ export const automatedIntakeRpc: Record<string, RpcHandler> = {
         automated: true,
       });
     return { data: null, error: null };
+  },
+  intake_note_automated: (args, memory) => {
+    const request = memory
+      .rows("intake_requests")
+      .find((r) => r.id === args.p_request && r.org_id === args.p_org);
+    if (!request) return { data: null, error: { code: "P0002" } };
+    const notes = memory.rows("intake_messages");
+    if (notes.some((n) => n.id === args.p_note)) return { data: false, error: null };
+    notes.push({
+      id: args.p_note,
+      org_id: args.p_org,
+      request_id: args.p_request,
+      author_id: null,
+      kind: "note",
+      body: args.p_body,
+      automated: true,
+    });
+    return { data: true, error: null };
   },
 };

@@ -44,6 +44,7 @@ import {
   type TriagePlan,
 } from "./intake.inboundPayload";
 import { intakeRpc } from "./intake.shared";
+import { queueIntakePreprocess } from "./intake.preprocess";
 import {
   SLACK_TOKEN_ERRORS,
   SlackApiError,
@@ -60,8 +61,8 @@ import {
 } from "./intake.slack";
 import {
   formatSent,
-  loadTriageMembers,
-  resolveTriageModel,
+  loadTriageRules,
+  resolveIntakeModel,
   triageInbound,
   type InboundMessage,
 } from "./intake.triage";
@@ -256,7 +257,6 @@ async function slackMessage(
   token: string,
   settings: AutomationRow | null,
   payload: SlackInboundPayload,
-  timezone: string,
 ): Promise<InboundMessage> {
   const botUserId = settings?.slack_bot_user_id ?? null;
   type Message = {
@@ -320,7 +320,7 @@ async function slackMessage(
     plain.length === 1
       ? plain[0]!.text
       : plain
-          .map((m) => `${nameOf(m.user)}, ${formatSent(slackDate(m.ts), timezone)}:\n${m.text}`)
+          .map((m) => `${nameOf(m.user)}, ${formatSent(slackDate(m.ts))}:\n${m.text}`)
           .join("\n\n");
   const seen = new Set<string>();
   const files = plain
@@ -348,9 +348,9 @@ async function slackMessage(
 }
 
 /**
- * Record the request. A plan the database refuses (a timezone it doesn't
- * know, say) is recorded once more without its date and requester email,
- * which are the fields a model or a sender could get wrong.
+ * Record the request. A plan the database refuses is recorded once more
+ * without its date and requester email, which are the fields a model or a
+ * sender could get wrong.
  */
 async function submit(db: Db, row: InboundRow, plan: TriagePlan): Promise<string> {
   const args = (p: TriagePlan) => ({
@@ -362,7 +362,6 @@ async function submit(db: Db, row: InboundRow, plan: TriagePlan): Promise<string
     p_requester_name: p.requester_name,
     p_requester_email: p.requester_email,
     p_date: p.requested_by_date,
-    p_timezone: p.timezone,
     p_assignee: p.assignee_id,
   });
   let result = await intakeRpc<string>(db, "intake_submit_automated", args(plan));
@@ -370,7 +369,7 @@ async function submit(db: Db, row: InboundRow, plan: TriagePlan): Promise<string
     result = await intakeRpc<string>(
       db,
       "intake_submit_automated",
-      args({ ...plan, requester_email: null, requested_by_date: null, timezone: null }),
+      args({ ...plan, requester_email: null, requested_by_date: null }),
     );
   if (result.ok) return result.data;
   if (result.kind === "error") throw result.error;
@@ -576,25 +575,27 @@ async function processInbound(db: Db, row: InboundRow): Promise<Record<string, u
     throw new NonRetryableJobError("The received message couldn't be read.");
   const payload = parsed.data;
   const settings = await loadAutomationRow(db, row.org_id);
-  const timezone = settings?.default_timezone ?? "UTC";
   const slackToken = payload.kind === "slack" ? requireSlackToken(settings) : null;
 
   if (!payload.plan) {
     const message =
       payload.kind === "email"
         ? emailMessage(payload)
-        : await slackMessage(slackToken!, settings, payload, timezone);
-    const triageOn = settings?.triage_enabled !== false;
-    const [members, model] = await Promise.all([
-      loadTriageMembers(db, row.org_id),
-      triageOn
-        ? resolveTriageModel(db, row.org_id, settings?.configured_by ?? null)
-        : Promise.resolve(null),
+        : await slackMessage(slackToken!, settings, payload);
+    // Triage runs with the model the organization chose; without one, or
+    // once its key has gone, the message is recorded as it arrived.
+    const [rules, model] = await Promise.all([
+      loadTriageRules(db, row.org_id),
+      resolveIntakeModel(
+        db,
+        row.org_id,
+        settings?.configured_by ?? null,
+        settings?.triage_model ?? null,
+      ),
     ]);
     payload.plan = await triageInbound({
       message,
-      members,
-      timezone: settings?.default_timezone ?? null,
+      rules,
       model,
     });
     await savePayload(db, row.id, payload);
@@ -602,6 +603,16 @@ async function processInbound(db: Db, row: InboundRow): Promise<Record<string, u
   const plan = payload.plan;
   const requestId = row.request_id ?? (await submit(db, row, plan));
   await addDocuments(db, row, payload, plan, requestId, slackToken);
+  // Once its documents are attached, so preprocessing reads them.
+  if (plan.preprocess && !payload.preprocessQueued) {
+    await queueIntakePreprocess(db, {
+      orgId: row.org_id,
+      requestId,
+      with: plan.preprocess.with,
+    });
+    payload.preprocessQueued = true;
+    await savePayload(db, row.id, payload);
+  }
   if (payload.kind === "slack" && !payload.replied) {
     const reply = await recordedReply(db, row.org_id, requestId);
     if (reply) await replyInThread(slackToken!, payload, reply);

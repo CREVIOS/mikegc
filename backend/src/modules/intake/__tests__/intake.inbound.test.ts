@@ -56,7 +56,7 @@ function settings(overrides: Record<string, unknown> = {}) {
     slack_signing_secret_tag: sealed.tag,
     email_enabled: true,
     email_token_hash: createHash("sha256").update(token).digest("hex"),
-    email_allowed_domains: [],
+    email_allowed_domains: ["acme.test"],
     ...overrides,
   };
 }
@@ -320,6 +320,17 @@ describe("inbound email", () => {
     expect(mocks.uploadFile).not.toHaveBeenCalled();
     await postEmail(email({ MessageID: "m2", Headers: [], FromFull: { Email: "sam@eu.example.com" } }));
     expect(inbound()[1]).toMatchObject({ status: "pending" });
+  });
+  it("records no mail until a sender domain is accepted", async () => {
+    memory.rows("intake_automation")[0]!.email_allowed_domains = [];
+    await postEmail(email({ Attachments: [{ Name: "a.pdf", Content: pdf() }] }));
+    expect(inbound()[0]).toMatchObject({
+      status: "ignored",
+      payload: null,
+      error: "No sender domains are accepted yet. Add one in Intake settings.",
+    });
+    expect(mocks.uploadFile).not.toHaveBeenCalled();
+    expect(mocks.enqueueDbJob).not.toHaveBeenCalled();
   });
   it("rejects a body that isn't an email", async () => {
     expect((await postEmail([1, 2])).status).toBe(400);

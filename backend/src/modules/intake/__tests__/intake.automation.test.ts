@@ -2,13 +2,26 @@ import { createHash } from "node:crypto";
 import express from "express";
 import request from "supertest";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { IntakeAssignmentRule } from "@mike/contracts";
 import { memoryDb, type MemoryDb } from "./memoryDb";
 
 const mocks = vi.hoisted(() => ({
   memory: null as unknown as { db: unknown },
   getEffectiveApiKeys: vi.fn(),
   envApiKeys: vi.fn(),
+  getPlaybook: vi.fn(),
+  getWorkflowDetail: vi.fn(),
+  PlaybookRequestError: class extends Error {},
   userId: "",
+}));
+vi.mock("../../playbooks/playbooks.service", () => ({
+  getPlaybook: mocks.getPlaybook,
+  PlaybookRequestError: mocks.PlaybookRequestError,
+  playbookFindingEdits: vi.fn(),
+  reviewWithPlaybook: vi.fn(),
+}));
+vi.mock("../../workflows/workflows.service", () => ({
+  getWorkflowDetail: mocks.getWorkflowDetail,
 }));
 vi.mock("../../user/user.service", () => ({
   getEffectiveApiKeys: mocks.getEffectiveApiKeys,
@@ -46,6 +59,18 @@ const outsider = "00000000-0000-4000-8000-000000000005";
 const env = { ...process.env };
 let memory: MemoryDb;
 const scope = (actorId: string) => ({ orgId: org, actorId });
+/** A rule without preprocessing, unless `extra` adds it. */
+const rule = (
+  condition: string,
+  assignee_id: string,
+  extra: Partial<IntakeAssignmentRule> = {},
+): IntakeAssignmentRule => ({
+  condition,
+  assignee_id,
+  preprocess: false,
+  preprocess_with: null,
+  ...extra,
+});
 const row = () => memory.rows("intake_automation")[0] as AutomationRow;
 const app = express();
 app.use(express.json());
@@ -81,7 +106,7 @@ describe("who manages automated intake", () => {
   it.each([member, outsider])("refuses %s, who isn't an owner or admin", async (actor) => {
     for (const result of [
       await getIntakeAutomation(memory.db, scope(actor)),
-      await updateIntakeAutomation(memory.db, scope(actor), { triage_enabled: false }),
+      await updateIntakeAutomation(memory.db, scope(actor), { email_enabled: false }),
       await generateIntakeEmailWebhook(memory.db, scope(actor)),
     ])
       expect(result).toMatchObject({ ok: false, kind: "forbidden" });
@@ -101,18 +126,78 @@ describe("who manages automated intake", () => {
           team_name: null,
           bot_user_id: null,
         },
-        triage: { enabled: true, default_timezone: null, model_available: true },
-        focus: [],
+        models: {
+          available: expect.arrayContaining(["claude-haiku-4-5", "claude-sonnet-5-5"]),
+          triage: "claude-haiku-4-5",
+          triage_available: true,
+          preprocessing: "claude-sonnet-5-5",
+          preprocessing_available: true,
+        },
+        rules: [],
         recent: [],
       },
     });
-    // Nobody has saved yet: the viewer is who triage would run as.
+    // New settings start triage on a low-cost model and preprocessing on a
+    // stronger one, each with a key, run as their maker.
+    expect(row()).toMatchObject({
+      triage_model: "claude-haiku-4-5",
+      preprocessing_model: "claude-sonnet-5-5",
+      configured_by: admin,
+    });
     expect(mocks.getEffectiveApiKeys).toHaveBeenCalledWith(admin, org, memory.db);
   });
-  it("says when no model is available", async () => {
+  it("starts without a model when none has a key, and says so", async () => {
     mocks.getEffectiveApiKeys.mockResolvedValue({});
     const result = await getIntakeAutomation(memory.db, scope(owner));
-    expect(result.ok && result.data.triage.model_available).toBe(false);
+    expect(result.ok && result.data.models).toEqual({
+      available: [],
+      triage: null,
+      triage_available: false,
+      preprocessing: null,
+      preprocessing_available: false,
+    });
+  });
+  it("saves each model with a key, or none, and refuses one without", async () => {
+    const chosen = await updateIntakeAutomation(memory.db, scope(owner), {
+      triage_model: "claude-sonnet-5-5",
+      preprocessing_model: "claude-opus-5-5",
+    });
+    expect(chosen).toMatchObject({
+      ok: true,
+      data: {
+        models: {
+          triage: "claude-sonnet-5-5",
+          triage_available: true,
+          preprocessing: "claude-opus-5-5",
+          preprocessing_available: true,
+        },
+      },
+    });
+    for (const field of ["triage_model", "preprocessing_model"] as const)
+      expect(
+        await updateIntakeAutomation(memory.db, scope(owner), { [field]: "gpt-6.1-sol" }),
+      ).toMatchObject({
+        ok: false,
+        kind: "validation",
+        detail: "Choose a model your organization has a key for.",
+      });
+    expect(row()).toMatchObject({
+      triage_model: "claude-sonnet-5-5",
+      preprocessing_model: "claude-opus-5-5",
+    });
+    const cleared = await updateIntakeAutomation(memory.db, scope(owner), {
+      preprocessing_model: null,
+    });
+    expect(cleared).toMatchObject({
+      ok: true,
+      data: {
+        models: {
+          triage: "claude-sonnet-5-5",
+          preprocessing: null,
+          preprocessing_available: false,
+        },
+      },
+    });
   });
   it("lists the 20 most recent messages without their content", async () => {
     memory.tables.intake_inbound = Array.from({ length: 22 }, (_, i) => ({
@@ -173,10 +258,10 @@ describe("saving Slack's credentials", () => {
     vi.mocked(fetch).mockResolvedValue(Response.json({ ok: false, error: "invalid_auth" }));
     const result = await updateIntakeAutomation(memory.db, scope(owner), {
       slack_bot_token: "xoxb-revoked",
-      triage_enabled: false,
+      email_allowed_domains: ["acme.test"],
     });
     expect(result).toMatchObject({ ok: false, kind: "validation", code: "slack_token_invalid" });
-    expect(row()).toMatchObject({ triage_enabled: true, slack_bot_token_encrypted: null });
+    expect(row()).toMatchObject({ email_allowed_domains: [], slack_bot_token_encrypted: null });
   });
   it("says so when Slack can't be reached", async () => {
     vi.mocked(fetch).mockRejectedValue(new Error("offline"));
@@ -239,49 +324,131 @@ describe("other settings", () => {
     for (const bad of ["not a domain", "localhost", "a@b.com", "-x.com"])
       expect(normalizeDomains([bad]), bad).toMatchObject({ ok: false, kind: "validation" });
   });
-  it("saves domains, the timezone and triage, rejecting an unknown timezone", async () => {
-    expect(
-      await updateIntakeAutomation(memory.db, scope(owner), { default_timezone: "Mars/Olympus" }),
-    ).toMatchObject({ ok: false, kind: "validation" });
+  it("saves domains", async () => {
     const saved = await updateIntakeAutomation(memory.db, scope(owner), {
       email_allowed_domains: ["Acme.test"],
-      default_timezone: "Europe/London",
-      triage_enabled: false,
     });
     expect(saved).toMatchObject({
       ok: true,
-      data: {
-        email: { allowed_domains: ["acme.test"] },
-        triage: { enabled: false, default_timezone: "Europe/London" },
-      },
+      data: { email: { allowed_domains: ["acme.test"] } },
     });
   });
-  it("replaces every member's focus, for members only", async () => {
+  it("replaces the rules in order, assigning to members only", async () => {
     expect(
       await updateIntakeAutomation(memory.db, scope(owner), {
-        focus: [{ user_id: outsider, focus: "NDAs" }],
+        rules: [rule("NDAs", outsider)],
       }),
     ).toMatchObject({ ok: false, kind: "validation" });
     expect(
       await updateIntakeAutomation(memory.db, scope(owner), {
-        focus: [
-          { user_id: member, focus: "NDAs" },
-          { user_id: member, focus: "Again" },
-        ],
+        rules: [rule(" \u0000 ", member)],
       }),
     ).toMatchObject({ ok: false, kind: "validation" });
     await updateIntakeAutomation(memory.db, scope(owner), {
-      focus: [
-        { user_id: member, focus: " NDAs and procurement " },
-        { user_id: admin, focus: "Employment" },
+      rules: [
+        rule(" The request is about an NDA ", member),
+        rule("Employment questions", admin),
       ],
     });
+    // A member can have several rules, and a later save replaces them all.
     const result = await updateIntakeAutomation(memory.db, scope(owner), {
-      focus: [{ user_id: admin, focus: "Disputes" }],
+      rules: [
+        rule("Disputes", admin),
+        rule("The request is about an NDA", member),
+        rule("Anything about hiring", admin),
+      ],
     });
-    expect(result.ok && result.data.focus).toEqual([{ user_id: admin, focus: "Disputes" }]);
-    await updateIntakeAutomation(memory.db, scope(owner), { focus: [] });
-    expect(memory.rows("intake_member_focus")).toEqual([]);
+    expect(result.ok && result.data.rules).toEqual([
+      rule("Disputes", admin),
+      rule("The request is about an NDA", member),
+      rule("Anything about hiring", admin),
+    ]);
+    expect(memory.rows("intake_assignment_rules")).toHaveLength(3);
+    await updateIntakeAutomation(memory.db, scope(owner), { rules: [] });
+    expect(memory.rows("intake_assignment_rules")).toEqual([]);
+  });
+  it("saves each rule's preprocessing, if the admin saving can open its workflow or playbook", async () => {
+    mocks.getPlaybook.mockImplementation(async (userId: string, id: string) => {
+      if (id === "pb-1" && userId === owner) return { name: "NDA playbook" };
+      throw new mocks.PlaybookRequestError("Playbook not found.");
+    });
+    mocks.getWorkflowDetail.mockImplementation(
+      async (_db: unknown, { workflowId }: { workflowId: string }) =>
+        workflowId === "wf-1"
+          ? { ok: true, body: { metadata: { title: "Answer questions", type: "assistant" }, skill_md: "Answer." } }
+          : workflowId === "wf-table"
+            ? { ok: true, body: { metadata: { title: "Extract", type: "tabular" } } }
+            : { ok: false },
+    );
+    const withRef = (kind: "workflow" | "playbook", id: string) =>
+      rule("NDAs", member, { preprocess: true, preprocess_with: { kind, id } });
+    for (const [bad, message] of [
+      [withRef("playbook", "pb-hidden"), /playbook you can open/],
+      [withRef("workflow", "wf-missing"), /assistant workflow you can open/],
+      // A tabular workflow has no instructions to follow.
+      [withRef("workflow", "wf-table"), /assistant workflow you can open/],
+    ] as const)
+      expect(
+        await updateIntakeAutomation(memory.db, scope(owner), { rules: [bad] }),
+      ).toMatchObject({ ok: false, kind: "validation", detail: expect.stringMatching(message) });
+    expect(memory.rows("intake_assignment_rules")).toEqual([]);
+
+    const saved = await updateIntakeAutomation(memory.db, scope(owner), {
+      rules: [
+        withRef("playbook", "pb-1"),
+        rule("Employment", admin, {
+          preprocess: true,
+          preprocess_with: { kind: "workflow", id: "wf-1", name: "ignored" },
+        }),
+        // Preprocessing on with nothing to follow answers in general terms.
+        rule("Anything else", admin, { preprocess: true }),
+      ],
+    });
+    expect(saved.ok && saved.data.rules).toEqual([
+      rule("NDAs", member, {
+        preprocess: true,
+        preprocess_with: { kind: "playbook", id: "pb-1", name: "NDA playbook" },
+      }),
+      rule("Employment", admin, {
+        preprocess: true,
+        preprocess_with: { kind: "workflow", id: "wf-1", name: "Answer questions" },
+      }),
+      rule("Anything else", admin, { preprocess: true }),
+    ]);
+    expect(memory.rows("intake_assignment_rules")[0]).toMatchObject({
+      preprocess: true,
+      preprocess_kind: "playbook",
+      preprocess_ref: "pb-1",
+    });
+
+    // Another admin who can't open the playbook still changes the rest, and
+    // sees it unnamed.
+    const other = await updateIntakeAutomation(memory.db, scope(admin), {
+      rules: [withRef("playbook", "pb-1"), rule("Leases", member)],
+    });
+    expect(other.ok && other.data.rules[0]?.preprocess_with).toEqual({
+      kind: "playbook",
+      id: "pb-1",
+      name: null,
+    });
+  });
+  it("keeps the saved rules when the new ones can't be written", async () => {
+    await updateIntakeAutomation(memory.db, scope(owner), {
+      rules: [rule("NDAs", member)],
+    });
+    memory.intercept = ({ table, op }) =>
+      table === "intake_assignment_rules" && op === "insert"
+        ? { message: "database unavailable" }
+        : undefined;
+    expect(
+      await updateIntakeAutomation(memory.db, scope(owner), {
+        rules: [rule("Disputes", admin)],
+      }),
+    ).toMatchObject({ ok: false });
+    memory.intercept = undefined;
+    expect(memory.rows("intake_assignment_rules")).toMatchObject([
+      { condition: "NDAs", assignee_id: member, position: 0 },
+    ]);
   });
 });
 
@@ -292,8 +459,10 @@ describe("automation routes", () => {
     for (const [body, detail] of [
       [{ slack_bot_token: "xoxp-user-token" }, /xoxb-/],
       [{ slack_signing_secret: "x".repeat(301) }, /signing secret/],
-      [{ default_timezone: "Nowhere/City" }, /timezone/],
-      [{ focus: [{ user_id: member, focus: "" }] }, /1 to 500/],
+      // Intake keeps no timezone, so there is none to set.
+      [{ default_timezone: "Europe/London" }, /Check the automation settings/],
+      [{ rules: [rule("", member)] }, /1 to 500/],
+      [{ rules: [{ condition: "NDAs", assignee_id: "someone" }] }, /a member/],
       [{ email_allowed_domains: Array(51).fill("a.test") }, /50/],
       [{ unexpected: true }, /Check the automation settings/],
     ] as const) {
@@ -308,9 +477,12 @@ describe("automation routes", () => {
     expect((await request(app).get(path)).status).toBe(403);
     expect((await request(app).post(`${path}/email-webhook`)).status).toBe(403);
     mocks.userId = admin;
-    const res = await request(app).patch(path).send({ triage_enabled: false });
+    const res = await request(app).patch(path).send({ email_allowed_domains: ["acme.test"] });
     expect(res.status).toBe(200);
-    expect(res.body.triage.enabled).toBe(false);
+    expect(res.body.email.allowed_domains).toEqual(["acme.test"]);
+    // Triage can't be switched off: it runs whenever a model is available.
+    const off = await request(app).patch(path).send({ triage_enabled: false });
+    expect(off.status).toBe(400);
     const made = await request(app).post(`${path}/email-webhook`);
     expect(made.status).toBe(201);
     expect(made.body.webhook_url).toMatch(/\/webhooks\/intake\/email\/[A-Za-z0-9_-]{43}$/);

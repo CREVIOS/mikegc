@@ -59,18 +59,7 @@ export async function applyTrackedEditsToDocument(params: {
     versionNumber: number;
     storagePath: string;
   };
-}): Promise<
-  | {
-      ok: true;
-      version_id: string;
-      version_number: number;
-      storage_path: string;
-      download_url: string;
-      annotations: EditAnnotation[];
-      errors: { index: number; reason: string }[];
-    }
-  | { ok: false; error: string }
-> {
+}): Promise<TrackedEditsResult> {
   const { documentId, userId, userEmail, edits, db, reuseVersion } = params;
 
   const { data: doc } = await db
@@ -106,6 +95,56 @@ export async function applyTrackedEditsToDocument(params: {
         "You do not have permission to edit this document. Use replicate_document to make an editable copy instead.",
     };
 
+  return writeTrackedEdits({
+    documentId,
+    storageOwner: userId,
+    author: async () => {
+      const { data: authorProfile } = await db
+        .from("user_profiles")
+        .select("display_name, email")
+        .eq("user_id", userId)
+        .maybeSingle();
+      return profileAttributionName(authorProfile, "Mike");
+    },
+    edits,
+    db,
+    expectedVersion: params.expectedVersion,
+    reuseVersion,
+  });
+}
+
+export type TrackedEditsResult =
+  | {
+      ok: true;
+      version_id: string;
+      version_number: number;
+      storage_path: string;
+      download_url: string;
+      annotations: EditAnnotation[];
+      errors: { index: number; reason: string }[];
+    }
+  | { ok: false; error: string };
+
+/**
+ * Write the edits as a new active version, for a caller that has already
+ * decided they may be made: `storageOwner` is the path segment the edited file
+ * is stored under, and `author` the name each tracked change carries, looked
+ * up only once the current version is known to be the one expected.
+ */
+export async function writeTrackedEdits(params: {
+  documentId: string;
+  storageOwner: string;
+  author: string | (() => Promise<string>);
+  edits: EditInput[];
+  db: Db;
+  expectedVersion?: { id: string; storagePath: string };
+  reuseVersion?: {
+    versionId: string;
+    versionNumber: number;
+    storagePath: string;
+  };
+}): Promise<TrackedEditsResult> {
+  const { documentId, storageOwner, edits, db, reuseVersion } = params;
   const activeVersion = await loadActiveVersion(documentId, db);
   if (params.expectedVersion && (
     activeVersion?.id !== params.expectedVersion.id ||
@@ -119,13 +158,8 @@ export async function applyTrackedEditsToDocument(params: {
   const raw = activeVersion ? await downloadFile(activeVersion.storage_path) : null;
   if (!raw || !activeVersion) return { ok: false, error: "Could not load document bytes." };
   const current = { bytes: Buffer.from(raw), storage_path: activeVersion.storage_path };
-
-  const { data: authorProfile } = await db
-    .from("user_profiles")
-    .select("display_name, email")
-    .eq("user_id", userId)
-    .maybeSingle();
-  const author = profileAttributionName(authorProfile, "Mike");
+  const author =
+    typeof params.author === "string" ? params.author : await params.author();
 
   const {
     bytes: editedBytes,
@@ -157,7 +191,7 @@ export async function applyTrackedEditsToDocument(params: {
     if (activeVersion?.id !== reuseVersion.versionId || current.storage_path !== reuseVersion.storagePath) {
       return { ok: false, error: "This document changed. Read the latest version and try again." };
     }
-    newPath = `documents/${userId}/${documentId}/edits/${crypto.randomUUID().replace(/-/g, "")}.docx`;
+    newPath = `documents/${storageOwner}/${documentId}/edits/${crypto.randomUUID().replace(/-/g, "")}.docx`;
     versionRowId = reuseVersion.versionId;
     nextVersionNumber = reuseVersion.versionNumber;
 
@@ -176,7 +210,7 @@ export async function applyTrackedEditsToDocument(params: {
     }
   } else {
     const versionId = crypto.randomUUID().replace(/-/g, "");
-    newPath = `documents/${userId}/${documentId}/edits/${versionId}.docx`;
+    newPath = `documents/${storageOwner}/${documentId}/edits/${versionId}.docx`;
     await uploadFile(
       newPath,
       ab,

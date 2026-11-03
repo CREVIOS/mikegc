@@ -1,11 +1,31 @@
 import type { IntakeState } from "@mike/contracts";
+import { PERSONAL_WORKSPACE } from "@/app/contexts/WorkspaceContext";
 import type { IntakeListScope } from "@/app/lib/mikeApi";
 
 /** The Intake pages, which the header switches between. */
 export const INTAKE_REQUESTS_PATH = "/intake/requests";
 export const INTAKE_DASHBOARD_PATH = "/intake/dashboard";
-/** Automated intake, for an organization's owners and admins. */
-export const INTAKE_SETTINGS_PATH = "/intake/settings";
+
+/**
+ * Automated intake's settings, for a workspace's owners and admins. They sit
+ * in the workspace's own settings: an organization's, or for Personal the
+ * person's.
+ */
+export function intakeSettingsHref(orgId: string) {
+  return orgId === PERSONAL_WORKSPACE
+    ? "/settings/intake"
+    : `/organizations/${encodeURIComponent(orgId)}/settings/intake`;
+}
+/** The workspace's Model Preferences, where intake's models are chosen. */
+export function intakeModelsHref(orgId: string) {
+  return orgId === PERSONAL_WORKSPACE
+    ? "/settings/models"
+    : `/organizations/${encodeURIComponent(orgId)}/settings/models`;
+}
+/** Who requests go to and how MikeGC preprocesses them: a table page of its own. */
+export function intakeRulesHref(orgId: string) {
+  return `${intakeSettingsHref(orgId)}/rules`;
+}
 
 /** The list's tabs. Outstanding, the default, holds the open requests. */
 export type IntakeTab = "outstanding" | "resolved" | "cancelled";

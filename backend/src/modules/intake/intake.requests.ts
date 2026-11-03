@@ -30,7 +30,6 @@ const detailArgs = (d: IntakeDetails) => ({
   p_requester_email: d.requester_email,
   p_requester_team: d.requester_team,
   p_date: d.requested_by_date,
-  p_timezone: d.timezone,
 });
 
 export function listIntakeMembers(db: Db, scope: IntakeScope) {
@@ -84,6 +83,7 @@ export async function listIntakeRequests(
     sort: "updated" | "updated_asc" | "target";
     scope?: "open" | "unassigned" | "overdue" | "recorded_30d" | "resolved_30d";
     requester?: string;
+    timezone: string;
     cursor?: string;
     limit: number;
   },
@@ -105,6 +105,7 @@ export async function listIntakeRequests(
     p_limit: filters.limit,
     p_scope: filters.scope ?? null,
     p_requester: filters.requester ?? null,
+    p_timezone: filters.timezone,
   });
   if (!result.ok) return result;
   return ok({

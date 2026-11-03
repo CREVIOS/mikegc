@@ -52,8 +52,9 @@ personal organization and every request in it.
 
 Intake has two pages, `/intake/requests` (the list; plain `/intake` opens it)
 and `/intake/dashboard`, and the **Requests** and **Dashboard** buttons in
-their header switch between them. Owners and admins also have **Settings**
-(`/intake/settings`), for [automated intake](intake-automation.md). The
+their header switch between them. For owners and admins the header also has
+a settings icon, which opens [automated intake](intake-automation.md) in the
+workspace's settings. The
 dashboard shows where the workspace's requests stand and loads afresh each
 time it is opened:
 
@@ -82,9 +83,10 @@ time it is opened:
 The list's `scope` filter (`intake_list_in_scope`: `open`, `unassigned`,
 `overdue`, `recorded_30d`, `resolved_30d`) uses the same definitions, so a
 count and its list always agree.
-A request is overdue once its target day has passed in its own timezone, as in
-the queue. A request reopened and resolved again counts as resolved again in
-its week; its time to resolve runs to its latest resolution. Chart colors are
+A request is overdue once its target date has passed in the viewer's
+timezone, as in the queue and its Overdue filter. A request reopened and
+resolved again counts as resolved again in its week; its time to resolve runs
+to its latest resolution. Chart colors are
 the `--chart-*` tokens in `frontend/src/app/globals.css`, each theme's step
 validated against that theme's card surface.
 
@@ -94,8 +96,9 @@ validated against that theme's card surface.
    laid out like a request: the subject as its title, the request text and
    documents on the left, and the details on the right. They enter the
    subject, the requester's name (with an optional email) and what the
-   requester needs. A target date is optional and must
-   include a timezone; it is a planning aid, not a verified legal deadline.
+   requester needs. A target date is optional and is a
+   calendar date with no timezone: it is overdue once it has passed where the
+   viewer is. It is a planning aid, not a verified legal deadline.
    The requester's team is not asked for yet; requests keep any team recorded
    earlier, and search still matches it.
    The **Reviewer** menu lists **Unassigned** and every member with
@@ -120,7 +123,7 @@ is the page title in a serif heading, edited in place where the request can be
 edited. On wide screens the
 sidebar stays in place while the page scrolls; on narrow
 screens it comes first. It shows the status, the reviewer,
-the requester's name and email, the target date with its timezone, who created the request
+the requester's name and email, the target date, who created the request
 (**Created by**) and when (**Created**).
 
 The status is a menu in the sidebar. While a request is open it lists every

@@ -31,8 +31,13 @@ import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 //   General          everyone in the organization
 //   Members          everyone in the organization; a full table page of its
 //                    own rather than a section inside the frame
+//   Model Preferences    its owners and admins: the models its features run
+//                        with, such as intake's triage and preprocessing
 //   Bring Your Own Keys  its owners and admins: the organization's model
 //                        provider keys, as in a person's own settings
+//   Intake           its owners and admins: how MikeGC records requests from
+//                    email and Slack, with the rules on a table page of
+//                    their own (intake/rules)
 //
 // An organization's settings are part of its workspace: they open only while
 // that organization is the caller's active workspace, never from another
@@ -78,7 +83,13 @@ export function organizationSettingsHref(
 }
 
 type OrganizationSettingsSection =
-  "general" | "members" | "audit" | "providers" | "privacy-data";
+  | "general"
+  | "members"
+  | "audit"
+  | "models"
+  | "providers"
+  | "intake"
+  | "privacy-data";
 
 export function OrganizationSettingsProvider({
   orgId,
@@ -213,10 +224,21 @@ export function OrganizationSettingsFrame({
               href: organizationSettingsHref(orgId, "audit"),
             },
             {
+              id: "models",
+              // Named as the same page is in a person's own settings.
+              label: "Model Preferences",
+              href: organizationSettingsHref(orgId, "models"),
+            },
+            {
               id: "providers",
               // Named as the same setting is in a person's own settings.
               label: "Bring Your Own Keys",
               href: organizationSettingsHref(orgId, "providers"),
+            },
+            {
+              id: "intake",
+              label: "Intake",
+              href: organizationSettingsHref(orgId, "intake"),
             },
           ]
         : []),

@@ -4601,6 +4601,9 @@ export function listIntakeRequests(orgId: string, query: IntakeListQuery = {}) {
     const params = new URLSearchParams(
         Object.entries(query).filter((entry): entry is [string, string] => !!entry[1]),
     );
+    // The Overdue filter counts a target date as passed where the viewer is.
+    const timezone = browserTimeZone();
+    if (timezone) params.set("timezone", timezone);
     const suffix = params.size ? `?${params}` : "";
     return apiRequest<IntakeRequestPage>(intakePath(orgId, `/requests${suffix}`));
 }

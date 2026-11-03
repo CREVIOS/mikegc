@@ -100,9 +100,11 @@ const slackPayload = (overrides: Record<string, unknown> = {}) => ({
 function setup(options: {
   payload: Record<string, unknown>;
   source?: "email" | "slack";
-  triage?: boolean;
+  /** False when no model key is available, so triage can't run. */
+  model?: boolean;
   kind?: "team" | "personal";
 }) {
+  if (options.model === false) mocks.getEffectiveApiKeys.mockResolvedValue({});
   const token = encryptString("xoxb-bot-token");
   memory = memoryDb(
     {
@@ -117,7 +119,9 @@ function setup(options: {
         { user_id: sam, display_name: "Sam Lawyer", email: "sam@firm.test", account_deletion_requested_at: null },
         { user_id: pat, display_name: "Pat Counsel", email: "pat@firm.test", account_deletion_requested_at: null },
       ],
-      intake_member_focus: [{ org_id: org, user_id: sam, focus: "NDAs" }],
+      intake_assignment_rules: [
+        { id: "r1", org_id: org, position: 0, condition: "The request is about an NDA", assignee_id: sam },
+      ],
       intake_automation: [
         {
           org_id: org,
@@ -127,8 +131,7 @@ function setup(options: {
           slack_bot_token_encrypted: token.encrypted,
           slack_bot_token_iv: token.iv,
           slack_bot_token_tag: token.tag,
-          triage_enabled: options.triage ?? true,
-          default_timezone: "Europe/London",
+          triage_model: "claude-haiku-4-5",
           configured_by: owner,
         },
       ],
@@ -217,7 +220,7 @@ beforeEach(() => {
       requester_name: "Jane Business",
       requester_email: "jane@acme.test",
       target_date: "2026-11-06",
-      assignee_id: sam,
+      rule: 1,
       attachments: [1],
     }),
   );
@@ -243,7 +246,6 @@ describe("recording an email", () => {
       p_requester_name: "Jane Business",
       p_requester_email: "jane@acme.test",
       p_date: "2026-11-06",
-      p_timezone: "Europe/London",
       p_assignee: sam,
     });
     const [request] = memory.rows("intake_requests");
@@ -287,11 +289,47 @@ describe("recording an email", () => {
       `intake-inbound/${org}/${inboundId}/0`,
       `intake-inbound/${org}/${inboundId}/1`,
     ]);
-    // The model saw the members and their focus, never another organization's.
-    expect(mocks.completeText.mock.calls[0]![0].user).toContain('"handles":"NDAs"');
+    // The model saw the organization's rules, never another organization's.
+    expect(mocks.completeText.mock.calls[0]![0].user).toContain(
+      'RULES: [{"number":1,"condition":"The request is about an NDA"}]',
+    );
   });
-  it("records the message as it is with triage off, keeping every attachment", async () => {
-    setup({ payload: emailPayload(), triage: false });
+  it("queues AI preprocessing once the request and its documents are recorded, when its rule asks", async () => {
+    setup({ payload: emailPayload() });
+    Object.assign(memory.rows("intake_assignment_rules")[0]!, {
+      preprocess: true,
+      preprocess_kind: "playbook",
+      preprocess_ref: "pb-1",
+    });
+    await handleIntakeInbound(memory.db, job());
+    const queued = mocks.enqueueDbJob.mock.calls.filter(
+      ([, input]) => input.kind === "intake.preprocess",
+    );
+    expect(queued).toEqual([
+      [
+        memory.db,
+        expect.objectContaining({
+          payload: expect.objectContaining({
+            orgId: org,
+            requestId: inboundId,
+            with: { kind: "playbook", id: "pb-1" },
+          }),
+          dedupeKey: `intake.preprocess:${inboundId}`,
+        }),
+      ],
+    ]);
+    // After its documents, which preprocessing reads.
+    expect(memory.rows("intake_request_documents")).toHaveLength(1);
+  });
+  it("doesn't queue preprocessing for a rule that doesn't ask for it", async () => {
+    setup({ payload: emailPayload() });
+    await handleIntakeInbound(memory.db, job());
+    expect(
+      mocks.enqueueDbJob.mock.calls.some(([, input]) => input.kind === "intake.preprocess"),
+    ).toBe(false);
+  });
+  it("records the message as it is with no model to triage with, keeping every attachment", async () => {
+    setup({ payload: emailPayload(), model: false });
     await expect(handleIntakeInbound(memory.db, job())).resolves.toMatchObject({ triaged: false });
     expect(mocks.completeText).not.toHaveBeenCalled();
     expect(memory.rows("intake_requests")[0]).toMatchObject({
@@ -305,14 +343,14 @@ describe("recording an email", () => {
     );
     expect(memory.rows("documents")).toHaveLength(2);
   });
-  it("leaves the request unassigned when the reviewer is no longer a member", async () => {
+  it("leaves the request unassigned when no rule matches", async () => {
     setup({ payload: emailPayload() });
-    mocks.completeText.mockResolvedValue(JSON.stringify({ assignee_id: outsider }));
+    mocks.completeText.mockResolvedValue(JSON.stringify({ rule: null, assignee_id: outsider }));
     await handleIntakeInbound(memory.db, job());
     expect(memory.rows("intake_requests")[0]).toMatchObject({ assignee_id: null, state: "submitted" });
   });
   it("resumes after a failure without asking the model again or duplicating documents", async () => {
-    setup({ payload: emailPayload(), triage: false });
+    setup({ payload: emailPayload(), model: false });
     mocks.createDocumentVersion.mockRejectedValueOnce(new Error("storage hiccup"));
     await expect(handleIntakeInbound(memory.db, job())).rejects.toThrow("storage hiccup");
     expect(row()).toMatchObject({
@@ -348,7 +386,7 @@ describe("recording an email", () => {
 
 describe("recording a Slack thread", () => {
   it("records the thread up to the mention, with its first author as requester, and replies once", async () => {
-    setup({ payload: slackPayload(), source: "slack", triage: false });
+    setup({ payload: slackPayload(), source: "slack", model: false });
     await handleIntakeInbound(memory.db, job());
     expect(slackCalls.find((c) => c.method === "conversations.replies")?.params).toMatchObject({
       channel: "C42",
@@ -364,8 +402,8 @@ describe("recording a Slack thread", () => {
       requester_email: "jane@acme.test",
     });
     expect(request!.description).toBe(
-      "Jane Business, 2 Nov 2026, 09:14 (Europe/London):\nNeed the Supplier Co NDA signed off\nThey want it back by Friday.\n\n" +
-        "Ravi Sales, 2 Nov 2026, 09:15 (Europe/London):\ncan Legal look at this?\n\n" +
+      "Jane Business, 2 Nov 2026, 09:14 UTC:\nNeed the Supplier Co NDA signed off\nThey want it back by Friday.\n\n" +
+        "Ravi Sales, 2 Nov 2026, 09:15 UTC:\ncan Legal look at this?\n\n" +
         "--- Not attached ---\n- notes.txt: not a PDF, Word, Excel or PowerPoint file",
     );
     expect(memory.rows("documents")).toHaveLength(1);
@@ -392,7 +430,7 @@ describe("recording a Slack thread", () => {
     );
   });
   it("never replies twice when a retry follows a sent reply", async () => {
-    setup({ payload: slackPayload(), source: "slack", triage: false });
+    setup({ payload: slackPayload(), source: "slack", model: false });
     let failDone = true;
     memory.intercept = ({ table, values }) => {
       if (table === "intake_inbound" && (values as { status?: string })?.status === "done" && failDone) {
@@ -438,7 +476,7 @@ describe("when a message fails for good", () => {
     expect(slackCalls.filter((c) => c.method === "chat.postMessage")).toHaveLength(1);
   });
   it("points the thread at a request that was recorded", async () => {
-    setup({ payload: slackPayload(), source: "slack", triage: false });
+    setup({ payload: slackPayload(), source: "slack", model: false });
     stubSlack({ "chat.postMessage": () => ({ ok: false, error: "ratelimited" }) });
     await expect(handleIntakeInbound(memory.db, job())).rejects.toBeTruthy();
     stubSlack();
@@ -477,7 +515,7 @@ describe("queueing", () => {
   });
   it("runs it in-process when the job runner is off", async () => {
     process.env.DB_JOBS_ENABLED = "false";
-    setup({ payload: emailPayload(), triage: false });
+    setup({ payload: emailPayload(), model: false });
     await dispatchIntakeInbound(memory.db, org, inboundId);
     expect(mocks.enqueueDbJob).not.toHaveBeenCalled();
     await vi.waitFor(() => expect(row().status).toBe("done"));
