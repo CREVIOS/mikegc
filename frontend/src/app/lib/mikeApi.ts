@@ -15,8 +15,8 @@ import type {
     IntakeDashboardWeeks,
     IntakeDocument,
     IntakeEdit,
-    IntakeEmailWebhook,
     IntakeEvent,
+    IntakeMailboxConnection,
     IntakeMember,
     IntakeRequester,
     IntakeMessage,
@@ -4549,12 +4549,27 @@ export function updateIntakeAutomation(orgId: string, body: IntakeAutomationUpda
     );
 }
 /**
- * Generate the email webhook URL. It is returned only this once, and
- * generating another replaces it, so the old one stops working.
+ * Connect the intake mailbox MikeGC reads and replies from: Microsoft 365
+ * through an Entra app, or Google Workspace through the deployment's service
+ * account. The server checks it can reach the mailbox before saving.
  */
-export function generateIntakeEmailWebhook(orgId: string) {
-    return apiRequest<IntakeEmailWebhook>(
-        intakePath(orgId, "/automation/email-webhook"),
+export function connectIntakeMailbox(orgId: string, body: IntakeMailboxConnection) {
+    return apiRequest<IntakeAutomationSettings>(
+        intakePath(orgId, "/automation/mailbox"),
+        jsonBody("POST", body),
+    );
+}
+/** Stop reading and replying from the intake mailbox. */
+export function disconnectIntakeMailbox(orgId: string) {
+    return apiRequest<IntakeAutomationSettings>(
+        intakePath(orgId, "/automation/mailbox"),
+        { method: "DELETE" },
+    );
+}
+/** Send a test email from the intake mailbox to the signed-in admin. */
+export function sendIntakeMailboxTest(orgId: string) {
+    return apiRequest<{ sent_to: string }>(
+        intakePath(orgId, "/automation/mailbox/test"),
         { method: "POST" },
     );
 }
@@ -4594,12 +4609,16 @@ export type IntakeListQuery = {
     search?: string;
     sort?: "updated" | "updated_asc" | "target";
     scope?: IntakeListScope;
+    /** Only requests with a requester's reply nobody has opened yet. */
+    new_reply?: boolean;
     cursor?: string;
 };
 /** Fetch one keyset page of the queue; pass the previous page's cursor for the next. */
 export function listIntakeRequests(orgId: string, query: IntakeListQuery = {}) {
     const params = new URLSearchParams(
-        Object.entries(query).filter((entry): entry is [string, string] => !!entry[1]),
+        Object.entries(query)
+            .filter(([, value]) => !!value)
+            .map(([key, value]): [string, string] => [key, String(value)]),
     );
     // The Overdue filter counts a target date as passed where the viewer is.
     const timezone = browserTimeZone();
@@ -4686,4 +4705,17 @@ export function uploadIntakeDocuments(
 /** Apply a request command; retries must reuse the original command body. */
 export function commandIntakeRequest(orgId: string, id: string, action: IntakeAction, body: IntakeCommand) {
     return apiRequest<IntakeReceipt>(intakeRequestPath(orgId, id, `/${action}`), jsonBody("POST", body));
+}
+/** Send a message to the requester again after it couldn't be sent. */
+export function retryIntakeDelivery(orgId: string, id: string, outboundId: string) {
+    return apiRequest<{ retried: boolean }>(
+        intakeRequestPath(orgId, id, `/outbound/${encodeURIComponent(outboundId)}/retry`),
+        { method: "POST" },
+    );
+}
+/** Clear a request's New reply flag once it has been opened. */
+export function markIntakeReplySeen(orgId: string, id: string) {
+    return apiRequest<{ ok: true }>(intakeRequestPath(orgId, id, "/reply-seen"), {
+        method: "POST",
+    });
 }

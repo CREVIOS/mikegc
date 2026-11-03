@@ -1,11 +1,17 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AnchorHTMLAttributes } from "react";
 import type {
   IntakeAutomationSettings,
   IntakeAutomationUpdate,
-  IntakeEmailWebhook,
+  IntakeMailboxConnection,
   IntakeMember,
 } from "@mike/contracts";
 import { IntakeModelSettings } from "./IntakeModelSettings";
@@ -16,7 +22,9 @@ import { IntakeSettingsRedirect } from "./IntakeSettingsRedirect";
 const mocks = vi.hoisted(() => ({
   automation: vi.fn(),
   update: vi.fn(),
-  generate: vi.fn(),
+  connect: vi.fn(),
+  disconnect: vi.fn(),
+  test: vi.fn(),
   members: vi.fn(),
   push: vi.fn(),
   replace: vi.fn(),
@@ -34,12 +42,18 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/app/lib/mikeApi", () => ({
   getIntakeAutomation: mocks.automation,
   updateIntakeAutomation: mocks.update,
-  generateIntakeEmailWebhook: mocks.generate,
+  connectIntakeMailbox: mocks.connect,
+  disconnectIntakeMailbox: mocks.disconnect,
+  sendIntakeMailboxTest: mocks.test,
   getIntakeMembers: mocks.members,
 }));
 vi.mock("@/app/lib/userFacingError", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/app/lib/userFacingError")>()),
   notifyError: mocks.notify,
+  notifySuccess: mocks.success,
+}));
+vi.mock("@/shared/lib/errorNotifier", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/shared/lib/errorNotifier")>()),
   notifySuccess: mocks.success,
 }));
 vi.mock("next/navigation", () => ({
@@ -70,15 +84,41 @@ const members: IntakeMember[] = [
   },
 ];
 
+/** The email block with an Outlook mailbox connected, switched off. */
+const connectedEmail = (): IntakeAutomationSettings["email"] => ({
+  enabled: false,
+  provider: "graph",
+  mailbox: "intake@example.com",
+  allowed_domains: ["example.com"],
+  from_name: "Legal",
+  graph: { tenant_id: "tenant-1", client_id: "client-1", secret_set: true },
+  notification_url: "https://api.example.test/webhooks/intake/graph/7c1d",
+  gmail_client_id: "1122334455",
+  status: {
+    subscription_expires_at: "2026-11-06T10:00:00Z",
+    last_read_at: "2026-11-03T09:30:00Z",
+    error: null,
+  },
+  needs_reconnect: false,
+});
+/** The email block before any mailbox is connected. */
+const unconnectedEmail = (
+  overrides: Partial<IntakeAutomationSettings["email"]> = {},
+): IntakeAutomationSettings["email"] => ({
+  ...connectedEmail(),
+  provider: null,
+  mailbox: null,
+  allowed_domains: [],
+  graph: { tenant_id: null, client_id: null, secret_set: false },
+  status: { subscription_expires_at: null, last_read_at: null, error: null },
+  ...overrides,
+});
+
 const settings = (
   overrides: Partial<IntakeAutomationSettings> = {},
 ): IntakeAutomationSettings => ({
-  email: {
-    enabled: false,
-    configured: true,
-    token_hint: "9f3c",
-    allowed_domains: ["example.com"],
-  },
+  clarify_enabled: true,
+  email: connectedEmail(),
   slack: {
     enabled: true,
     events_url: "https://api.example.test/webhooks/intake/slack/0b6f",
@@ -86,6 +126,16 @@ const settings = (
     team_id: "T0123",
     team_name: "Acme Legal",
     bot_user_id: "U0BOT",
+    missing_scopes: [],
+    message_events_seen: true,
+  },
+  teams: {
+    enabled: false,
+    events_url: "https://api.example.test/webhooks/intake/teams/5e2a",
+    configured: false,
+    app_id: null,
+    tenant_id: null,
+    files_access: null,
   },
   models: {
     available: ["claude-haiku-4-5", "claude-sonnet-5-5", "gpt-6-luna"],
@@ -123,11 +173,24 @@ function applyUpdate(
 ): IntakeAutomationSettings {
   return {
     ...current,
+    clarify_enabled: update.clarify_enabled ?? current.clarify_enabled,
     email: {
       ...current.email,
       enabled: update.email_enabled ?? current.email.enabled,
       allowed_domains:
         update.email_allowed_domains ?? current.email.allowed_domains,
+      from_name: update.email_from_name ?? current.email.from_name,
+    },
+    teams: {
+      ...current.teams,
+      enabled: update.teams_enabled ?? current.teams.enabled,
+      app_id: update.teams_app_id ?? current.teams.app_id,
+      tenant_id: update.teams_tenant_id ?? current.teams.tenant_id,
+      configured:
+        current.teams.configured ||
+        (!!(update.teams_app_id ?? current.teams.app_id) &&
+          !!(update.teams_tenant_id ?? current.teams.tenant_id) &&
+          !!update.teams_client_secret),
     },
     slack: {
       ...current.slack,
@@ -183,7 +246,7 @@ afterEach(() => {
 });
 
 describe("IntakeSettings", () => {
-  it("shows Email, Slack and Triage rules one after another", async () => {
+  it("shows Email, Slack, Teams and Triage rules one after another", async () => {
     server = emailOn();
     render(<IntakeSettings orgId="org-a" />);
     await form();
@@ -193,7 +256,7 @@ describe("IntakeSettings", () => {
     expect(screen.queryByRole("tab")).toBeNull();
     expect(
       screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent),
-    ).toEqual(["Email", "Slack", "Triage rules"]);
+    ).toEqual(["Email", "Slack", "Teams", "Triage rules"]);
     expect(screen.queryByText("Recent messages")).not.toBeInTheDocument();
 
     const email = section("Email");
@@ -204,10 +267,17 @@ describe("IntakeSettings", () => {
     expect(
       within(email).getByRole("switch", { name: "Record requests from email" }),
     ).toHaveAttribute("aria-checked", "true");
-    expect(email).toHaveTextContent("Webhook URL ending …9f3c");
-    expect(
-      within(email).getByRole("button", { name: "Replace webhook URL" }),
-    ).toBeInTheDocument();
+    // The connected mailbox, on its own lines, with how it is going.
+    expect(within(email).getByText("intake@example.com")).toBeInTheDocument();
+    expect(email).toHaveTextContent("Outlook (Microsoft 365)");
+    expect(email).toHaveTextContent("Last read");
+    expect(email).toHaveTextContent("New-mail notifications renew before");
+    for (const name of [
+      "Send test email",
+      "Reconnect Outlook (Microsoft 365)",
+      "Disconnect",
+    ])
+      expect(within(email).getByRole("button", { name })).toBeInTheDocument();
     expect(within(email).getByText("example.com")).toBeInTheDocument();
     expect(
       within(email).getByRole("button", { name: "Remove example.com" }),
@@ -254,7 +324,7 @@ describe("IntakeSettings", () => {
     render(<IntakeSettings orgId="org-a" />);
     await form();
     const email = section("Email");
-    expect(email).not.toHaveTextContent("Forward a shared address");
+    expect(email).not.toHaveTextContent("People in your company email");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
     await user.click(
@@ -262,11 +332,10 @@ describe("IntakeSettings", () => {
     );
     const dialog = screen.getByRole("dialog", { name: "Set up Email" });
     expect(dialog).toHaveTextContent(/^Intake›Settings›Set up Email/);
-    expect(dialog).toHaveTextContent(/Forward a shared address/);
-    expect(dialog).toHaveTextContent(
-      "Until one is added, no mail is recorded.",
-    );
-    expect(within(dialog).getAllByRole("listitem")).toHaveLength(4);
+    expect(dialog).toHaveTextContent(/People in your company email requests/);
+    expect(dialog).toHaveTextContent("Exchange RBAC for Applications");
+    expect(dialog).toHaveTextContent("domain-wide delegation");
+    expect(within(dialog).getAllByRole("listitem")).toHaveLength(5);
 
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -276,9 +345,21 @@ describe("IntakeSettings", () => {
         name: "How to set up Slack",
       }),
     );
-    expect(
-      screen.getByRole("dialog", { name: "Set up Slack" }),
-    ).toHaveTextContent(/People write @MikeGC in Slack/);
+    const slackGuide = screen.getByRole("dialog", { name: "Set up Slack" });
+    expect(slackGuide).toHaveTextContent(/People write @MikeGC in Slack/);
+    expect(slackGuide).toHaveTextContent(
+      "app_mention, message.channels and message.groups",
+    );
+    await user.keyboard("{Escape}");
+
+    await user.click(
+      within(section("Teams")).getByRole("button", {
+        name: "How to set up Teams",
+      }),
+    );
+    const teamsGuide = screen.getByRole("dialog", { name: "Set up Teams" });
+    expect(teamsGuide).toHaveTextContent("Azure Bot");
+    expect(within(teamsGuide).getAllByRole("listitem")).toHaveLength(5);
   });
 
   it("hides a channel's setup while it is off", async () => {
@@ -289,11 +370,12 @@ describe("IntakeSettings", () => {
     expect(
       within(email).getByRole("switch", { name: "Record requests from email" }),
     ).toHaveAttribute("aria-checked", "false");
-    expect(email).not.toHaveTextContent("Webhook URL ending");
+    // Its connection stays in view; the rest of its setup waits.
+    expect(within(email).getByText("intake@example.com")).toBeInTheDocument();
     expect(
       within(email).queryByLabelText("Allowed sender domains"),
     ).not.toBeInTheDocument();
-    expect(within(email).queryByText(/Mail from any sender/)).toBeNull();
+    expect(within(email).queryByLabelText("Sender name")).toBeNull();
 
     const slack = section("Slack");
     expect(within(slack).getByLabelText("Signing Secret")).toBeInTheDocument();
@@ -372,10 +454,10 @@ describe("IntakeSettings", () => {
     const user = userEvent.setup();
     mocks.update.mockRejectedValueOnce(
       Object.assign(
-        new Error("Generate the email webhook URL before turning email on."),
+        new Error("Connect the intake mailbox before turning email on."),
         {
           status: 400,
-          detail: "Generate the email webhook URL before turning email on.",
+          detail: "Connect the intake mailbox before turning email on.",
         },
       ),
     );
@@ -474,6 +556,8 @@ describe("IntakeSettings", () => {
         team_id: null,
         team_name: null,
         bot_user_id: null,
+        missing_scopes: [],
+        message_events_seen: false,
       },
     });
     const user = userEvent.setup();
@@ -514,128 +598,313 @@ describe("IntakeSettings", () => {
     );
   });
 
-  it("shows a generated webhook URL once, to copy, and asks before replacing it", async () => {
+  it("connects an Outlook mailbox, sending what the form holds", async () => {
     const user = userEvent.setup();
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(navigator, "clipboard", {
-      configurable: true,
-      value: { writeText },
-    });
-    server = settings({
-      email: {
-        enabled: false,
-        configured: false,
-        token_hint: null,
-        allowed_domains: [],
-      },
-    });
-    const first: IntakeEmailWebhook = {
-      webhook_url:
-        "https://api.example.test/webhooks/intake/email/first-token-a1b2",
-      token_hint: "a1b2",
-    };
-    const second: IntakeEmailWebhook = {
-      webhook_url:
-        "https://api.example.test/webhooks/intake/email/second-token-c3d4",
-      token_hint: "c3d4",
-    };
-    // The API keeps each generated URL's ending.
-    for (const created of [first, second])
-      mocks.generate.mockImplementationOnce(async () => {
+    server = settings({ email: unconnectedEmail() });
+    mocks.connect.mockImplementation(
+      async (_orgId: string, connection: IntakeMailboxConnection) => {
         server = {
           ...server,
           email: {
-            ...server.email,
-            configured: true,
-            token_hint: created.token_hint,
+            ...connectedEmail(),
+            mailbox: connection.mailbox,
+            // The address's own domain is accepted from the start.
+            allowed_domains: ["company.com"],
           },
         };
-        return created;
-      });
+        return server;
+      },
+    );
+    render(<IntakeSettings orgId="org-a" />);
+    await form();
+    const email = section("Email");
+    // Nothing is connected, so there is nothing to switch on yet.
+    expect(
+      within(email).queryByRole("switch", {
+        name: "Record requests from email",
+      }),
+    ).toBeNull();
+    expect(
+      within(email).getByRole("button", {
+        name: "Connect Gmail (Google Workspace)",
+      }),
+    ).toBeInTheDocument();
+    await user.click(
+      within(email).getByRole("button", {
+        name: "Connect Outlook (Microsoft 365)",
+      }),
+    );
+    const connect = within(email).getByRole("button", { name: "Connect" });
+    // Each field is needed before it can connect.
+    expect(connect).toBeDisabled();
+    await user.type(
+      within(email).getByLabelText("Intake address"),
+      "intake@company.com",
+    );
+    await user.type(within(email).getByLabelText("Tenant ID"), "tenant-9");
+    await user.type(within(email).getByLabelText("Client ID"), "client-9");
+    const secret = within(email).getByLabelText("Client secret");
+    expect(secret).toHaveAttribute("type", "password");
+    expect(connect).toBeDisabled();
+    await user.type(secret, "s3cret");
+    expect(connect).toBeEnabled();
+    await user.click(connect);
+    await waitFor(() =>
+      expect(mocks.connect).toHaveBeenCalledWith("org-a", {
+        provider: "graph",
+        mailbox: "intake@company.com",
+        tenant_id: "tenant-9",
+        client_id: "client-9",
+        client_secret: "s3cret",
+      }),
+    );
+    expect(
+      await within(email).findByText("intake@company.com"),
+    ).toBeInTheDocument();
+    expect(mocks.success).toHaveBeenCalledWith("Connected intake@company.com");
+    expect(within(email).queryByLabelText("Client secret")).toBeNull();
+    // Connecting changes no other setting.
+    expect(mocks.update).not.toHaveBeenCalled();
+  });
+
+  it("says under the form why a mailbox couldn't connect", async () => {
+    const user = userEvent.setup();
+    server = settings({ email: unconnectedEmail() });
+    const detail =
+      "Microsoft 365 didn't accept these credentials. Check the tenant ID, client ID and client secret.";
+    mocks.connect.mockRejectedValue(
+      Object.assign(new Error(detail), { status: 400, detail }),
+    );
     render(<IntakeSettings orgId="org-a" />);
     await form();
     const email = section("Email");
     await user.click(
-      within(email).getByRole("switch", { name: "Record requests from email" }),
+      within(email).getByRole("button", {
+        name: "Connect Outlook (Microsoft 365)",
+      }),
     );
-    expect(email).toHaveTextContent("No webhook URL yet.");
-    expect(email).toHaveTextContent(
-      "Generate the webhook URL to finish turning email on.",
+    await user.type(
+      within(email).getByLabelText("Intake address"),
+      "intake@company.com",
     );
-    // Turned on without a URL, nothing is sent: the API would refuse it.
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    expect(mocks.update).not.toHaveBeenCalled();
-
-    // Nothing is in use yet, so it is generated without asking. The button
-    // reads one word, on the line that says there is no URL.
-    const generate = within(email).getByRole("button", {
-      name: "Generate webhook URL",
-    });
-    expect(generate).toHaveTextContent(/^Generate$/);
-    expect(generate.parentElement).toHaveTextContent("No webhook URL yet.");
-    await user.click(generate);
-    expect(
-      await within(email).findByText(first.webhook_url),
-    ).toBeInTheDocument();
-    expect(mocks.generate).toHaveBeenCalledWith("org-a");
-    expect(email).toHaveTextContent("Copy it now: MikeGC won't show it again.");
-    await user.click(
-      within(email).getByRole("button", { name: "Copy webhook URL" }),
+    await user.type(within(email).getByLabelText("Tenant ID"), "t");
+    await user.type(within(email).getByLabelText("Client ID"), "c");
+    await user.type(within(email).getByLabelText("Client secret"), "s");
+    await user.click(within(email).getByRole("button", { name: "Connect" }));
+    expect(await within(email).findByRole("alert")).toHaveTextContent(
+      "Microsoft 365 didn't accept these credentials.",
     );
-    expect(writeText).toHaveBeenCalledWith(first.webhook_url);
-    await waitFor(() =>
-      expect(mocks.success).toHaveBeenCalledWith("Webhook URL copied"),
-    );
-    // With a URL, email turns on.
-    await waitFor(
-      () =>
-        expect(mocks.update).toHaveBeenCalledWith("org-a", {
-          email_enabled: true,
-        }),
-      SAVE_WAIT,
-    );
-    expect(email).not.toHaveTextContent("to finish turning email on");
-
-    // Replacing one stops it working, so it asks first.
-    await user.click(
-      within(email).getByRole("button", { name: "Replace webhook URL" }),
-    );
-    const dialog = screen.getByRole("dialog", {
-      name: "Replace the webhook URL?",
-    });
-    expect(dialog).toHaveTextContent("The current URL stops working at once.");
-    await user.click(
-      within(dialog).getByRole("button", { name: "Keep current URL" }),
-    );
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(mocks.generate).toHaveBeenCalledTimes(1);
-    expect(within(email).getByText(first.webhook_url)).toBeInTheDocument();
-
-    await user.click(
-      within(email).getByRole("button", { name: "Replace webhook URL" }),
-    );
-    await user.click(screen.getByRole("button", { name: "Replace URL" }));
-    expect(
-      await within(email).findByText(second.webhook_url),
-    ).toBeInTheDocument();
-    expect(
-      within(email).queryByText(first.webhook_url),
-    ).not.toBeInTheDocument();
-    expect(mocks.generate).toHaveBeenCalledTimes(2);
+    // The form stays, with what was typed, to correct.
+    expect(within(email).getByLabelText("Tenant ID")).toHaveValue("t");
+    expect(mocks.notify).not.toHaveBeenCalled();
   });
 
-  it("shows only the saved URL's ending when it was generated before", async () => {
+  it("shows the service account's client ID to delegate for Gmail, or says the deployment has none", async () => {
+    const user = userEvent.setup();
+    server = settings({ email: unconnectedEmail() });
+    mocks.connect.mockImplementation(async () => server);
+    render(<IntakeSettings orgId="org-a" />);
+    await form();
+    let email = section("Email");
+    await user.click(
+      within(email).getByRole("button", {
+        name: "Connect Gmail (Google Workspace)",
+      }),
+    );
+    expect(email).toHaveTextContent("1122334455");
+    expect(email).toHaveTextContent(
+      "https://www.googleapis.com/auth/gmail.modify",
+    );
+    expect(within(email).queryByLabelText("Client secret")).toBeNull();
+    await user.type(
+      within(email).getByLabelText("Intake address"),
+      "intake@company.com",
+    );
+    await user.click(within(email).getByRole("button", { name: "Connect" }));
+    await waitFor(() =>
+      expect(mocks.connect).toHaveBeenCalledWith("org-a", {
+        provider: "gmail",
+        mailbox: "intake@company.com",
+      }),
+    );
+
+    cleanup();
+    server = settings({ email: unconnectedEmail({ gmail_client_id: null }) });
+    render(<IntakeSettings orgId="org-a" />);
+    await form();
+    email = section("Email");
+    await user.click(
+      within(email).getByRole("button", {
+        name: "Connect Gmail (Google Workspace)",
+      }),
+    );
+    expect(email).toHaveTextContent("INTAKE_GMAIL_SERVICE_ACCOUNT_KEY");
+    expect(
+      within(email).getByRole("button", { name: "Connect" }),
+    ).toBeDisabled();
+  });
+
+  it("asks an organization that used Postmark to connect its mailbox", async () => {
+    server = settings({ email: unconnectedEmail({ needs_reconnect: true }) });
+    render(<IntakeSettings orgId="org-a" />);
+    await form();
+    expect(section("Email")).toHaveTextContent(
+      "Connect your intake mailbox to keep recording email.",
+    );
+  });
+
+  it("sends a test email and asks before disconnecting", async () => {
+    const user = userEvent.setup();
+    mocks.test.mockResolvedValue({ sent_to: "admin@example.com" });
+    mocks.disconnect.mockImplementation(async () => {
+      server = settings({ email: unconnectedEmail() });
+      return server;
+    });
+    render(<IntakeSettings orgId="org-a" />);
+    await form();
+    const email = section("Email");
+    await user.click(
+      within(email).getByRole("button", { name: "Send test email" }),
+    );
+    await waitFor(() =>
+      expect(mocks.success).toHaveBeenCalledWith(
+        "Test email sent to admin@example.com",
+      ),
+    );
+    expect(mocks.test).toHaveBeenCalledWith("org-a");
+
+    await user.click(within(email).getByRole("button", { name: "Disconnect" }));
+    await user.click(
+      within(
+        screen.getByRole("dialog", { name: "Disconnect the intake mailbox?" }),
+      ).getByRole("button", { name: "Keep connected" }),
+    );
+    expect(mocks.disconnect).not.toHaveBeenCalled();
+    await user.click(within(email).getByRole("button", { name: "Disconnect" }));
+    await user.click(
+      within(
+        screen.getByRole("dialog", { name: "Disconnect the intake mailbox?" }),
+      ).getByRole("button", { name: "Disconnect" }),
+    );
+    await waitFor(() =>
+      expect(mocks.disconnect).toHaveBeenCalledWith("org-a"),
+    );
+    expect(
+      await within(email).findByRole("button", {
+        name: "Connect Outlook (Microsoft 365)",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("saves the sender name once typing pauses", async () => {
+    const user = userEvent.setup();
     server = emailOn();
     render(<IntakeSettings orgId="org-a" />);
     await form();
-    const email = section("Email");
-    expect(email).toHaveTextContent("Webhook URL ending …9f3c");
-    expect(
-      within(email).getByRole("button", { name: "Replace webhook URL" }),
-    ).toHaveTextContent(/^Replace$/);
-    expect(
-      within(email).queryByRole("button", { name: "Copy webhook URL" }),
-    ).not.toBeInTheDocument();
+    const name = within(section("Email")).getByLabelText("Sender name");
+    expect(name).toHaveValue("Legal");
+    await user.clear(name);
+    await user.type(name, "Legal team");
+    await waitFor(
+      () =>
+        expect(mocks.update).toHaveBeenLastCalledWith("org-a", {
+          email_from_name: "Legal team",
+        }),
+      SAVE_WAIT,
+    );
+  });
+
+  it("asks for a Slack reinstall when the token lacks the loop's scopes, or no thread message has come", async () => {
+    server = settings({
+      slack: {
+        ...settings().slack,
+        missing_scopes: ["files:write", "chat:write.customize"],
+        message_events_seen: false,
+      },
+    });
+    render(<IntakeSettings orgId="org-a" />);
+    await form();
+    const slack = section("Slack");
+    expect(slack).toHaveTextContent(
+      "Reinstall the Slack app to send documents.",
+    );
+    expect(slack).toHaveTextContent("files:write, chat:write.customize");
+    expect(slack).toHaveTextContent(
+      "MikeGC hasn't received a thread message yet.",
+    );
+  });
+
+  it("sets up Teams: IDs save once typed in full, the secret is write-only, and Teams turns on with all three", async () => {
+    const user = userEvent.setup();
+    render(<IntakeSettings orgId="org-a" />);
+    await form();
+    const teams = section("Teams");
+    expect(within(teams).queryByLabelText("App ID")).toBeNull();
+    await user.click(
+      within(teams).getByRole("switch", { name: "Record requests from Teams" }),
+    );
+    expect(teams).toHaveTextContent(
+      "Save the app ID, tenant ID and client secret to finish turning Teams on.",
+    );
+    expect(teams).toHaveTextContent(
+      "https://api.example.test/webhooks/intake/teams/5e2a",
+    );
+    await user.type(within(teams).getByLabelText("App ID"), "app-1");
+    // Part-typed, nothing is sent.
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    expect(mocks.update).not.toHaveBeenCalled();
+    await user.tab();
+    await waitFor(
+      () =>
+        expect(mocks.update).toHaveBeenCalledWith("org-a", {
+          teams_app_id: "app-1",
+        }),
+      SAVE_WAIT,
+    );
+    await user.type(
+      within(teams).getByLabelText("Tenant ID"),
+      "tenant-1{Enter}",
+    );
+    await waitFor(
+      () =>
+        expect(mocks.update).toHaveBeenLastCalledWith("org-a", {
+          teams_tenant_id: "tenant-1",
+        }),
+      SAVE_WAIT,
+    );
+    const secret = within(teams).getByLabelText("Client secret");
+    expect(secret).toHaveAttribute("type", "password");
+    await user.type(secret, "s3cret{Enter}");
+    await waitFor(
+      () =>
+        expect(mocks.update).toHaveBeenLastCalledWith("org-a", {
+          teams_enabled: true,
+          teams_client_secret: "s3cret",
+        }),
+      SAVE_WAIT,
+    );
+    await waitFor(() => expect(secret).toHaveValue(""));
+    expect(teams).toHaveTextContent("Document access");
+    expect(teams).toHaveTextContent("Not checked yet");
+  });
+
+  it("saves asking requesters for missing details from the Triage rules section", async () => {
+    const user = userEvent.setup();
+    render(<IntakeSettings orgId="org-a" />);
+    await form();
+    const ask = within(section("Triage rules")).getByRole("switch", {
+      name: "Ask requesters for missing details",
+    });
+    expect(ask).toHaveAttribute("aria-checked", "true");
+    expect(ask).toHaveAccessibleDescription(/two rounds of questions/);
+    await user.click(ask);
+    await waitFor(
+      () =>
+        expect(mocks.update).toHaveBeenCalledWith("org-a", {
+          clarify_enabled: false,
+        }),
+      SAVE_WAIT,
+    );
   });
 
   it("refuses an invalid domain inline, and doesn't save it", async () => {

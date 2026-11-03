@@ -94,8 +94,64 @@ describe("describeIntakeMessage", () => {
     expect(
       describeIntakeMessage(message({ kind: "cancel_reason" })).action,
     ).toBe("gave the reason for cancelling");
+    // A question is one sent to the requester.
     expect(describeIntakeMessage(message({ kind: "question" })).action).toBe(
+      "asked the requester",
+    );
+    // Legacy answers still read as comments.
+    expect(describeIntakeMessage(message({ kind: "answer" })).action).toBe(
       "commented",
     );
+  });
+
+  it("names a requester's reply and the channel it came in", () => {
+    expect(
+      describeIntakeMessage(
+        message({
+          kind: "reply",
+          author_id: null,
+          author_name: "Ana Ruiz",
+          external_author: {
+            name: "Ana Ruiz",
+            email: "ana@acme.test",
+            source: "teams",
+          },
+        }),
+      ),
+    ).toEqual({ actor: "Ana Ruiz", action: "replied in Teams" });
+    expect(
+      describeIntakeMessage(message({ kind: "reply", external_author: null }))
+        .action,
+    ).toBe("replied");
+  });
+
+  it("reads MikeGC's questions as MikeGC's", () => {
+    expect(
+      describeIntakeMessage(
+        message({
+          kind: "question",
+          automated: true,
+          author_id: null,
+          author_name: "MikeGC",
+        }),
+      ),
+    ).toEqual({ actor: "MikeGC", action: "asked the requester" });
+  });
+});
+
+describe("the requester loop's changes", () => {
+  it("reads stopping MikeGC asking, and MikeGC's own waits", () => {
+    expect(describeIntakeEvent(event({ kind: "stop_asking" }))).toEqual({
+      actor: "Sam Colleague",
+      action: "stopped MikeGC asking the requester",
+    });
+    expect(
+      describeIntakeEvent(
+        event({ kind: "wait", actor_id: null, actor_name: "MikeGC" }),
+      ),
+    ).toEqual({
+      actor: "MikeGC",
+      action: "marked this waiting on the requester",
+    });
   });
 });

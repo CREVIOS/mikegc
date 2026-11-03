@@ -1,16 +1,19 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type {
   IntakeAutomationSettings,
-  IntakeEmailWebhook,
+  IntakeMailboxConnection,
+  IntakeMailProvider,
 } from "@mike/contracts";
-import { useAssignLatest } from "@/app/hooks/useLatestRef";
 import {
-  generateIntakeEmailWebhook,
+  connectIntakeMailbox,
+  disconnectIntakeMailbox,
   getIntakeAutomation,
+  sendIntakeMailboxTest,
 } from "@/app/lib/mikeApi";
 import { describeError, notifyError } from "@/app/lib/userFacingError";
+import { notifySuccess } from "@/shared/lib/errorNotifier";
 import { ConfirmPopup } from "@/app/components/popups/ConfirmPopup";
 import { SkeletonLine } from "@/app/components/shared/TablePrimitive";
 import { EmptyState } from "@/app/components/ui/empty-state";
@@ -18,7 +21,11 @@ import { GlassCardUI } from "@/shared/ui/GlassCardUI";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import {
   intakeAutomationDraft,
+  intakeDraftWithEmail,
+  NOTHING_COMMITTED,
   type IntakeAutomationDraft,
+  type IntakeCommitKey,
+  type IntakeCommitted,
 } from "./intakeAutomation";
 import { intakeModelsHref, intakeRulesHref } from "./intakeQuery";
 import {
@@ -28,22 +35,52 @@ import {
 import {
   IntakeEmailSection,
   IntakeSlackSection,
+  IntakeTeamsSection,
   IntakeTriageRulesSection,
+  type IntakeMailboxForm,
 } from "./IntakeSettingsSections";
 
 /** The sections sit apart, as on any Settings page. */
 const SECTION_STACK_CLASS = "space-y-8";
 
-type Secret = "signingSecret" | "botToken";
-
 type Loaded = { settings: IntakeAutomationSettings };
 
+/** The connect form for `provider`, starting from what is saved. */
+function mailboxForm(
+  provider: IntakeMailProvider,
+  email: IntakeAutomationSettings["email"],
+): IntakeMailboxForm {
+  const same = email.provider === provider;
+  return {
+    provider,
+    mailbox: same ? (email.mailbox ?? "") : "",
+    tenantId: same ? (email.graph.tenant_id ?? "") : "",
+    clientId: same ? (email.graph.client_id ?? "") : "",
+    clientSecret: "",
+  };
+}
+
+/** The connection as the API takes it; an empty secret keeps the saved one. */
+function mailboxConnection(form: IntakeMailboxForm): IntakeMailboxConnection {
+  const mailbox = form.mailbox.trim();
+  if (form.provider === "gmail") return { provider: "gmail", mailbox };
+  const secret = form.clientSecret.trim();
+  return {
+    provider: "graph",
+    mailbox,
+    tenant_id: form.tenantId.trim(),
+    client_id: form.clientId.trim(),
+    ...(secret ? { client_secret: secret } : {}),
+  };
+}
+
 /**
- * How MikeGC records requests by itself: from email and from Slack, filled in
- * by AI triage, as the Intake section of the workspace's settings. Every
- * change saves by itself, sending only what changed: switches and lists at
- * once, text once typing pauses, and a secret once it is complete. A failed
- * save keeps typed text on screen and turns a switch back.
+ * How MikeGC records requests by itself: from the intake mailbox, Slack and
+ * Teams, filled in by AI triage, as the Intake section of the workspace's
+ * settings. Every change saves by itself, sending only what changed:
+ * switches and lists at once, text once typing pauses, and a secret or ID
+ * once it is complete. A failed save keeps typed text on screen and turns a
+ * switch back. Connecting the mailbox is its own step, checked as it saves.
  */
 export function IntakeSettings({ orgId }: { orgId: string }) {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
@@ -52,15 +89,16 @@ export function IntakeSettings({ orgId }: { orgId: string }) {
     { forbidden: true } | { forbidden: false; message: string } | null
   >(null);
   const [reload, setReload] = useState(0);
-  // A typed secret saves only once committed, never part-typed.
-  const [committed, setCommitted] = useState<Record<Secret, boolean>>({
-    signingSecret: false,
-    botToken: false,
-  });
-  const [generating, setGenerating] = useState(false);
-  const [confirmingReplace, setConfirmingReplace] = useState(false);
-  // Shown for this visit only: the API returns the URL just once.
-  const [webhook, setWebhook] = useState<IntakeEmailWebhook | null>(null);
+  // A typed secret or ID saves only once committed, never part-typed.
+  const [committed, setCommitted] =
+    useState<IntakeCommitted>(NOTHING_COMMITTED);
+  // The mailbox connect form, while it is open.
+  const [form, setForm] = useState<IntakeMailboxForm | null>(null);
+  const [connecting, setConnecting] = useState(false);
+  const [connectError, setConnectError] = useState<string | null>(null);
+  const [confirmingDisconnect, setConfirmingDisconnect] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
+  const [testing, setTesting] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -89,16 +127,20 @@ export function IntakeSettings({ orgId }: { orgId: string }) {
   }, [orgId, reload]);
 
   const change = (patch: Partial<IntakeAutomationDraft>) => {
-    // Typing in a secret again waits for it to be complete again.
-    if ("signingSecret" in patch || "botToken" in patch)
-      setCommitted((current) => ({
-        signingSecret: "signingSecret" in patch ? false : current.signingSecret,
-        botToken: "botToken" in patch ? false : current.botToken,
-      }));
+    // Typing in a secret or ID again waits for it to be complete again.
+    const typed = (Object.keys(NOTHING_COMMITTED) as IntakeCommitKey[]).filter(
+      (key) => key in patch,
+    );
+    if (typed.length)
+      setCommitted((current) => {
+        const next = { ...current };
+        for (const key of typed) next[key] = false;
+        return next;
+      });
     setDraft((current) => (current ? { ...current, ...patch } : current));
   };
-  const commitSecret = (secret: Secret) =>
-    setCommitted((current) => ({ ...current, [secret]: true }));
+  const commit = (key: IntakeCommitKey) =>
+    setCommitted((current) => ({ ...current, [key]: true }));
 
   const saving = useIntakeAutomationAutosave({
     orgId,
@@ -111,45 +153,64 @@ export function IntakeSettings({ orgId }: { orgId: string }) {
       setDraft((current) => (current ? next(current) : current)),
   });
 
-  const generate = async () => {
-    setConfirmingReplace(false);
-    setGenerating(true);
+  /** Settings the mailbox calls returned: the email fields follow them. */
+  const adopt = (settings: IntakeAutomationSettings) => {
+    setLoaded((current) => (current ? { ...current, settings } : current));
+    setDraft((current) =>
+      current ? intakeDraftWithEmail(current, settings) : current,
+    );
+  };
+  const connect = async () => {
+    if (!form || connecting) return;
+    setConnecting(true);
+    setConnectError(null);
     try {
-      const created = await generateIntakeEmailWebhook(orgId);
-      setWebhook(created);
-      setLoaded((current) =>
-        current
-          ? {
-              ...current,
-              settings: {
-                ...current.settings,
-                email: {
-                  ...current.settings.email,
-                  configured: true,
-                  token_hint: created.token_hint,
-                },
-              },
-            }
-          : current,
+      const settings = await connectIntakeMailbox(
+        orgId,
+        mailboxConnection(form),
       );
+      adopt(settings);
+      setForm(null);
+      notifySuccess(`Connected ${settings.email.mailbox ?? "the mailbox"}`);
     } catch (error) {
-      notifyError(error, {
-        action: "generate the webhook URL",
-        // Retry asks again before replacing a URL in use.
-        onRetry: () => startGenerateRef.current(),
-      });
+      // The form is being edited: its problem shows under it.
+      setConnectError(
+        describeError(error, { action: "connect the mailbox" }).message,
+      );
     } finally {
-      setGenerating(false);
+      setConnecting(false);
     }
   };
-  // Replacing a URL Postmark is using stops it working, so that asks first.
-  const startGenerate = () => {
-    if (generating) return;
-    if (loaded?.settings.email.configured) setConfirmingReplace(true);
-    else void generate();
+  const disconnect = async () => {
+    setConfirmingDisconnect(false);
+    setDisconnecting(true);
+    try {
+      adopt(await disconnectIntakeMailbox(orgId));
+    } catch (error) {
+      notifyError(error, {
+        action: "disconnect the mailbox",
+        // Disconnecting stops email, so Retry asks again first.
+        onRetry: () => setConfirmingDisconnect(true),
+      });
+    } finally {
+      setDisconnecting(false);
+    }
   };
-  const startGenerateRef = useRef<() => void>(() => {});
-  useAssignLatest(startGenerateRef, startGenerate);
+  const test = async () => {
+    if (testing) return;
+    setTesting(true);
+    try {
+      const sent = await sendIntakeMailboxTest(orgId);
+      notifySuccess(`Test email sent to ${sent.sent_to}`);
+    } catch (error) {
+      notifyError(error, {
+        action: "send the test email",
+        onRetry: () => void test(),
+      });
+    } finally {
+      setTesting(false);
+    }
+  };
 
   if (failure?.forbidden)
     return (
@@ -194,30 +255,55 @@ export function IntakeSettings({ orgId }: { orgId: string }) {
         <IntakeEmailSection
           settings={loaded.settings.email}
           draft={draft}
-          webhook={webhook}
-          generating={generating}
+          form={form}
+          connecting={connecting}
+          connectError={connectError}
+          testing={testing || disconnecting}
           onChange={change}
-          onGenerate={startGenerate}
+          onStartConnect={(provider) => {
+            setConnectError(null);
+            setForm(mailboxForm(provider, loaded.settings.email));
+          }}
+          onFormChange={(patch) => {
+            setConnectError(null);
+            setForm((current) => (current ? { ...current, ...patch } : current));
+          }}
+          onConnect={() => void connect()}
+          onCancelConnect={() => {
+            setConnectError(null);
+            setForm(null);
+          }}
+          onDisconnect={() => setConfirmingDisconnect(true)}
+          onTest={() => void test()}
         />
         <IntakeSlackSection
           settings={loaded.settings.slack}
           draft={draft}
           onChange={change}
-          onCommitSecret={commitSecret}
+          onCommitSecret={commit}
+        />
+        <IntakeTeamsSection
+          settings={loaded.settings.teams}
+          draft={draft}
+          onChange={change}
+          onCommit={commit}
         />
         <IntakeTriageRulesSection
           rulesHref={intakeRulesHref(orgId)}
           modelsHref={intakeModelsHref(orgId)}
+          draft={draft}
+          onChange={change}
         />
       </form>
       <ConfirmPopup
-        open={confirmingReplace}
-        title="Replace the webhook URL?"
-        message="The current URL stops working at once. Paste the new one into Postmark to keep recording email."
-        confirmLabel="Replace URL"
-        cancelLabel="Keep current URL"
-        onCancel={() => setConfirmingReplace(false)}
-        onConfirm={() => void generate()}
+        open={confirmingDisconnect}
+        title="Disconnect the intake mailbox?"
+        message="MikeGC stops reading and replying from it at once, and mail sent to it is no longer recorded. Requests already recorded keep their history."
+        confirmLabel="Disconnect"
+        confirmVariant="danger"
+        cancelLabel="Keep connected"
+        onCancel={() => setConfirmingDisconnect(false)}
+        onConfirm={() => void disconnect()}
       />
     </>
   );

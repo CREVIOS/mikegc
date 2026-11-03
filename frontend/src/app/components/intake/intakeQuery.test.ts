@@ -28,12 +28,13 @@ describe("intake page URLs", () => {
       status: "in_review" as const,
       assignee: LAWYER,
       requester: "Jane O'Neil",
+      newReply: true,
       sort: "target" as const,
       q: "supplier & co",
     };
     const query = intakeFiltersQuery(filters);
     expect(query).toBe(
-      `tab=resolved&scope=overdue&status=in_review&assignee=${LAWYER}&requester=Jane+O%27Neil&sort=target&q=supplier+%26+co`,
+      `tab=resolved&scope=overdue&status=in_review&assignee=${LAWYER}&requester=Jane+O%27Neil&reply=new&sort=target&q=supplier+%26+co`,
     );
     expect(parseIntakeFilters(new URLSearchParams(query))).toEqual(filters);
   });
@@ -42,7 +43,7 @@ describe("intake page URLs", () => {
     expect(
       parseIntakeFilters(
         new URLSearchParams(
-          "tab=all&scope=late&status=open&assignee=me&sort=name",
+          "tab=all&scope=late&status=open&assignee=me&sort=name&reply=old",
         ),
       ),
     ).toEqual(DEFAULT_INTAKE_FILTERS);
@@ -68,6 +69,20 @@ describe("intake page URLs", () => {
     expect(
       parseIntakeFilters(new URLSearchParams(href.split("?")[1])).status,
     ).toBe("in_review");
+  });
+});
+
+describe("the new-reply filter", () => {
+  it("is reply=new in the URL and the list's new_reply query", () => {
+    expect(intakeRequestsHref({ newReply: true })).toBe(
+      "/intake/requests?reply=new",
+    );
+    expect(
+      parseIntakeFilters(new URLSearchParams("reply=new")).newReply,
+    ).toBe(true);
+    expect(parseIntakeFilters(new URLSearchParams("reply=1")).newReply).toBe(
+      false,
+    );
   });
 });
 

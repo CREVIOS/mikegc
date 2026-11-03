@@ -5,7 +5,11 @@ import { Modal, type ModalAction } from "@/app/components/modals/Modal";
 import { ModalTextarea } from "@/app/components/modals/ModalTextarea";
 import { FieldLabel } from "@/app/components/ui/form-field";
 
-/** Collects the resolution or cancel reason a closing command must carry. */
+/**
+ * Collects the resolution or cancel reason a closing command carries. A
+ * cancellation needs its reason; a resolution's text is optional, and the
+ * resolve dialog adds what it sends to the requester below the text.
+ */
 export function IntakeReasonModal({
   title,
   label,
@@ -20,6 +24,8 @@ export function IntakeReasonModal({
   onClose,
   status,
   secondaryAction,
+  optional = false,
+  children,
 }: {
   title: string;
   label: string;
@@ -35,6 +41,10 @@ export function IntakeReasonModal({
   onClose: () => void;
   status?: ReactNode;
   secondaryAction?: ModalAction;
+  /** The text may be left empty, as a resolution's may. */
+  optional?: boolean;
+  /** More of the form, after the text and its hint. */
+  children?: ReactNode;
 }) {
   const id = useId();
   return (
@@ -50,7 +60,7 @@ export function IntakeReasonModal({
         variant: confirmVariant,
         icon: busy ? <Loader2 className="h-4 w-4 animate-spin" /> : undefined,
         onClick: onConfirm,
-        disabled: locked || !value.trim(),
+        disabled: locked || (!optional && !value.trim()),
       }}
       cancelAction={{ label: "Back", onClick: onClose, disabled: locked }}
     >
@@ -58,7 +68,7 @@ export function IntakeReasonModal({
         className="space-y-2 pb-4"
         onSubmit={(event) => {
           event.preventDefault();
-          if (!locked && value.trim()) onConfirm();
+          if (!locked && (optional || value.trim())) onConfirm();
         }}
       >
         <FieldLabel htmlFor={id}>{label}</FieldLabel>
@@ -72,6 +82,7 @@ export function IntakeReasonModal({
           onChange={(event) => onChange(event.target.value)}
         />
         <p className="text-xs text-gray-500">{hint}</p>
+        {children}
       </form>
     </Modal>
   );

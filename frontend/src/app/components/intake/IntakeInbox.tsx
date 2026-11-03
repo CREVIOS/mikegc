@@ -193,6 +193,7 @@ export function Inbox({
       // A dashboard figure's filter is already open, created or resolved.
       scope:
         filters.scope ?? (filters.tab === "outstanding" ? "open" : undefined),
+      new_reply: filters.newReply || undefined,
     }),
     [filters],
   );
@@ -392,6 +393,7 @@ export function Inbox({
     tab !== "outstanding" ||
     !!filters.assignee ||
     !!filters.requester ||
+    filters.newReply ||
     !!scope;
   const failure = error;
   const hrefFor = (request: IntakeRequestSummary) =>
@@ -628,6 +630,13 @@ export function Inbox({
         onChange={changeTab}
         actions={
           <>
+            {/* A reply nobody has opened yet, from any status or tab. */}
+            <TabPillButtonUI
+              active={filters.newReply}
+              onClick={() => update({ newReply: !filters.newReply })}
+            >
+              Has new reply
+            </TabPillButtonUI>
             {scope && (
               <TabPillButtonUI
                 active
@@ -851,13 +860,7 @@ export function Inbox({
                     />
                   </TableCell>
                   <TableCell className="w-44">
-                    <span className="flex items-center gap-2">
-                      <span
-                        aria-hidden="true"
-                        className={`h-2 w-2 shrink-0 rounded-full ${INTAKE_STATE_DOT_CLASS[request.state]}`}
-                      />
-                      {INTAKE_STATE_LABELS[request.state]}
-                    </span>
+                    <IntakeQueueStatus request={request} />
                   </TableCell>
                   <TableCell className="w-44 [overflow-wrap:anywhere]">
                     {request.assignee_name ? (
@@ -985,7 +988,11 @@ function IntakeLoadingRows() {
             <SkeletonPerson width="w-24" />
           </TableCell>
           <TableCell className="w-44">
-            <SkeletonLine className="w-16" />
+            {/* The status, and the line a New reply marker takes. */}
+            <div className="space-y-1">
+              <SkeletonLine className="w-16" />
+              {width === "w-36" && <SkeletonLine className="ml-4 w-14" />}
+            </div>
           </TableCell>
           <TableCell className="w-44">
             <SkeletonPerson width="w-24" />
@@ -1000,6 +1007,43 @@ function IntakeLoadingRows() {
         </TableRow>
       ))}
     </TableBody>
+  );
+}
+
+/**
+ * A row's status with its dot. "(MikeGC asked)" and a New reply marker go
+ * on a second line in plain text, so neither cuts the status short.
+ */
+export function IntakeQueueStatus({
+  request,
+}: {
+  request: Pick<IntakeRequestSummary, "state" | "clarify_stage" | "new_reply">;
+}) {
+  const asked =
+    request.state === "needs_information" && !!request.clarify_stage;
+  return (
+    <span className="flex min-w-0 flex-col">
+      <span className="flex items-center gap-2">
+        <span
+          aria-hidden="true"
+          className={`h-2 w-2 shrink-0 rounded-full ${INTAKE_STATE_DOT_CLASS[request.state]}`}
+        />
+        <span className="min-w-0">{INTAKE_STATE_LABELS[request.state]}</span>
+      </span>
+      {(asked || request.new_reply) && (
+        <span className="pl-4 text-[11px] leading-4">
+          {asked && <span className="text-gray-500">(MikeGC asked)</span>}
+          {asked && request.new_reply && (
+            <span aria-hidden="true" className="text-gray-400">
+              {" · "}
+            </span>
+          )}
+          {request.new_reply && (
+            <span className="font-medium text-blue-600">New reply</span>
+          )}
+        </span>
+      )}
+    </span>
   );
 }
 

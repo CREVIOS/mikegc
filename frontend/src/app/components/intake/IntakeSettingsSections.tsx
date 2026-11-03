@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Check, ChevronDown, Copy, Info, X } from "lucide-react";
 import type {
   IntakeAutomationSettings,
-  IntakeEmailWebhook,
+  IntakeMailProvider,
 } from "@mike/contracts";
 import { Modal } from "@/app/components/modals/Modal";
 import { SettingsHeading } from "@/app/components/settings/SettingsHeading";
@@ -215,25 +215,301 @@ function SavedMark() {
   );
 }
 
+/** A note under a setting: what it needs, or why it isn't working. */
+function SettingsNotice({
+  tone = "info",
+  children,
+}: {
+  tone?: "info" | "error";
+  children: ReactNode;
+}) {
+  return (
+    <TextSlabUI
+      className={cn(
+        "flex items-start gap-2 text-xs",
+        tone === "error" ? "text-red-700" : "text-gray-700",
+      )}
+    >
+      <Info
+        aria-hidden="true"
+        className={cn(
+          "mt-0.5 h-3.5 w-3.5 shrink-0",
+          tone === "error" ? "text-red-600" : "text-gray-500",
+        )}
+      />
+      <div className="min-w-0 space-y-1 [overflow-wrap:anywhere]">
+        {children}
+      </div>
+    </TextSlabUI>
+  );
+}
+
+/** A text field that saves as the page does, labelled above it. */
+function TextField({
+  label,
+  value,
+  placeholder,
+  hint,
+  type = "text",
+  maxLength,
+  autoComplete = "off",
+  onChange,
+  onCommit,
+}: {
+  label: string;
+  value: string;
+  placeholder?: string;
+  hint?: ReactNode;
+  type?: "text" | "email" | "password";
+  maxLength?: number;
+  autoComplete?: string;
+  onChange: (value: string) => void;
+  /** It is typed in full: on leaving the field or Enter. */
+  onCommit?: () => void;
+}) {
+  const id = useId();
+  return (
+    <div>
+      <label htmlFor={id} className={LABEL_CLASS}>
+        {label}
+      </label>
+      <SettingsTextInput
+        id={id}
+        type={type}
+        value={value}
+        placeholder={placeholder}
+        maxLength={maxLength}
+        autoComplete={autoComplete}
+        spellCheck={false}
+        aria-describedby={hint ? `${id}-hint` : undefined}
+        onChange={(event) => onChange(event.target.value)}
+        onBlur={onCommit}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter") return;
+          // Enter commits the field rather than submitting the form.
+          event.preventDefault();
+          onCommit?.();
+        }}
+      />
+      {hint && (
+        <p id={`${id}-hint`} className={HINT_CLASS}>
+          {hint}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** The mail systems an intake mailbox can be on, as Legal names them. */
+export const INTAKE_MAIL_PROVIDER_LABELS: Record<IntakeMailProvider, string> = {
+  graph: "Outlook (Microsoft 365)",
+  gmail: "Gmail (Google Workspace)",
+};
+
+/** What the connect form holds; the client secret is write-only. */
+export type IntakeMailboxForm = {
+  provider: IntakeMailProvider;
+  mailbox: string;
+  tenantId: string;
+  clientId: string;
+  clientSecret: string;
+};
+
+const EMAIL_SHAPE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
+/** Why the connect form can't be sent yet, or null when it can. */
+export function intakeMailboxFormProblem(
+  form: IntakeMailboxForm,
+  secretSaved: boolean,
+): string | null {
+  if (!EMAIL_SHAPE.test(form.mailbox.trim()))
+    return "Enter the intake address, such as intake@company.com.";
+  if (form.provider === "gmail") return null;
+  if (!form.tenantId.trim()) return "Enter the Microsoft 365 tenant ID.";
+  if (!form.clientId.trim()) return "Enter the Entra app's client ID.";
+  if (!form.clientSecret.trim() && !secretSaved)
+    return "Enter the Entra app's client secret.";
+  return null;
+}
+
 /**
- * Email: forward a shared address to Postmark, which posts each message to
- * a secret webhook URL MikeGC generates. The URL is shown once.
+ * Connects the intake mailbox: Microsoft 365 through an Entra app the
+ * admin registers, or Google Workspace through the deployment's service
+ * account with domain-wide delegation. Its error is shown under the form,
+ * as for any field being edited.
+ */
+function MailboxConnectForm({
+  form,
+  settings,
+  connecting,
+  error,
+  onChange,
+  onConnect,
+  onCancel,
+}: {
+  form: IntakeMailboxForm;
+  settings: IntakeAutomationSettings["email"];
+  connecting: boolean;
+  error: string | null;
+  onChange: (patch: Partial<IntakeMailboxForm>) => void;
+  onConnect: () => void;
+  onCancel: () => void;
+}) {
+  const errorId = useId();
+  const secretId = useId();
+  const secretSaved =
+    settings.provider === "graph" && settings.graph.secret_set;
+  const problem = intakeMailboxFormProblem(form, secretSaved);
+  const gmailUnavailable = form.provider === "gmail" && !settings.gmail_client_id;
+  return (
+    <SettingsRow layout="stacked">
+      <p className={ROW_LABEL_CLASS}>
+        Connect {INTAKE_MAIL_PROVIDER_LABELS[form.provider]}
+      </p>
+      <TextField
+        label="Intake address"
+        type="email"
+        value={form.mailbox}
+        placeholder="intake@company.com"
+        maxLength={320}
+        hint={
+          form.provider === "graph"
+            ? "A shared mailbox works best: it needs no licence and no one signs in to it."
+            : "A licensed Workspace user account. A Google Group can deliver into it, but can't be connected itself."
+        }
+        onChange={(mailbox) => onChange({ mailbox })}
+      />
+      {form.provider === "graph" ? (
+        <>
+          <TextField
+            label="Tenant ID"
+            value={form.tenantId}
+            placeholder="00000000-0000-0000-0000-000000000000"
+            maxLength={100}
+            onChange={(tenantId) => onChange({ tenantId })}
+          />
+          <TextField
+            label="Client ID"
+            value={form.clientId}
+            placeholder="The Entra app's Application (client) ID"
+            maxLength={100}
+            onChange={(clientId) => onChange({ clientId })}
+          />
+          <div>
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <label htmlFor={secretId} className={ROW_LABEL_CLASS}>
+                Client secret
+              </label>
+              {secretSaved && !form.clientSecret && <SavedMark />}
+            </div>
+            <SettingsTextInput
+              id={secretId}
+              type="password"
+              autoComplete="new-password"
+              spellCheck={false}
+              maxLength={500}
+              value={form.clientSecret}
+              placeholder={
+                secretSaved
+                  ? "Paste a new one to replace it"
+                  : "The Entra app's client secret value"
+              }
+              onChange={(event) =>
+                onChange({ clientSecret: event.target.value })
+              }
+            />
+            {secretSaved && (
+              <p className={HINT_CLASS}>Leave empty to keep the saved one.</p>
+            )}
+          </div>
+        </>
+      ) : gmailUnavailable ? (
+        <SettingsNotice>
+          <p>
+            This deployment has no Google service account, so Gmail can&apos;t
+            be connected. Its administrator sets
+            INTAKE_GMAIL_SERVICE_ACCOUNT_KEY to the service account&apos;s JSON
+            key.
+          </p>
+        </SettingsNotice>
+      ) : (
+        <CopyValue
+          label="Service account client ID"
+          name="service account client ID"
+          value={settings.gmail_client_id ?? ""}
+        >
+          <p className={HINT_CLASS}>
+            In the Google Admin console, add this client ID under Security,
+            API controls, Domain-wide delegation, with the scope
+            https://www.googleapis.com/auth/gmail.modify.
+          </p>
+        </CopyValue>
+      )}
+      {error && (
+        <p id={errorId} role="alert" className={ERROR_CLASS}>
+          {error}
+        </p>
+      )}
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <PillButtonUI
+          tone="white"
+          size="sm"
+          disabled={connecting}
+          onClick={onCancel}
+        >
+          Cancel
+        </PillButtonUI>
+        <PillButtonUI
+          tone="black"
+          size="sm"
+          loading={connecting}
+          disabled={!!problem || gmailUnavailable || connecting}
+          aria-describedby={error ? errorId : undefined}
+          title={problem ?? undefined}
+          onClick={onConnect}
+        >
+          Connect
+        </PillButtonUI>
+      </div>
+    </SettingsRow>
+  );
+}
+
+/**
+ * Email: MikeGC reads the intake mailbox itself, through Microsoft Graph or
+ * the Gmail API, and replies from it, so replies thread and land in its
+ * Sent folder. Postmark is retired: an organization that used it reconnects
+ * here to keep recording email.
  */
 export function IntakeEmailSection({
   settings,
   draft,
-  webhook,
-  generating,
+  form,
+  connecting,
+  connectError,
+  testing,
   onChange,
-  onGenerate,
+  onStartConnect,
+  onFormChange,
+  onConnect,
+  onCancelConnect,
+  onDisconnect,
+  onTest,
 }: {
   settings: IntakeAutomationSettings["email"];
   draft: IntakeAutomationDraft;
-  /** A URL generated on this visit; it is never shown again. */
-  webhook: IntakeEmailWebhook | null;
-  generating: boolean;
+  /** The connect form, while it is open. */
+  form: IntakeMailboxForm | null;
+  connecting: boolean;
+  connectError: string | null;
+  testing: boolean;
   onChange: Change;
-  onGenerate: () => void;
+  onStartConnect: (provider: IntakeMailProvider) => void;
+  onFormChange: (patch: Partial<IntakeMailboxForm>) => void;
+  onConnect: () => void;
+  onCancelConnect: () => void;
+  onDisconnect: () => void;
+  onTest: () => void;
 }) {
   const domainId = useId();
   const domainError = intakeDomainInputError(draft);
@@ -247,66 +523,146 @@ export function IntakeEmailSection({
       domainInput: "",
     });
   };
+  const provider = settings.provider;
   return (
     <IntakeSettingsSection
       title="Email"
-      description="Forward a shared address, such as legal-intake@company.com, and MikeGC records each message sent to it as a request."
+      description="People in your company email requests to an intake address, such as intake@company.com. MikeGC reads new mail there, records each request, and replies from the same address so answers stay in the thread."
       steps={[
-        "Turn email on, generate the webhook URL below and copy it.",
-        "In Postmark, open your server's Inbound stream and paste it as the Webhook URL.",
-        "Forward your intake address to the stream's inbound address.",
-        "Add the domains to accept mail from. Until one is added, no mail is recorded.",
+        "Outlook: register an app in Microsoft Entra ID (or reuse the Teams one), grant it the Mail.ReadWrite and Mail.Send application permissions with admin consent, and limit it to the intake mailbox with an Exchange RBAC for Applications management scope.",
+        "Gmail: in the Google Admin console, add this deployment's service account client ID under domain-wide delegation with the gmail.modify scope.",
+        "Choose Connect below and enter the intake address and, for Outlook, the tenant ID, client ID and client secret.",
+        "Add the company's sender domains. The intake address's own domain is accepted from the start; mail from other domains is recorded as ignored.",
+        "Send a test email, then email a request to the intake address and check that it appears in Intake.",
       ]}
     >
-      <ToggleRow
-        label="Record requests from email"
-        description={
-          draft.emailEnabled && !settings.configured
-            ? "Generate the webhook URL to finish turning email on."
-            : undefined
-        }
-        checked={draft.emailEnabled}
-        onChange={(emailEnabled) => onChange({ emailEnabled })}
-      />
-      {/* Its setup is shown only while email is on. */}
-      {draft.emailEnabled && (
+      {settings.needs_reconnect && !provider && (
+        <SettingsRow layout="stacked">
+          <SettingsNotice>
+            <p className="font-medium">
+              Connect your intake mailbox to keep recording email.
+            </p>
+            <p>
+              MikeGC no longer receives mail through Postmark. Connect the
+              mailbox you forwarded from, then remove the forwarding rule.
+            </p>
+          </SettingsNotice>
+        </SettingsRow>
+      )}
+      {provider ? (
         <>
+          <ToggleRow
+            label="Record requests from email"
+            checked={draft.emailEnabled}
+            onChange={(emailEnabled) => onChange({ emailEnabled })}
+          />
           <SettingsRow layout="stacked">
-            <div className="flex items-center justify-between gap-3">
-              <p className="min-w-0 text-sm text-gray-700 [overflow-wrap:anywhere]">
-                {!settings.configured
-                  ? "No webhook URL yet."
-                  : settings.token_hint
-                    ? `Webhook URL ending …${settings.token_hint}`
-                    : "A webhook URL is set."}
+            <div className="min-w-0 space-y-1">
+              <p className={ROW_LABEL_CLASS}>Intake address</p>
+              <p className="text-sm text-gray-900 [overflow-wrap:anywhere]">
+                {settings.mailbox}
               </p>
+              <p className="text-xs text-gray-500">
+                {INTAKE_MAIL_PROVIDER_LABELS[provider]}
+              </p>
+              {settings.status.last_read_at ? (
+                <p className="text-xs text-gray-500">
+                  Last read {formatSettingsTime(settings.status.last_read_at)}
+                </p>
+              ) : (
+                <p className="text-xs text-gray-500">Not read yet</p>
+              )}
+              {provider === "graph" && settings.status.subscription_expires_at && (
+                <p className="text-xs text-gray-500">
+                  New-mail notifications renew before{" "}
+                  {formatSettingsTime(settings.status.subscription_expires_at)}
+                </p>
+              )}
+            </div>
+            {settings.status.error && (
+              <SettingsNotice tone="error">
+                <p role="alert">{settings.status.error}</p>
+              </SettingsNotice>
+            )}
+            <div className="flex flex-wrap items-center gap-2">
               <PillButtonUI
                 tone="white"
                 size="sm"
-                className="shrink-0"
-                // The visible word starts the name, which says what it makes.
-                aria-label={
-                  settings.configured
-                    ? "Replace webhook URL"
-                    : "Generate webhook URL"
-                }
-                loading={generating}
-                onClick={onGenerate}
+                loading={testing}
+                disabled={testing || !!form}
+                onClick={onTest}
               >
-                {settings.configured ? "Replace" : "Generate"}
+                Send test email
+              </PillButtonUI>
+              <PillButtonUI
+                tone="white"
+                size="sm"
+                disabled={!!form}
+                aria-label={`Reconnect ${INTAKE_MAIL_PROVIDER_LABELS[provider]}`}
+                onClick={() => onStartConnect(provider)}
+              >
+                Reconnect
+              </PillButtonUI>
+              <PillButtonUI
+                tone="danger"
+                size="sm"
+                disabled={!!form}
+                onClick={onDisconnect}
+              >
+                Disconnect
               </PillButtonUI>
             </div>
-            {webhook && (
-              <CopyValue
-                label="Webhook URL"
-                name="webhook URL"
-                value={webhook.webhook_url}
+          </SettingsRow>
+        </>
+      ) : (
+        !form && (
+          <SettingsRow layout="stacked">
+            <p className={ROW_DESCRIPTION_CLASS}>
+              Connect the mailbox people send requests to. MikeGC reads new
+              mail there and replies from it.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <PillButtonUI
+                tone="white"
+                size="sm"
+                onClick={() => onStartConnect("graph")}
               >
-                <p role="status" className={HINT_CLASS}>
-                  Copy it now: MikeGC won&apos;t show it again.
-                </p>
-              </CopyValue>
-            )}
+                Connect Outlook (Microsoft 365)
+              </PillButtonUI>
+              <PillButtonUI
+                tone="white"
+                size="sm"
+                onClick={() => onStartConnect("gmail")}
+              >
+                Connect Gmail (Google Workspace)
+              </PillButtonUI>
+            </div>
+          </SettingsRow>
+        )
+      )}
+      {form && (
+        <MailboxConnectForm
+          form={form}
+          settings={settings}
+          connecting={connecting}
+          error={connectError}
+          onChange={onFormChange}
+          onConnect={onConnect}
+          onCancel={onCancelConnect}
+        />
+      )}
+      {/* The rest of its setup is shown while a connected mailbox is on. */}
+      {provider && draft.emailEnabled && (
+        <>
+          <SettingsRow layout="stacked">
+            <TextField
+              label="Sender name"
+              value={draft.fromName}
+              placeholder="Legal"
+              maxLength={100}
+              hint={`MikeGC's own emails come from this name at ${settings.mailbox ?? "the intake address"}. A lawyer's message reads "Their name via ${draft.fromName.trim() || "Legal"}".`}
+              onChange={(fromName) => onChange({ fromName })}
+            />
           </SettingsRow>
           <SettingsRow layout="stacked">
             <div>
@@ -351,9 +707,7 @@ export function IntakeEmailSection({
                   maxLength={253}
                   value={draft.domainInput}
                   aria-invalid={!!domainError}
-                  aria-describedby={
-                    domainError ? `${domainId}-error` : undefined
-                  }
+                  aria-describedby={`${domainId}-hint${domainError ? ` ${domainId}-error` : ""}`}
                   onChange={(event) =>
                     onChange({ domainInput: event.target.value })
                   }
@@ -378,12 +732,28 @@ export function IntakeEmailSection({
                   {domainError}
                 </p>
               )}
+              <p id={`${domainId}-hint`} className={HINT_CLASS}>
+                Mail counts only when its sender passes DMARC, SPF or DKIM for
+                one of these domains. Mail from other domains is recorded as
+                ignored.
+              </p>
             </div>
           </SettingsRow>
         </>
       )}
     </IntakeSettingsSection>
   );
+}
+
+/** A time in the settings, in the viewer's own clock. */
+function formatSettingsTime(iso: string) {
+  return new Date(iso).toLocaleString(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 /**
@@ -459,11 +829,12 @@ export function IntakeSlackSection({
   return (
     <IntakeSettingsSection
       title="Slack"
-      description="People write @MikeGC in Slack to send a message, or the thread it's in, to Legal."
+      description="People write @MikeGC in Slack to send a message, or the thread it's in, to Legal. MikeGC asks for missing details, posts a lawyer's questions and replies with the resolution in the same thread."
       steps={[
-        "Create a Slack app called MikeGC and install it to your workspace.",
+        "Create a Slack app called MikeGC from the manifest in the setup guide and install it to your workspace.",
         "Turn Slack on, then paste the app's Signing Secret and Bot User OAuth Token below.",
-        "In the app's Event Subscriptions, paste the Events Request URL, subscribe to the app_mention bot event, then invite @MikeGC to your channels.",
+        "In the app's Event Subscriptions, paste the Events Request URL and subscribe to the app_mention, message.channels and message.groups bot events.",
+        "Invite @MikeGC to the channels people ask Legal in.",
       ]}
     >
       <ToggleRow
@@ -517,6 +888,128 @@ export function IntakeSlackSection({
                   )}
                 </div>
               )}
+            {settings.configured && settings.missing_scopes.length > 0 && (
+              <SettingsNotice>
+                <p className="font-medium">
+                  Reinstall the Slack app to send documents.
+                </p>
+                <p>
+                  Its token lacks {settings.missing_scopes.join(", ")}. MikeGC
+                  still records requests and posts text, but can&apos;t send
+                  documents or post under a lawyer&apos;s name. Add the scopes
+                  from the manifest in the setup guide under OAuth &amp;
+                  Permissions, reinstall the app, then paste its new Bot User
+                  OAuth Token here.
+                </p>
+              </SettingsNotice>
+            )}
+            {settings.configured && !settings.message_events_seen && (
+              <SettingsNotice>
+                <p>
+                  MikeGC hasn&apos;t received a thread message yet. Subscribe
+                  the app to the message.channels and message.groups bot events
+                  so requesters&apos; answers reach their request.
+                </p>
+              </SettingsNotice>
+            )}
+          </SettingsRow>
+        </>
+      )}
+    </IntakeSettingsSection>
+  );
+}
+
+/**
+ * Teams: the organization's own Azure Bot, registered once by its Microsoft
+ * 365 admin, posts each @MikeGC mention and thread reply to its events URL.
+ * The app's client secret is write-only; its IDs save once typed in full.
+ */
+export function IntakeTeamsSection({
+  settings,
+  draft,
+  onChange,
+  onCommit,
+}: {
+  settings: IntakeAutomationSettings["teams"];
+  draft: IntakeAutomationDraft;
+  onChange: Change;
+  /** A typed ID or secret is complete and may be saved. */
+  onCommit: (field: "teamsAppId" | "teamsTenantId" | "teamsSecret") => void;
+}) {
+  return (
+    <IntakeSettingsSection
+      title="Teams"
+      description="People write @MikeGC in a Teams channel to send a message, or the thread it's in, to Legal. MikeGC asks for missing details, posts a lawyer's questions and replies with the resolution in the same thread."
+      steps={[
+        "In Microsoft Entra ID, register a single-tenant app and create a client secret.",
+        "Create an Azure Bot for that app ID, set its messaging endpoint to the Teams events URL below, and turn on the Microsoft Teams channel.",
+        "Upload the Teams app package built from the manifest in the setup guide to your app catalog, then add it to the teams whose channels ask Legal. A team owner consents to it reading channel messages.",
+        "For documents, grant the app Microsoft Graph Sites.Selected for those teams' sites (or Files.ReadWrite.All) with admin consent.",
+        "Turn Teams on and enter the app ID, tenant ID and client secret below.",
+      ]}
+    >
+      <ToggleRow
+        label="Record requests from Teams"
+        description={
+          draft.teamsEnabled && !settings.configured
+            ? "Save the app ID, tenant ID and client secret to finish turning Teams on."
+            : undefined
+        }
+        checked={draft.teamsEnabled}
+        onChange={(teamsEnabled) => onChange({ teamsEnabled })}
+      />
+      {/* Its setup is shown only while Teams is on. */}
+      {draft.teamsEnabled && (
+        <>
+          <SettingsRow layout="stacked">
+            <CopyValue
+              label="Teams events URL"
+              name="Teams events URL"
+              value={settings.events_url}
+            />
+          </SettingsRow>
+          <SettingsRow layout="stacked">
+            <TextField
+              label="App ID"
+              value={draft.teamsAppId}
+              placeholder="The Entra app's Application (client) ID"
+              maxLength={100}
+              onChange={(teamsAppId) => onChange({ teamsAppId })}
+              onCommit={() => onCommit("teamsAppId")}
+            />
+            <TextField
+              label="Tenant ID"
+              value={draft.teamsTenantId}
+              placeholder="Your Microsoft 365 tenant ID"
+              maxLength={100}
+              onChange={(teamsTenantId) => onChange({ teamsTenantId })}
+              onCommit={() => onCommit("teamsTenantId")}
+            />
+            <SecretField
+              label="Client secret"
+              saved={settings.configured}
+              value={draft.teamsSecret}
+              placeholder="The Entra app's client secret value"
+              onChange={(teamsSecret) => onChange({ teamsSecret })}
+              onCommit={() => onCommit("teamsSecret")}
+            />
+            {settings.configured && (
+              <div>
+                <p className={LABEL_CLASS}>Document access</p>
+                <p className="text-sm text-gray-900">
+                  {settings.files_access === null
+                    ? "Not checked yet"
+                    : settings.files_access
+                      ? "Available"
+                      : "Not set up"}
+                </p>
+                <p className="text-xs text-gray-500">
+                  {settings.files_access
+                    ? "MikeGC reads files shared in threads and posts documents to the channel's files."
+                    : "MikeGC posts text only and names the documents. Grant the app Microsoft Graph access to files to send them."}
+                </p>
+              </div>
+            )}
           </SettingsRow>
         </>
       )}
@@ -731,14 +1224,21 @@ function ModelRow({
   );
 }
 
-/** Triage rules: who each request goes to, on a table page of their own. */
+/**
+ * Triage rules: who each request goes to, on a table page of their own, and
+ * whether MikeGC asks requesters for what it is missing.
+ */
 export function IntakeTriageRulesSection({
   rulesHref,
   modelsHref,
+  draft,
+  onChange,
 }: {
   rulesHref: string;
   /** Model Preferences, where triage's and preprocessing's models are chosen. */
   modelsHref: string;
+  draft?: IntakeAutomationDraft;
+  onChange?: Change;
 }) {
   return (
     <IntakeSettingsSection title="Triage rules">
@@ -773,6 +1273,14 @@ export function IntakeTriageRulesSection({
           Edit
         </Link>
       </SettingsRow>
+      {draft && onChange && (
+        <ToggleRow
+          label="Ask requesters for missing details"
+          description="Before Legal starts, MikeGC asks in the request's thread for what it needs to choose a rule, then for what the rule's playbook or workflow needs. It asks at most two rounds of questions, and stops once a lawyer acts on the request."
+          checked={draft.clarifyEnabled}
+          onChange={(clarifyEnabled) => onChange({ clarifyEnabled })}
+        />
+      )}
     </IntakeSettingsSection>
   );
 }
