@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
   downloadFile: vi.fn(),
   deleteFileBestEffort: vi.fn(),
   enqueueDbJob: vi.fn(),
-  enqueueStorageCleanup: vi.fn(),
+  deleteFile: vi.fn(),
   enqueueConversion: vi.fn(),
 }));
 vi.mock("../../../lib/llm", async (importOriginal) => ({
@@ -29,10 +29,10 @@ vi.mock("../../../lib/storage", async (importOriginal) => ({
   uploadFile: mocks.uploadFile,
   downloadFile: mocks.downloadFile,
   deleteFileBestEffort: mocks.deleteFileBestEffort,
+  deleteFile: mocks.deleteFile,
 }));
 vi.mock("../../../lib/dbq/enqueue", () => ({
   enqueueDbJob: mocks.enqueueDbJob,
-  enqueueStorageCleanup: mocks.enqueueStorageCleanup,
 }));
 vi.mock("../../../lib/queue/conversionQueue", () => ({
   enqueueConversion: mocks.enqueueConversion,
@@ -212,7 +212,8 @@ beforeEach(() => {
   mocks.downloadFile.mockResolvedValue(new Uint8Array([1, 2, 3, 4]).buffer);
   mocks.uploadFile.mockResolvedValue(undefined);
   mocks.enqueueConversion.mockResolvedValue(undefined);
-  mocks.enqueueStorageCleanup.mockResolvedValue(undefined);
+  mocks.deleteFile.mockResolvedValue(undefined);
+  mocks.enqueueDbJob.mockResolvedValue(undefined);
   mocks.completeText.mockResolvedValue(
     JSON.stringify({
       subject: "Review Supplier Co NDA",
@@ -285,10 +286,13 @@ describe("recording an email", () => {
       finalizeDocumentStatus: false,
     }));
     expect(row()).toMatchObject({ status: "done", payload: null, error: null, request_id: inboundId });
-    expect(mocks.enqueueStorageCleanup).toHaveBeenCalledWith(memory.db, [
-      `intake-inbound/${org}/${inboundId}/0`,
-      `intake-inbound/${org}/${inboundId}/1`,
-    ]);
+    expect(mocks.enqueueDbJob).toHaveBeenCalledWith(memory.db, expect.objectContaining({
+      kind: "storage.cleanup",
+      payload: {
+        keys: [`intake-inbound/${org}/${inboundId}/0`, `intake-inbound/${org}/${inboundId}/1`],
+        prefixes: [],
+      },
+    }));
     // The model saw the organization's rules, never another organization's.
     expect(mocks.completeText.mock.calls[0]![0].user).toContain(
       'RULES: [{"number":1,"condition":"The request is about an NDA"}]',
@@ -388,7 +392,13 @@ describe("recording an email", () => {
     });
     expect(memory.rows("intake_requests")).toEqual([]);
     expect(row()).toMatchObject({ status: "done", payload: null });
-    expect(mocks.enqueueStorageCleanup).toHaveBeenCalled();
+    expect(mocks.enqueueDbJob).toHaveBeenCalledWith(memory.db, expect.objectContaining({
+      kind: "storage.cleanup",
+      payload: {
+        keys: [`intake-inbound/${org}/${inboundId}/0`, `intake-inbound/${org}/${inboundId}/1`],
+        prefixes: [],
+      },
+    }));
   });
   it("skips a message that is gone or already handled", async () => {
     setup({ payload: emailPayload() });
@@ -519,7 +529,7 @@ describe("when a message fails for good", () => {
   });
   it("releases an email's staged attachments before it settles, so settling can't leave them behind", async () => {
     setup({ payload: emailPayload() });
-    mocks.enqueueStorageCleanup.mockImplementationOnce(async () => {
+    mocks.enqueueDbJob.mockImplementationOnce(async () => {
       expect(row().status).toBe("pending");
     });
     await markIntakeInboundFailed(memory.db, job());
@@ -527,10 +537,33 @@ describe("when a message fails for good", () => {
       status: "failed",
       error: "MikeGC couldn't record this message. Try sending it again.",
     });
-    expect(mocks.enqueueStorageCleanup).toHaveBeenCalledWith(memory.db, [
+    expect(mocks.enqueueDbJob).toHaveBeenCalledWith(memory.db, expect.objectContaining({
+      kind: "storage.cleanup",
+      payload: {
+        keys: [`intake-inbound/${org}/${inboundId}/0`, `intake-inbound/${org}/${inboundId}/1`],
+        prefixes: [],
+      },
+    }));
+  });
+  it("keeps the message and its staged keys when their cleanup can't be queued", async () => {
+    setup({ payload: emailPayload(), model: false });
+    mocks.enqueueDbJob.mockImplementation(async (_db, input: { kind: string }) => {
+      if (input.kind === "storage.cleanup") throw new Error("database unavailable");
+    });
+    await expect(handleIntakeInbound(memory.db, job())).rejects.toThrow("database unavailable");
+    expect(row()).toMatchObject({ status: "pending" });
+    expect(row().payload).toMatchObject({ kind: "email", attachments: [{}, {}] });
+  });
+  it("deletes them at once when the job runner is off", async () => {
+    process.env.DB_JOBS_ENABLED = "false";
+    setup({ payload: emailPayload() });
+    await markIntakeInboundFailed(memory.db, job());
+    expect(mocks.deleteFile.mock.calls.map(([key]) => key)).toEqual([
       `intake-inbound/${org}/${inboundId}/0`,
       `intake-inbound/${org}/${inboundId}/1`,
     ]);
+    expect(mocks.enqueueDbJob).not.toHaveBeenCalled();
+    expect(row()).toMatchObject({ status: "failed" });
   });
 });
 
@@ -563,7 +596,7 @@ describe("purging intake", () => {
     const db = memoryDb(memory.tables, { intake_purge: purge });
     await purgeIntake(db.db, org, owner);
     expect(purge).toHaveBeenCalledWith({ p_org: org, p_actor: owner }, expect.anything());
-    expect(mocks.enqueueStorageCleanup).not.toHaveBeenCalled();
+    expect(mocks.enqueueDbJob).not.toHaveBeenCalled();
   });
   it("fails when the owner check refuses the purge", async () => {
     setup({ payload: emailPayload() });

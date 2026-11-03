@@ -481,9 +481,12 @@ describe("other settings", () => {
     } as never);
     expect(
       await updateIntakeAutomation(memory.db, scope(owner), {
+        email_allowed_domains: ["acme.test"],
         rules: [rule("Disputes", admin)],
       }),
     ).toMatchObject({ ok: false });
+    // Nothing in the save took: not the setting sent with the rules either.
+    expect(row().email_allowed_domains ?? []).toEqual([]);
     expect(memory.rows("intake_assignment_rules")).toMatchObject([
       { condition: "NDAs", assignee_id: member, position: 0 },
     ]);

@@ -9,7 +9,7 @@ import {
   documentSuffix,
   shouldConvertToPdf,
 } from "../../lib/documentTypes";
-import { enqueueDbJob, enqueueStorageCleanup } from "../../lib/dbq/enqueue";
+import { enqueueDbJob } from "../../lib/dbq/enqueue";
 import { NonRetryableJobError, dbJobsEnabled } from "../../lib/dbq/runner";
 import type { DbJob } from "../../lib/dbq/types";
 import { isPersonalOrg } from "../../lib/personalOrgs";
@@ -17,6 +17,7 @@ import { enqueueConversion } from "../../lib/queue/conversionQueue";
 import { configuredFrontendUrl } from "../../lib/runtimeConfig";
 import { safeError } from "../../lib/safeError";
 import {
+  deleteFile,
   deleteFileBestEffort,
   downloadFile,
   storageKey,
@@ -176,10 +177,25 @@ async function settle(
   if (updateError) throw updateError;
 }
 
-/** Remove an email's staged attachments, once nothing will read them. */
+/**
+ * Remove an email's staged attachments, once nothing will read them: a
+ * storage.cleanup job, or with the job runner off, which would never run it,
+ * deleted now. Unlike enqueueStorageCleanup this throws when neither is
+ * certain, so the message keeps its payload, and with it the keys, until a
+ * retry succeeds.
+ */
 async function releaseStaged(db: Db, payload: unknown) {
   const keys = stagedKeys(payload);
-  if (keys.length) await enqueueStorageCleanup(db, keys);
+  if (keys.length === 0) return;
+  if (!dbJobsEnabled()) {
+    for (const key of keys) await deleteFile(key);
+    return;
+  }
+  await enqueueDbJob(db, {
+    kind: "storage.cleanup",
+    payload: { keys, prefixes: [] },
+    maxAttempts: 8,
+  });
 }
 
 function requireSlackToken(settings: AutomationRow | null): string {

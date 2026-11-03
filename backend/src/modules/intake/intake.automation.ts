@@ -472,15 +472,19 @@ export async function updateIntakeAutomation(
     });
   }
 
+  // The rules first, as the write that can be refused: a refusal then leaves
+  // the settings as they were, so the page turning a switch back is true. If
+  // the settings then fail, the rules saved are the ones on the page, and
+  // sending them again changes nothing.
+  if (rules) {
+    const saved = await replaceRules(db, scope.orgId, rules);
+    if (!saved.ok) return saved;
+  }
   const { error } = await db
     .from("intake_automation")
     .update(patch)
     .eq("org_id", scope.orgId);
   if (error) return internalFailure(error);
-  if (rules) {
-    const saved = await replaceRules(db, scope.orgId, rules);
-    if (!saved.ok) return saved;
-  }
   const updated = await ensureRow(db, scope);
   if (!updated.ok) return updated;
   return present(db, scope, updated.data);
