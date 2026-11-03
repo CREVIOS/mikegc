@@ -27,6 +27,7 @@ export {
   MAX_PLAYBOOK_IMPORT_BYTES,
   updatePlaybookContent,
   reviewWithPlaybook,
+  playbookFindingEdits,
   startPlaybookReview,
   INTERRUPTED_RUN_ERROR,
   listPlaybookRuns,

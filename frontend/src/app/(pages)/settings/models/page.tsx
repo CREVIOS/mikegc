@@ -41,8 +41,14 @@ import { SettingsRow } from "@/app/components/settings/SettingsRow";
 import { SETTINGS_CONTROL_CLASS } from "@/app/components/settings/SettingsTextInput";
 import { useOllamaModels } from "@/app/hooks/useOllamaModels";
 import { useConfiguredModels } from "@/app/hooks/useConfiguredModels";
+import { IntakeModelSettings } from "@/app/components/intake/IntakeModelSettings";
+import {
+  PERSONAL_WORKSPACE,
+  useWorkspace,
+} from "@/app/contexts/WorkspaceContext";
 
 export default function ModelPreferencesPage() {
+  const { accountId } = useWorkspace();
   const { profile, updateModelPreference } = useUserProfile();
   const ollamaModels = useOllamaModels();
   const configuredModels = useConfiguredModels();
@@ -232,6 +238,10 @@ export default function ModelPreferencesPage() {
           </SettingsRow>
         </GlassCardUI>
       </section>
+      {/* Personal's intake; an organization's is in its own Model Preferences. */}
+      {accountId && (
+        <IntakeModelSettings key={accountId} orgId={PERSONAL_WORKSPACE} />
+      )}
     </div>
   );
 }

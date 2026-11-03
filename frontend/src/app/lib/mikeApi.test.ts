@@ -1,4 +1,4 @@
-import {getIntakeMembers,getIntakeRequesters,getIntakeDashboard,getIntakeDocuments,copyIntakeDocuments,listIntakeRequests,submitIntakeRequest,getIntakeRequest,editIntakeRequest,getIntakeMessages,getIntakeEvents,commandIntakeRequest} from "./mikeApi";
+import {getIntakeMembers,getIntakeRequesters,getIntakeDashboard,getIntakeAutomation,updateIntakeAutomation,generateIntakeEmailWebhook,getIntakeDocuments,copyIntakeDocuments,listIntakeRequests,submitIntakeRequest,getIntakeRequest,editIntakeRequest,getIntakeMessages,getIntakeEvents,commandIntakeRequest} from "./mikeApi";
 import { listOrgPrivateContent, setOrgPrivateContentPermission, openOrgPrivateContent, closeOrgPrivateContent } from "./mikeApi";
 import { setUserProfilePhoto, listDeletedOrganizations, restoreOrganization } from "./mikeApi";
 import { listOrgDepartures, reassignOrgDepartureArchives, deleteOrgDepartureArchives } from "./mikeApi";
@@ -3676,16 +3676,18 @@ describe("intake API boundary", () => {
         const details = {
             subject: "Subject", description: "Exact  text.",
             requester_name: "Jane", requester_email: null, requester_team: null,
-            requested_by_date: null, timezone: null,
+            requested_by_date: null,
         };
+        // The list sends the viewer's timezone, which its Overdue filter is judged in.
+        const zone = new URLSearchParams({ timezone: Intl.DateTimeFormat().resolvedOptions().timeZone });
         const submission = { ...details, id, command_id: "create", assignee_id: null };
         const edit = { ...details, command_id: "edit", expected_version: 3 };
         const command = { command_id: "resolve", expected_version: 2, body: "Exact resolution.\n" };
         const note = { command_id: "note", body: "Called Jane." };
         const cases: [() => Promise<unknown>, string, string, unknown?][] = [
             [()=>getIntakeMembers(scope),"members","GET"],
-            [()=>listIntakeRequests(scope),"requests","GET"],
-            [()=>listIntakeRequests(scope,{search:"a & b",state:"in_review",assignee:"unassigned",sort:"target",cursor:"abc"}),"requests?search=a+%26+b&state=in_review&assignee=unassigned&sort=target&cursor=abc","GET"],
+            [()=>listIntakeRequests(scope),`requests?${zone}`,"GET"],
+            [()=>listIntakeRequests(scope,{search:"a & b",state:"in_review",assignee:"unassigned",sort:"target",cursor:"abc"}),`requests?search=a+%26+b&state=in_review&assignee=unassigned&sort=target&cursor=abc&${zone}`,"GET"],
             [()=>submitIntakeRequest(scope,submission),"requests","POST",submission],
             [()=>getIntakeRequest(scope,id),"requests/request%2Fid","GET"],
             [()=>editIntakeRequest(scope,id,edit),"requests/request%2Fid","PATCH",edit],
@@ -3707,6 +3709,48 @@ describe("intake API boundary", () => {
             expect(call.url).toBe(`/api/intake/org%2Fid/${path}`);
             expect(call.init.method??"GET").toBe(method);
             if(body)expect(JSON.parse(String(call.init.body))).toEqual(body);
+        }
+    });
+    it("reads, changes and generates automated intake under the same scope", async () => {
+        const settings = { email: { enabled: false }, recent: [] };
+        fetchMock.mockImplementation(async () => jsonResponse(settings));
+        await expect(getIntakeAutomation("org/id")).resolves.toEqual(settings);
+        let call = lastFetchCall();
+        expect(call.url).toBe("/api/intake/org%2Fid/automation");
+        expect(call.init.method ?? "GET").toBe("GET");
+
+        // Only the fields given are sent; the rest keep their saved value.
+        const update = { email_enabled: true, slack_bot_token: "xoxb-1", rules: [{ condition: "NDAs", assignee_id: "u1", preprocess: true, preprocess_with: { kind: "playbook" as const, id: "pb-1" } }] };
+        await expect(updateIntakeAutomation("personal", update)).resolves.toEqual(settings);
+        call = lastFetchCall();
+        expect(call.url).toBe("/api/intake/personal/automation");
+        expect(call.init.method).toBe("PATCH");
+        expect(JSON.parse(String(call.init.body))).toEqual(update);
+
+        const webhook = { webhook_url: "https://api.example.test/webhooks/intake/email/secret", token_hint: "cret" };
+        fetchMock.mockImplementation(async () => jsonResponse(webhook));
+        await expect(generateIntakeEmailWebhook("org/id")).resolves.toEqual(webhook);
+        call = lastFetchCall();
+        expect(call.url).toBe("/api/intake/org%2Fid/automation/email-webhook");
+        expect(call.init.method).toBe("POST");
+        expect(call.init.body).toBeUndefined();
+    });
+    it("rejects a member's read of automated intake with the API's status", async () => {
+        fetchMock.mockImplementation(async () => jsonResponse({ detail: "Only owners and admins can change automated intake." }, { status: 403 }));
+        await expect(getIntakeAutomation("org-1")).rejects.toMatchObject({ status: 403 });
+    });
+    it("lists requests without a timezone when the browser can't name one", async () => {
+        const zone = vi.spyOn(Intl, "DateTimeFormat").mockImplementation(() => {
+            throw new RangeError("no time zone data");
+        });
+        try {
+            fetchMock.mockImplementation(async () => jsonResponse({ requests: [], next_cursor: null }));
+            await listIntakeRequests("org-1");
+            expect(lastFetchCall().url).toBe("/api/intake/org-1/requests");
+            await listIntakeRequests("org-1", { state: "in_review" });
+            expect(lastFetchCall().url).toBe("/api/intake/org-1/requests?state=in_review");
+        } finally {
+            zone.mockRestore();
         }
     });
     it("copies more documents than one call takes in order, 20 at a time", async () => {

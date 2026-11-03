@@ -13,6 +13,8 @@ import {
   getIntakeRequest,
   listIntakeDocuments,
   copyIntakeDocuments,
+  generateIntakeEmailWebhook,
+  getIntakeAutomation,
   listIntakeEvents,
   listIntakeMembers,
   listIntakeRequesters,
@@ -20,9 +22,12 @@ import {
   listIntakeRequests,
   resolveIntakeOrg,
   submitIntakeRequest,
+  updateIntakeAutomation,
   type IntakeScope,
 } from "./intake.service";
 import {
+  automationUpdateProblem,
+  intakeAutomationUpdate,
   intakeCommands,
   intakeDashboardQuery,
   intakeDocumentCopy,
@@ -107,6 +112,41 @@ intakeRouter.get(
     );
   }),
 );
+// Automated intake's settings: owners and admins only, which the service checks.
+intakeRouter.get(
+  "/:orgId/automation",
+  asyncRoute(async (req, res) => {
+    send(res, await getIntakeAutomation(createServerSupabase(), scopeOf(res)));
+  }),
+);
+intakeRouter.patch(
+  "/:orgId/automation",
+  asyncRoute(async (req, res) => {
+    const parsed = intakeAutomationUpdate.safeParse(req.body);
+    if (!parsed.success)
+      return void res
+        .status(400)
+        .json({ detail: automationUpdateProblem(parsed.error) });
+    send(
+      res,
+      await updateIntakeAutomation(
+        createServerSupabase(),
+        scopeOf(res),
+        parsed.data,
+      ),
+    );
+  }),
+);
+intakeRouter.post(
+  "/:orgId/automation/email-webhook",
+  asyncRoute(async (req, res) => {
+    send(
+      res,
+      await generateIntakeEmailWebhook(createServerSupabase(), scopeOf(res)),
+      201,
+    );
+  }),
+);
 intakeRouter.get(
   "/:orgId/requests",
   asyncRoute(async (req, res) => {
@@ -130,7 +170,7 @@ intakeRouter.post(
     if (!parsed.success)
       return void res.status(400).json({
         detail:
-          "Enter a subject, the request, the requester's name and a valid email, target date and timezone if needed.",
+          "Enter a subject, the request, the requester's name and a valid email and target date if needed.",
       });
     const result = await submitIntakeRequest(
       createServerSupabase(),

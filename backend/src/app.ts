@@ -24,6 +24,7 @@ import {
 } from "./modules/downloads/downloads.routes";
 import { sourceDocumentsRouter } from "./modules/source-documents/sourceDocuments.routes";
 import { intakeRouter } from "./modules/intake/intake.routes";
+import { intakeWebhooksRouter } from "./modules/intake/intake.webhooks.routes";
 import { auditRouter } from "./modules/audit/audit.routes";
 import { authRouter } from "./modules/auth/auth.routes";
 import { uploadSessionsRouter } from "./modules/uploads/uploads.routes";
@@ -90,6 +91,10 @@ const TOOL_RESULT_PATH = "/word-chat/tool-result";
 // its own rate-limit lane and to keep it out of the shared one.
 const BLOB_UPLOAD_PREFIX = "/download/signed/";
 
+// Deliveries from other services (Slack, Postmark), which authenticate with a
+// signature or a secret URL and share no user's budget.
+const WEBHOOK_PREFIX = "/webhooks/";
+
 const generalLimiter = makeLimiter({
   windowMs: minutes(envInt("RATE_LIMIT_GENERAL_WINDOW_MINUTES", 15)),
   max: envInt("RATE_LIMIT_GENERAL_MAX", 300),
@@ -99,7 +104,16 @@ const generalLimiter = makeLimiter({
     req.path === TOOL_RESULT_PATH ||
     req.path === "/upload-sessions" ||
     req.path.startsWith("/upload-sessions/") ||
+    req.path.startsWith(WEBHOOK_PREFIX) ||
     (req.method === "PUT" && req.path.startsWith(BLOB_UPLOAD_PREFIX)),
+});
+
+// Webhooks get their own lane: a busy Slack channel or a burst of forwarded
+// mail must neither spend nor be refused by a user's shared budget.
+const webhookLimiter = makeLimiter({
+  windowMs: minutes(envInt("RATE_LIMIT_WEBHOOK_WINDOW_MINUTES", 1)),
+  max: envInt("RATE_LIMIT_WEBHOOK_MAX", 120),
+  message: "Too many webhook deliveries. Please try again later.",
 });
 
 // The filesystem storage driver's signed PUT (see downloads.routes.ts) is the
@@ -331,6 +345,11 @@ app.delete("/user/tabular-reviews", dataDeleteLimiter);
 // signed PUT streams its body straight to disk (see downloads.routes.ts), so
 // no body parser may consume it first — a .json upload otherwise would be.
 app.put("/download/signed/:token", blobUploadLimiter, blobUploadHandler);
+
+// Ahead of the global JSON parser: Slack's signature covers the raw body, so
+// the webhook router chooses each route's parser itself.
+app.use("/webhooks", webhookLimiter);
+app.use("/webhooks/intake", intakeWebhooksRouter);
 
 app.use(express.json({ limit: JSON_BODY_LIMIT }));
 

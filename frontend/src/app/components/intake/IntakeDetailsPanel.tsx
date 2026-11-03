@@ -1,10 +1,11 @@
 "use client";
-import { useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { useId, useRef, useState, type ReactNode } from "react";
 import { CalendarDays, ChevronDown, Pencil } from "lucide-react";
 import type {
   IntakeDetails,
   IntakeMember,
   IntakeRequest,
+  IntakeSource,
   IntakeState,
 } from "@mike/contracts";
 import { SETTINGS_CONTROL_CLASS } from "@/app/components/settings/SettingsTextInput";
@@ -37,11 +38,10 @@ import {
   formatIntakeDate,
   formatIntakeDateTime,
   intakeMemberName,
-  intakeTimezones,
   isIntakeOverdue,
-  isKnownTimezone,
 } from "./intakeLabels";
 import { IntakeUnassigned } from "./IntakeUnassigned";
+import { IntakeMikeGCMark, isMikeGCRequest } from "./IntakeActorAvatar";
 
 /**
  * Grey and flat like the playbook fields. A fixed starting height with no
@@ -137,7 +137,7 @@ export function IntakeDetailsPanel({
   );
   return (
     // The fields label themselves; the name is for assistive technology.
-    <aside aria-label="Details" className="space-y-4 p-5">
+    <aside aria-label="Details" className="space-y-4 px-5 py-4">
       {caps.wait ||
       caps.resume ||
       caps.resolve ||
@@ -275,16 +275,8 @@ export function IntakeDetailsPanel({
           <TargetDateField
             value={request.requested_by_date}
             overdue={overdue}
-            // The page pairs the date with the request's timezone when the
-            // edit is sent, so a timezone change saving meanwhile is kept.
             onSave={(date) => onSave({ requested_by_date: date })}
           />
-          {request.requested_by_date && (
-            <TimezoneField
-              value={request.timezone ?? ""}
-              onSave={(timezone) => onSave({ timezone })}
-            />
-          )}
         </>
       ) : (
         <>
@@ -301,17 +293,10 @@ export function IntakeDetailsPanel({
           </Fact>
           <Fact label="Target date">
             {request.requested_by_date ? (
-              <>
-                <span className={`block ${overdue ? "text-red-600" : ""}`}>
-                  {formatIntakeDate(request.requested_by_date)}
-                  {overdue && " · overdue"}
-                </span>
-                {request.timezone && (
-                  <span className="block text-xs text-gray-500">
-                    {request.timezone}
-                  </span>
-                )}
-              </>
+              <span className={`block ${overdue ? "text-red-600" : ""}`}>
+                {formatIntakeDate(request.requested_by_date)}
+                {overdue && " · overdue"}
+              </span>
             ) : (
               <span className="text-gray-400">None</span>
             )}
@@ -322,9 +307,10 @@ export function IntakeDetailsPanel({
         <Person
           name={request.created_by_name}
           photo={
-            members.find((m) => m.user_id === request.created_by)
-              ?.profile_photo
+            members.find((m) => m.user_id === request.created_by)?.profile_photo
           }
+          avatar={isMikeGCRequest(request) ? <IntakeMikeGCMark /> : undefined}
+          note={INTAKE_SOURCE_NOTES[request.source]}
         />
       </Fact>
       <Fact label="Created">{formatIntakeDateTime(request.created_at)}</Fact>
@@ -526,25 +512,43 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
+/** Where a request came from, after its creator; a member's own has none. */
+const INTAKE_SOURCE_NOTES: Record<IntakeSource, string | null> = {
+  manual: null,
+  email: "from email",
+  slack: "from Slack",
+};
+
 /** A person's avatar beside their name; the name labels the avatar. */
 function Person({
   name,
   email,
   photo,
   label,
+  avatar,
+  note,
 }: {
   name: string;
   email?: string | null;
   photo?: string | null;
   /** Shown in place of the name, such as "Myself"; the avatar keeps it. */
   label?: string;
+  /** A mark in place of the avatar, such as MikeGC's. */
+  avatar?: ReactNode;
+  /** Muted text after the name, such as "from email". */
+  note?: string | null;
 }) {
   return (
     <span className="flex min-w-0 items-center gap-2">
-      <span aria-hidden="true" className="flex">
-        <UserAvatar size="sm" name={name} email={email} photo={photo} />
+      {avatar ?? (
+        <span aria-hidden="true" className="flex">
+          <UserAvatar size="sm" name={name} email={email} photo={photo} />
+        </span>
+      )}
+      <span className="min-w-0 [overflow-wrap:anywhere]">
+        {label ?? name}
+        {note && <span className="text-gray-500"> {note}</span>}
       </span>
-      <span className="min-w-0 [overflow-wrap:anywhere]">{label ?? name}</span>
     </span>
   );
 }
@@ -722,37 +726,6 @@ function DetailField({
   );
 }
 
-function TimezoneField({
-  value,
-  onSave,
-}: {
-  value: string;
-  onSave: (value: string) => void;
-}) {
-  const listId = useId();
-  const timezones = useMemo(() => intakeTimezones(), []);
-  return (
-    <>
-      <DetailField
-        label="Timezone"
-        value={value}
-        list={listId}
-        check={(zone) =>
-          isKnownTimezone(zone)
-            ? null
-            : "Choose a timezone from the list, such as Europe/London."
-        }
-        onSave={onSave}
-      />
-      <datalist id={listId}>
-        {timezones.map((zone) => (
-          <option key={zone} value={zone} />
-        ))}
-      </datalist>
-    </>
-  );
-}
-
 /**
  * The request's subject as the page title. Where it can be edited it is an
  * input that looks like the title until hovered or focused.
@@ -820,7 +793,7 @@ export function IntakeDescription({
   }
   const editing = draft !== null;
   return (
-    <section aria-labelledby="intake-request" className="space-y-2 p-5">
+    <section aria-labelledby="intake-request" className="space-y-2 px-5 py-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 id="intake-request" className="text-sm font-medium text-gray-900">
           Request

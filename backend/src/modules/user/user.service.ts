@@ -116,6 +116,7 @@ export {
 export {
     getUserApiKeys,
     getEffectiveApiKeys,
+    envApiKeys,
     getApiKeyStatusFor,
     getEffectiveApiKeyStatus,
     normalizeApiKeyProvider,

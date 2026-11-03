@@ -38,6 +38,8 @@ const TABS: SettingsShellTab[] = [
         href: "/settings/byok",
     },
     { id: "connectors", label: "Connectors", href: "/settings/connectors" },
+    // Personal's automated intake; an organization's is in its own settings.
+    { id: "intake", label: "Intake", href: "/settings/intake" },
     // The organizations the person belongs to, and their invitations. Each
     // organization's own settings are a separate area, opened from here or
     // from the account menu.
@@ -78,8 +80,12 @@ export default function SettingsLayout({
         return null;
     }
 
-    // My Activity is linked from Settings but uses the full table-page layout.
-    if (pathname === "/settings/my-activity") {
+    // My Activity and the intake rules are linked from Settings but use the
+    // full table-page layout.
+    if (
+        pathname === "/settings/my-activity" ||
+        pathname === "/settings/intake/rules"
+    ) {
         return children;
     }
 

@@ -101,7 +101,8 @@ vi.mock("./IntakeDocumentPicker", () => ({
       </div>
     ) : null,
 }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: mocks.push, replace: mocks.push }),
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: mocks.push, replace: mocks.push }),
   useSearchParams: () => mocks.searchParams,
 }));
 vi.mock("next/link", () => ({
@@ -142,35 +143,35 @@ vi.mock("@/app/components/shared/PageHeader", () => ({
   }) => {
     const actions = actionGroups ? actionGroups.flat() : ungrouped;
     return (
-    <header>
-      {/* The current page's title, which may be an editable input. */}
-      {breadcrumbs.length > 1 && breadcrumbs[breadcrumbs.length - 1].label}
-      {children}
-      {actions.map((action, index) =>
-        !action ? null : action.type === "search" ? (
-          <input
-            key={index}
-            type="search"
-            aria-label={action.placeholder}
-            value={action.value}
-            onChange={(event) => action.onChange?.(event.target.value)}
-          />
-        ) : action.type === "custom" ? (
-          <span key={index}>{action.render}</span>
-        ) : (
-          <button
-            key={index}
-            type="button"
-            aria-label={action.type === "new" ? undefined : action.title}
-            aria-pressed={action.type === "new" ? undefined : action.pressed}
-            disabled={action.disabled}
-            onClick={action.onClick}
-          >
-            {action.type === "new" ? action.title : action.label}
-          </button>
-        ),
-      )}
-    </header>
+      <header>
+        {/* The current page's title, which may be an editable input. */}
+        {breadcrumbs.length > 1 && breadcrumbs[breadcrumbs.length - 1].label}
+        {children}
+        {actions.map((action, index) =>
+          !action ? null : action.type === "search" ? (
+            <input
+              key={index}
+              type="search"
+              aria-label={action.placeholder}
+              value={action.value}
+              onChange={(event) => action.onChange?.(event.target.value)}
+            />
+          ) : action.type === "custom" ? (
+            <span key={index}>{action.render}</span>
+          ) : (
+            <button
+              key={index}
+              type="button"
+              aria-label={action.type === "new" ? undefined : action.title}
+              aria-pressed={action.type === "new" ? undefined : action.pressed}
+              disabled={action.disabled}
+              onClick={action.onClick}
+            >
+              {action.type === "new" ? action.title : action.label}
+            </button>
+          ),
+        )}
+      </header>
     );
   },
 }));
@@ -231,13 +232,13 @@ const request = (overrides: Partial<IntakeRequest> = {}): IntakeRequest => ({
   requester_email: "jane@business.test",
   requester_team: "Procurement",
   requested_by_date: null,
-  timezone: null,
   state: "in_review",
   version: 1,
   assignee_id: "lawyer-b",
   assignee_name: "Lawyer B",
   created_by: "account-a",
   created_by_name: "Lawyer A",
+  source: "manual",
   created_at: "2026-10-26T10:00:00Z",
   updated_at: "2026-10-26T10:00:00Z",
   capabilities,
@@ -254,7 +255,6 @@ const summary = (
     requester_email: full.requester_email,
     requester_team: full.requester_team,
     requested_by_date: null,
-    timezone: null,
     state: full.state,
     version: full.version,
     assignee_id: full.assignee_id,
@@ -301,14 +301,15 @@ beforeEach(() => {
   mocks.messages.mockResolvedValue([]);
   mocks.events.mockResolvedValue([]);
   mocks.documents.mockResolvedValue([]);
-  mocks.upload.mockImplementation(async (_org, _request, files: { file: File }[]) =>
-    files.map(({ file }) => ({
-      clientId: file.name,
-      filename: file.name,
-      status: "completed",
-      result: null,
-      errorCode: null,
-    })),
+  mocks.upload.mockImplementation(
+    async (_org, _request, files: { file: File }[]) =>
+      files.map(({ file }) => ({
+        clientId: file.name,
+        filename: file.name,
+        status: "completed",
+        result: null,
+        errorCode: null,
+      })),
   );
   mocks.command.mockResolvedValue(receipt);
   vi.spyOn(window, "confirm").mockReturnValue(false);
@@ -390,7 +391,6 @@ describe("creating requests", () => {
       requester_email: null,
       requester_team: null,
       requested_by_date: null,
-      timezone: null,
       assignee_id: "account-a",
     });
     await waitFor(() =>
@@ -434,21 +434,22 @@ describe("creating requests", () => {
     expect(mocks.submit).not.toHaveBeenCalled();
   });
 
-  it("requires a known timezone for a target date", async () => {
+  it("sends a target date as a calendar date, without a timezone", async () => {
+    mocks.submit.mockImplementation(
+      async (_org: string, body: { id: string }) => ({
+        ...receipt,
+        request_id: body.id,
+      }),
+    );
     render(<IntakeNewRequestPage />);
     fillRequest();
     setTargetDate("2026-11-10");
-    fireEvent.change(screen.getByLabelText("Timezone"), {
-      target: { value: "Europe/Londn" },
-    });
-    expect(
-      screen.getByText(
-        "Choose a timezone from the list, such as Europe/London.",
-      ),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Create request" }),
-    ).toBeDisabled();
+    expect(screen.queryByLabelText("Timezone")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Create request" }));
+    await waitFor(() => expect(mocks.submit).toHaveBeenCalledTimes(1));
+    const body = mocks.submit.mock.calls[0][1];
+    expect(body.requested_by_date).toBe("2026-11-10");
+    expect(body).not.toHaveProperty("timezone");
   });
 
   it("asks in a popup before closing a draft and retains its text when declined", async () => {
@@ -500,9 +501,6 @@ describe("creating requests", () => {
     const first = render(<IntakeNewRequestPage />);
     fillRequest("Final keystroke!");
     setTargetDate("2026-11-10");
-    fireEvent.change(screen.getByLabelText("Timezone"), {
-      target: { value: "Europe/Stockholm" },
-    });
     await chooseAssignee(user, "Lawyer B");
     first.unmount();
     const second = render(<IntakeNewRequestPage />);
@@ -511,7 +509,9 @@ describe("creating requests", () => {
     expect(screen.getByLabelText("Request")).toHaveValue(
       "  Exact request text\nwith newlines  ",
     );
-    expect(screen.getByLabelText("Timezone")).toHaveValue("Europe/Stockholm");
+    expect(
+      (screen.getByLabelText("Target date") as HTMLInputElement).value,
+    ).toMatch(/Nov/);
     expect(
       await screen.findByRole("button", { name: "Reviewer: Lawyer B" }),
     ).toBeInTheDocument();
@@ -533,7 +533,6 @@ describe("queue", () => {
       page([
         summary({
           requested_by_date: "2020-01-15",
-          timezone: "UTC",
           assignee_id: null,
           assignee_name: null,
         }),
@@ -556,14 +555,18 @@ describe("queue", () => {
     await user.click(
       await screen.findByRole("button", { name: "Filter by requester" }),
     );
-    await user.click(await screen.findByRole("button", { name: /Sam Business/ }));
+    await user.click(
+      await screen.findByRole("button", { name: /Sam Business/ }),
+    );
     await waitFor(() =>
       expect(mocks.list).toHaveBeenLastCalledWith(
         "org-a",
         expect.objectContaining({ requester: "Sam Business" }),
       ),
     );
-    await user.click(screen.getByRole("button", { name: "Filter by requester" }));
+    await user.click(
+      screen.getByRole("button", { name: "Filter by requester" }),
+    );
     await user.click(
       await screen.findByRole("button", {
         name: "Remove Sam Business from the filter",
@@ -700,7 +703,9 @@ describe("queue", () => {
     expect(
       screen.getByRole("link", { name: "Second request" }),
     ).toBeInTheDocument();
-    expect(screen.queryByText("Unable to load requests")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Unable to load requests"),
+    ).not.toBeInTheDocument();
   });
 
   it("drops a next page that was loading when the list refreshed", async () => {
@@ -721,7 +726,9 @@ describe("queue", () => {
     });
     await screen.findByRole("link", { name: "Newest request" });
     await act(async () =>
-      more.resolve(page([summary({ id: "request-c", subject: "Older request" })])),
+      more.resolve(
+        page([summary({ id: "request-c", subject: "Older request" })]),
+      ),
     );
     // That page followed rows that are no longer the last on screen.
     expect(
@@ -851,7 +858,9 @@ describe("queue", () => {
     expect(
       screen.getByRole("menuitem", { name: "Cancel request" }),
     ).toBeInTheDocument();
-    await user.click(screen.getByRole("menuitem", { name: "Delete 2 requests" }));
+    await user.click(
+      screen.getByRole("menuitem", { name: "Delete 2 requests" }),
+    );
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toHaveTextContent("Delete 2 requests?");
     await user.click(
@@ -916,7 +925,9 @@ describe("queue", () => {
         }),
       );
       expect(mocks.list).toHaveBeenCalledWith("personal", expect.anything());
-      await user.click(screen.getByRole("menuitem", { name: "Delete request" }));
+      await user.click(
+        screen.getByRole("menuitem", { name: "Delete request" }),
+      );
       expect(await screen.findByRole("dialog")).toHaveTextContent(
         "Its notes, history and documents are deleted. This can't be undone.",
       );
@@ -996,11 +1007,14 @@ describe("queue", () => {
         scope: "open",
       }),
     );
+    expect(screen.getByRole("button", { name: "Outstanding" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
     expect(
-      screen.getByRole("button", { name: "Outstanding" }),
-    ).toHaveAttribute("aria-pressed", "true");
-    expect(
-      screen.getAllByRole("button", { name: /^(Outstanding|Resolved|Cancelled)$/ }),
+      screen.getAllByRole("button", {
+        name: /^(Outstanding|Resolved|Cancelled)$/,
+      }),
     ).toHaveLength(3);
     // Only the statuses an outstanding request can have, each with its colour.
     await user.click(screen.getByRole("button", { name: "Filter by status" }));
@@ -1043,9 +1057,10 @@ describe("queue", () => {
       sort: "target",
       scope: "overdue",
     });
-    expect(
-      screen.getByRole("button", { name: "Outstanding" }),
-    ).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Outstanding" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
     fireEvent.click(screen.getByRole("button", { name: "Overdue" }));
     // Back to the plain Outstanding list.
     await waitFor(() =>
@@ -1187,7 +1202,8 @@ describe("contract review documents", () => {
       type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     });
   const chooseFiles = (files: File[]) => {
-    const input = document.querySelector<HTMLInputElement>('input[type="file"]')!;
+    const input =
+      document.querySelector<HTMLInputElement>('input[type="file"]')!;
     fireEvent.change(input, { target: { files } });
   };
 
@@ -1197,14 +1213,18 @@ describe("contract review documents", () => {
     chooseFiles([contract(), new File(["x"], "notes.txt")]);
     expect(screen.getByText("Supplier NDA.docx")).toBeInTheDocument();
     expect(screen.queryByText("notes.txt")).not.toBeInTheDocument();
-    expect(screen.getByRole("alert")).toHaveTextContent("Unsupported file type");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Unsupported file type",
+    );
   });
 
   it("copies library documents picked in Add documents once the request is created", async () => {
-    mocks.submit.mockImplementation(async (_org: string, body: { id: string }) => ({
-      ...receipt,
-      request_id: body.id,
-    }));
+    mocks.submit.mockImplementation(
+      async (_org: string, body: { id: string }) => ({
+        ...receipt,
+        request_id: body.id,
+      }),
+    );
     mocks.copy.mockResolvedValue([]);
     render(<IntakeNewRequestPage />);
     fillRequest();
@@ -1227,10 +1247,12 @@ describe("contract review documents", () => {
   });
 
   it("uploads the documents to the request once it is created", async () => {
-    mocks.submit.mockImplementation(async (_org: string, body: { id: string }) => ({
-      ...receipt,
-      request_id: body.id,
-    }));
+    mocks.submit.mockImplementation(
+      async (_org: string, body: { id: string }) => ({
+        ...receipt,
+        request_id: body.id,
+      }),
+    );
     render(<IntakeNewRequestPage />);
     fillRequest();
     const file = contract();
@@ -1247,10 +1269,12 @@ describe("contract review documents", () => {
   });
 
   it("says the request was saved when its documents fail to upload", async () => {
-    mocks.submit.mockImplementation(async (_org: string, body: { id: string }) => ({
-      ...receipt,
-      request_id: body.id,
-    }));
+    mocks.submit.mockImplementation(
+      async (_org: string, body: { id: string }) => ({
+        ...receipt,
+        request_id: body.id,
+      }),
+    );
     mocks.upload.mockRejectedValue(new TypeError("offline"));
     render(<IntakeNewRequestPage />);
     fillRequest();
@@ -1264,12 +1288,20 @@ describe("contract review documents", () => {
   });
 
   it("names each document that could not be added, uploaded or copied", async () => {
-    mocks.submit.mockImplementation(async (_org: string, body: { id: string }) => ({
-      ...receipt,
-      request_id: body.id,
-    }));
+    mocks.submit.mockImplementation(
+      async (_org: string, body: { id: string }) => ({
+        ...receipt,
+        request_id: body.id,
+      }),
+    );
     mocks.upload.mockResolvedValue([
-      { clientId: "a", filename: "Supplier NDA.docx", status: "error", result: null, errorCode: "failed" },
+      {
+        clientId: "a",
+        filename: "Supplier NDA.docx",
+        status: "error",
+        result: null,
+        errorCode: "failed",
+      },
     ]);
     mocks.copy.mockRejectedValue(new TypeError("offline"));
     render(<IntakeNewRequestPage />);
@@ -1279,7 +1311,9 @@ describe("contract review documents", () => {
         name: /^Drag and drop documents here, or click to browse\./,
       }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Pick Library NDA.pdf" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Pick Library NDA.pdf" }),
+    );
     chooseFiles([contract()]);
     fireEvent.click(screen.getByRole("button", { name: "Create request" }));
     await waitFor(() => expect(mocks.push).toHaveBeenCalled());
@@ -1291,10 +1325,12 @@ describe("contract review documents", () => {
   });
 
   it("names only the documents a failed later upload session left out", async () => {
-    mocks.submit.mockImplementation(async (_org: string, body: { id: string }) => ({
-      ...receipt,
-      request_id: body.id,
-    }));
+    mocks.submit.mockImplementation(
+      async (_org: string, body: { id: string }) => ({
+        ...receipt,
+        request_id: body.id,
+      }),
+    );
     mocks.upload.mockRejectedValue(
       new mocks.UploadBatchError("Session failed", [
         { filename: "Supplier NDA.docx", status: "completed" },
@@ -1316,10 +1352,12 @@ describe("contract review documents", () => {
   });
 
   it("stays locked until its library documents are copied, so it is never created twice", async () => {
-    mocks.submit.mockImplementation(async (_org: string, body: { id: string }) => ({
-      ...receipt,
-      request_id: body.id,
-    }));
+    mocks.submit.mockImplementation(
+      async (_org: string, body: { id: string }) => ({
+        ...receipt,
+        request_id: body.id,
+      }),
+    );
     const copied = deferred<[]>();
     mocks.copy.mockReturnValue(copied.promise);
     const view = render(<IntakeNewRequestPage />);
@@ -1330,9 +1368,13 @@ describe("contract review documents", () => {
         name: /^Drag and drop documents here, or click to browse\./,
       }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Pick Library NDA.pdf" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Pick Library NDA.pdf" }),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Create request" }));
-    const adding = await screen.findByRole("button", { name: /Adding documents/ });
+    const adding = await screen.findByRole("button", {
+      name: /Adding documents/,
+    });
     expect(adding).toBeDisabled();
     expect(screen.getByLabelText("Target date")).toBeDisabled();
     expect(screen.getByLabelText("Subject")).toBeDisabled();
@@ -1384,7 +1426,10 @@ describe("contract review documents", () => {
         created_at: "2026-10-27T10:01:00Z",
       },
     ]);
-    mocks.document.mockResolvedValue({ id: "doc-a", filename: "Supplier NDA.docx" });
+    mocks.document.mockResolvedValue({
+      id: "doc-a",
+      filename: "Supplier NDA.docx",
+    });
     render(
       <Detail orgId="org-a" requestId="request-a" accountId="account-a" />,
     );
@@ -1405,7 +1450,9 @@ describe("contract review documents", () => {
     const file = contract();
     chooseFiles([file]);
     await waitFor(() =>
-      expect(mocks.upload).toHaveBeenCalledWith("org-a", "request-a", [{ file }]),
+      expect(mocks.upload).toHaveBeenCalledWith("org-a", "request-a", [
+        { file },
+      ]),
     );
     await waitFor(() => expect(mocks.documents).toHaveBeenCalledTimes(2));
   });
@@ -1427,7 +1474,9 @@ describe("request detail", () => {
       { command_id: expect.any(String), body: "  Called Jane.\nShe agreed.  " },
     ]);
     // The box stays open, emptied for the next comment.
-    await waitFor(() => expect(screen.getByLabelText("Add comment")).toHaveValue(""));
+    await waitFor(() =>
+      expect(screen.getByLabelText("Add comment")).toHaveValue(""),
+    );
     expect(mocks.request).toHaveBeenCalledTimes(2);
   });
 
@@ -1472,7 +1521,9 @@ describe("request detail", () => {
     await waitFor(() => expect(mocks.command).toHaveBeenCalledTimes(3));
     expect(mocks.command.mock.calls[2]).toEqual(original);
     // Once saved, the note that became the resolution is cleared.
-    await waitFor(() => expect(screen.getByLabelText("Add comment")).toHaveValue(""));
+    await waitFor(() =>
+      expect(screen.getByLabelText("Add comment")).toHaveValue(""),
+    );
   });
 
   it("keeps a resolution after a conflict and resends it as a new command at the refreshed version", async () => {
@@ -1509,7 +1560,9 @@ describe("request detail", () => {
     const user = userEvent.setup();
     const editor = await noteEditor();
     fireEvent.change(editor, { target: { value: "Unsent note" } });
-    await user.click(screen.getByRole("button", { name: "Reviewer: Lawyer B" }));
+    await user.click(
+      screen.getByRole("button", { name: "Reviewer: Lawyer B" }),
+    );
     const options = screen.getAllByRole("menuitemradio");
     expect(options).toHaveLength(3);
     ["Unassigned", "Myself", "Lawyer B"].forEach((name, i) =>
@@ -1538,14 +1591,29 @@ describe("request detail", () => {
     mocks.request.mockResolvedValue(
       request({
         state: "resolved",
-        capabilities: { ...capabilities, assign: false, resolve: false, reopen: true },
+        capabilities: {
+          ...capabilities,
+          assign: false,
+          resolve: false,
+          reopen: true,
+        },
       }),
     );
     mocks.members.mockResolvedValue([
-      { user_id: "account-a", display_name: "Lawyer A", email: "a@example.test", profile_photo: photo },
+      {
+        user_id: "account-a",
+        display_name: "Lawyer A",
+        email: "a@example.test",
+        profile_photo: photo,
+      },
     ]);
     mocks.messages.mockResolvedValue([
-      message({ id: "m2", kind: "resolution", body: "Approved.", author_id: "account-a" }),
+      message({
+        id: "m2",
+        kind: "resolution",
+        body: "Approved.",
+        author_id: "account-a",
+      }),
     ]);
     const { unmount } = render(detail());
     const activity = await screen.findByRole("region", { name: "Activity" });
@@ -1651,10 +1719,12 @@ describe("request detail", () => {
     );
     expect(activity).toHaveTextContent("Lawyer A recorded the resolution ·");
     const details = screen.getByRole("complementary", { name: "Details" });
-    await userEvent.setup().click(
-      within(details).getByRole("button", { name: "Status: Resolved" }),
-    );
-    expect(screen.getByRole("menuitem", { name: "Reopen" })).toBeInTheDocument();
+    await userEvent
+      .setup()
+      .click(within(details).getByRole("button", { name: "Status: Resolved" }));
+    expect(
+      screen.getByRole("menuitem", { name: "Reopen" }),
+    ).toBeInTheDocument();
     await userEvent.keyboard("{Escape}");
     // A closed request's details and title can be read but not changed.
     expect(within(details).queryByRole("textbox")).not.toBeInTheDocument();
@@ -1667,10 +1737,81 @@ describe("request detail", () => {
     expect(details).toHaveTextContent("Jane Business");
   });
 
+  it("shows MikeGC's preprocessing note with its mark, not a person's", async () => {
+    mocks.messages.mockResolvedValue([
+      message({
+        id: "note-mikegc",
+        author_id: null,
+        author_name: "MikeGC",
+        automated: true,
+        body: "AI preprocessing\n\nThe NDA runs five years.",
+      }),
+    ]);
+    render(detail());
+    const activity = await screen.findByRole("region", { name: "Activity" });
+    await waitFor(() => expect(activity).toHaveTextContent("MikeGC commented"));
+    expect(activity).toHaveTextContent("The NDA runs five years.");
+    expect(activity.querySelector('[data-actor="mikegc"]')).not.toBeNull();
+  });
+
+  it("names MikeGC as the creator of a request it recorded, with where it came from", async () => {
+    mocks.request.mockResolvedValue(
+      request({ created_by: null, created_by_name: "MikeGC", source: "email" }),
+    );
+    mocks.events.mockResolvedValue([
+      event({
+        actor_id: null,
+        actor_name: "MikeGC",
+        assignee_name: "Lawyer B",
+      }),
+      event({ id: 2, kind: "assign", assignee_name: "Lawyer A" }),
+    ]);
+    const { unmount } = render(detail());
+    const activity = await screen.findByRole("region", { name: "Activity" });
+    expect(activity).toHaveTextContent(
+      "MikeGC created this and assigned it to Lawyer B ·",
+    );
+    // MikeGC's entry has its mark; a member's has their avatar.
+    const marks = activity.querySelectorAll("[data-actor]");
+    expect(marks[0]).toHaveAttribute("data-actor", "mikegc");
+    expect(marks[1]).toHaveAttribute("data-actor", "person");
+    const details = screen.getByRole("complementary", { name: "Details" });
+    // Plain text after the name, beside MikeGC's mark.
+    expect(details).toHaveTextContent("Created byMikeGC from email");
+    expect(details.querySelector('[data-actor="mikegc"]')).not.toBeNull();
+    expect(
+      within(details).queryByRole("img", { name: "MikeGC" }),
+    ).not.toBeInTheDocument();
+    unmount();
+
+    mocks.request.mockResolvedValue(
+      request({ created_by: null, created_by_name: "MikeGC", source: "slack" }),
+    );
+    render(detail());
+    const fromSlack = await screen.findByRole("complementary", {
+      name: "Details",
+    });
+    await waitFor(() =>
+      expect(fromSlack).toHaveTextContent("Created byMikeGC from Slack"),
+    );
+  });
+
+  it("says nothing of a source for a request a member created", async () => {
+    render(detail());
+    const details = await screen.findByRole("complementary", {
+      name: "Details",
+    });
+    expect(details).toHaveTextContent("Created byLALawyer A");
+    expect(details).not.toHaveTextContent(/from (email|Slack)/);
+    expect(details.querySelector('[data-actor="mikegc"]')).toBeNull();
+  });
+
   it("changes status from the details panel and copies the link from the header", async () => {
     const user = userEvent.setup();
     render(detail());
-    const details = await screen.findByRole("complementary", { name: "Details" });
+    const details = await screen.findByRole("complementary", {
+      name: "Details",
+    });
     expect(within(details).getByText("In progress")).toBeInTheDocument();
     await user.click(
       within(details).getByRole("button", { name: "Requester: Jane Business" }),
@@ -1697,7 +1838,9 @@ describe("request detail", () => {
     expect(
       within(header)
         .getAllByRole("button")
-        .map((button) => button.getAttribute("aria-label") ?? button.textContent),
+        .map(
+          (button) => button.getAttribute("aria-label") ?? button.textContent,
+        ),
     ).toEqual(["Copy link", "More actions"]);
     const writeText = vi
       .spyOn(navigator.clipboard, "writeText")
@@ -1709,9 +1852,10 @@ describe("request detail", () => {
     await user.click(
       within(details).getByRole("button", { name: "Status: In progress" }),
     );
-    expect(
-      screen.getByRole("menuitemradio", { name: "New" }),
-    ).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("menuitemradio", { name: "New" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
     await user.click(
       screen.getByRole("menuitemradio", { name: "Waiting on requester" }),
     );
@@ -1727,7 +1871,11 @@ describe("request detail", () => {
 
   it("reads notes and changes as one timeline, oldest first", async () => {
     mocks.messages.mockResolvedValue([
-      message({ id: "m1", body: "Called the supplier", created_at: "2026-10-27T10:00:00Z" }),
+      message({
+        id: "m1",
+        body: "Called the supplier",
+        created_at: "2026-10-27T10:00:00Z",
+      }),
     ]);
     mocks.events.mockResolvedValue([
       event({ id: 1, created_at: "2026-10-26T10:00:00Z" }),
@@ -1737,7 +1885,9 @@ describe("request detail", () => {
     const activity = await screen.findByRole("region", { name: "Activity" });
     const entries = within(activity).getAllByRole("listitem");
     // A note's text sits below its line.
-    expect(entries[1].textContent).toMatch(/commented · .*Called the supplier$/);
+    expect(entries[1].textContent).toMatch(
+      /commented · .*Called the supplier$/,
+    );
     expect(entries.map((entry) => entry.textContent)).toEqual([
       expect.stringContaining("Lawyer A created this"),
       expect.stringContaining("Lawyer A commented"),
@@ -1757,7 +1907,9 @@ describe("request detail", () => {
     render(detail());
     const activity = await screen.findByRole("region", { name: "Activity" });
     expect(
-      within(activity).getAllByRole("listitem").map((entry) => entry.textContent),
+      within(activity)
+        .getAllByRole("listitem")
+        .map((entry) => entry.textContent),
     ).toEqual([
       expect.stringContaining("created this"),
       expect.stringContaining("commented"),
@@ -1777,7 +1929,9 @@ describe("request detail", () => {
       expect(
         screen.getAllByRole("menuitem").map((item) => item.textContent),
       ).toEqual(["Delete request"]);
-      await user.click(screen.getByRole("menuitem", { name: "Delete request" }));
+      await user.click(
+        screen.getByRole("menuitem", { name: "Delete request" }),
+      );
       return screen.getByRole("dialog", { name: "Delete this request?" });
     };
     await user.click(
@@ -1795,7 +1949,9 @@ describe("request detail", () => {
         expect.objectContaining({ expected_version: 1 }),
       ),
     );
-    await waitFor(() => expect(mocks.push).toHaveBeenCalledWith("/intake/requests"));
+    await waitFor(() =>
+      expect(mocks.push).toHaveBeenCalledWith("/intake/requests"),
+    );
     // The deleted request is not loaded again.
     expect(mocks.request).toHaveBeenCalledTimes(1);
   });
@@ -1804,14 +1960,20 @@ describe("request detail", () => {
     render(detail());
     const activity = await screen.findByRole("region", { name: "Activity" });
     const file = contractFile();
-    const dataTransfer = { types: ["Files"], files: [file], dropEffect: "none" };
+    const dataTransfer = {
+      types: ["Files"],
+      files: [file],
+      dropEffect: "none",
+    };
     fireEvent.dragEnter(activity, { dataTransfer });
     expect(
       screen.getByText("Drop documents to add them to this request"),
     ).toBeInTheDocument();
     fireEvent.drop(activity, { dataTransfer });
     await waitFor(() =>
-      expect(mocks.upload).toHaveBeenCalledWith("org-a", "request-a", [{ file }]),
+      expect(mocks.upload).toHaveBeenCalledWith("org-a", "request-a", [
+        { file },
+      ]),
     );
     expect(
       screen.queryByText("Drop documents to add them to this request"),
@@ -1899,7 +2061,11 @@ describe("request detail", () => {
   it("leaves a text drop on the note form to the browser", async () => {
     render(detail());
     const editor = await noteEditor();
-    const dataTransfer = { types: ["text/plain"], files: [], dropEffect: "none" };
+    const dataTransfer = {
+      types: ["text/plain"],
+      files: [],
+      dropEffect: "none",
+    };
     // Not cancelled, so the browser still inserts the dragged text.
     expect(fireEvent.drop(editor, { dataTransfer })).toBe(true);
     expect(
@@ -1938,7 +2104,11 @@ describe("request detail", () => {
     render(detail());
     const editor = await noteEditor();
     const file = contractFile();
-    const dataTransfer = { types: ["Files"], files: [file], dropEffect: "none" };
+    const dataTransfer = {
+      types: ["Files"],
+      files: [file],
+      dropEffect: "none",
+    };
     fireEvent.dragEnter(editor, { dataTransfer });
     fireEvent.dragOver(editor, { dataTransfer });
     expect(
@@ -1949,13 +2119,17 @@ describe("request detail", () => {
       screen.getByRole("list", { name: "Documents to add with the note" }),
     ).toHaveTextContent("Supplier NDA.docx");
     expect(mocks.upload).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Remove Supplier NDA.docx" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Remove Supplier NDA.docx" }),
+    );
     expect(
       screen.queryByRole("list", { name: "Documents to add with the note" }),
     ).not.toBeInTheDocument();
     // The box itself is always there; it has no Close.
     expect(screen.getByLabelText("Add comment")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Close" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Close" }),
+    ).not.toBeInTheDocument();
   });
 
   it("resolves from the comment box with or without a comment, in place of Cancel", async () => {
@@ -1989,10 +2163,25 @@ describe("request detail", () => {
   it("reads a resolution under its resolved entry in the timeline", async () => {
     const at = "2026-10-28T10:00:00Z";
     mocks.request.mockResolvedValue(
-      request({ state: "resolved", capabilities: { ...capabilities, edit: false, assign: false, resolve: false, cancel: false, reopen: true } }),
+      request({
+        state: "resolved",
+        capabilities: {
+          ...capabilities,
+          edit: false,
+          assign: false,
+          resolve: false,
+          cancel: false,
+          reopen: true,
+        },
+      }),
     );
     mocks.messages.mockResolvedValue([
-      message({ id: "m1", kind: "resolution", body: "Signed as drafted.", created_at: at }),
+      message({
+        id: "m1",
+        kind: "resolution",
+        body: "Signed as drafted.",
+        created_at: at,
+      }),
     ]);
     mocks.events.mockResolvedValue([
       event({ id: 1, created_at: "2026-10-26T10:00:00Z" }),
@@ -2002,7 +2191,9 @@ describe("request detail", () => {
     const activity = await screen.findByRole("region", { name: "Activity" });
     const entries = within(activity).getAllByRole("listitem");
     expect(entries).toHaveLength(2);
-    expect(entries[1]).toHaveTextContent(/resolved this · .*Signed as drafted\.$/);
+    expect(entries[1]).toHaveTextContent(
+      /resolved this · .*Signed as drafted\.$/,
+    );
   });
 
   it("leaves Resolve request out when the request cannot be resolved", async () => {
@@ -2173,7 +2364,9 @@ describe("request detail", () => {
       .mockResolvedValueOnce({ ...receipt, applied_version: 3 });
     const user = userEvent.setup();
     render(detail());
-    const details = await screen.findByRole("complementary", { name: "Details" });
+    const details = await screen.findByRole("complementary", {
+      name: "Details",
+    });
     // The refresh after the assignment has not arrived yet.
     mocks.request.mockReturnValue(deferred<IntakeRequest>().promise);
     await user.click(
@@ -2189,7 +2382,9 @@ describe("request detail", () => {
       screen.getByRole("menuitemradio", { name: "Waiting on requester" }),
     );
     await waitFor(() => expect(mocks.command).toHaveBeenCalledTimes(2));
-    expect(mocks.command.mock.calls[1][3]).toMatchObject({ expected_version: 2 });
+    expect(mocks.command.mock.calls[1][3]).toMatchObject({
+      expected_version: 2,
+    });
   });
 
   it("saves a field once when Enter is followed by leaving it", async () => {
@@ -2211,57 +2406,32 @@ describe("request detail", () => {
     expect(mocks.edit).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps a timezone change that is saving when a date is then chosen", async () => {
-    const first = deferred<typeof receipt>();
-    mocks.edit
-      .mockReturnValueOnce(first.promise)
-      .mockResolvedValueOnce({ ...receipt, applied_version: 3 });
-    mocks.request.mockResolvedValue(
-      request({ requested_by_date: "2026-12-01", timezone: "America/New_York" }),
-    );
-    render(detail());
-    const timezone = await screen.findByLabelText("Timezone");
-    fireEvent.change(timezone, { target: { value: "Europe/Paris" } });
-    fireEvent.blur(timezone);
-    setTargetDate("2026-12-15");
-    expect(mocks.edit).toHaveBeenCalledTimes(1);
-    mocks.request.mockResolvedValue(
-      request({
-        version: 2,
-        requested_by_date: "2026-12-01",
-        timezone: "Europe/Paris",
-      }),
-    );
-    await act(async () => first.resolve(receipt));
-    await waitFor(() => expect(mocks.edit).toHaveBeenCalledTimes(2));
-    expect(mocks.edit.mock.calls[1][2]).toMatchObject({
-      expected_version: 2,
-      requested_by_date: "2026-12-15",
-      timezone: "Europe/Paris",
-    });
-  });
-
-  it("pairs a first target date with the viewer's timezone", async () => {
+  it("sends a target date alone, as a calendar date", async () => {
     mocks.edit.mockResolvedValue(receipt);
     render(detail());
     await screen.findByRole("complementary", { name: "Details" });
+    expect(screen.queryByLabelText("Timezone")).toBeNull();
     setTargetDate("2026-12-15");
     await waitFor(() => expect(mocks.edit).toHaveBeenCalledTimes(1));
     expect(mocks.edit.mock.calls[0][2]).toMatchObject({
       requested_by_date: "2026-12-15",
-      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     });
+    expect(mocks.edit.mock.calls[0][2]).not.toHaveProperty("timezone");
   });
 
   it("discards a cancellation reason when its dialog is closed", async () => {
     const user = userEvent.setup();
     render(detail());
-    const details = await screen.findByRole("complementary", { name: "Details" });
+    const details = await screen.findByRole("complementary", {
+      name: "Details",
+    });
     const chooseCancelled = async () => {
       await user.click(
         within(details).getByRole("button", { name: "Status: In progress" }),
       );
-      await user.click(screen.getByRole("menuitemradio", { name: "Cancelled" }));
+      await user.click(
+        screen.getByRole("menuitemradio", { name: "Cancelled" }),
+      );
       return screen.getByRole("dialog");
     };
     const dialog = await chooseCancelled();
@@ -2269,9 +2439,9 @@ describe("request detail", () => {
       target: { value: "Duplicate" },
     });
     await user.click(within(dialog).getByRole("button", { name: "Back" }));
-    expect(
-      within(await chooseCancelled()).getByRole("textbox"),
-    ).toHaveValue("");
+    expect(within(await chooseCancelled()).getByRole("textbox")).toHaveValue(
+      "",
+    );
     expect(mocks.command).not.toHaveBeenCalled();
   });
 
@@ -2280,7 +2450,9 @@ describe("request detail", () => {
     mocks.edit.mockReturnValue(saving.promise);
     const user = userEvent.setup();
     render(detail());
-    await user.click(await screen.findByRole("button", { name: "Edit request" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Edit request" }),
+    );
     const editor = screen.getByRole("textbox", { name: "Request" });
     fireEvent.change(editor, { target: { value: "A clearer description" } });
     const submit = within(editor.closest("section")!).getByRole("button", {
@@ -2296,7 +2468,9 @@ describe("request detail", () => {
     // The edit starts while the confirmation is open.
     fireEvent.click(submit);
     await waitFor(() => expect(mocks.edit).toHaveBeenCalledTimes(1));
-    const confirm = within(dialog).getByRole("button", { name: "Delete request" });
+    const confirm = within(dialog).getByRole("button", {
+      name: "Delete request",
+    });
     expect(confirm).toBeDisabled();
     fireEvent.click(confirm);
     await act(async () => saving.resolve(receipt));
@@ -2355,7 +2529,9 @@ describe("request detail", () => {
     render(detail());
     await noteEditor();
     fireEvent.click(screen.getByRole("button", { name: "Add documents" }));
-    fireEvent.click(screen.getByRole("button", { name: "Pick Library NDA.pdf" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Pick Library NDA.pdf" }),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Resolve request" }));
     await waitFor(() =>
       expect(mocks.copy).toHaveBeenCalledWith(
@@ -2383,7 +2559,9 @@ describe("request detail", () => {
       .mockRejectedValueOnce({ status: 403 });
     const user = userEvent.setup();
     render(detail());
-    const details = await screen.findByRole("complementary", { name: "Details" });
+    const details = await screen.findByRole("complementary", {
+      name: "Details",
+    });
     await user.click(
       within(details).getByRole("button", { name: "Status: In progress" }),
     );
@@ -2392,7 +2570,9 @@ describe("request detail", () => {
     fireEvent.change(within(dialog).getByRole("textbox"), {
       target: { value: "Duplicate" },
     });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel request" }));
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Cancel request" }),
+    );
     await waitFor(() => expect(mocks.request).toHaveBeenCalledTimes(2));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Check again" }));
@@ -2426,12 +2606,16 @@ describe("request detail", () => {
     mocks.edit.mockResolvedValue(receipt);
     const user = userEvent.setup();
     render(detail());
-    await user.click(await screen.findByRole("button", { name: "Edit request" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Edit request" }),
+    );
     const editor = screen.getByRole("textbox", { name: "Request" });
     expect(editor).toHaveValue("Request description");
     // The comment box has a Submit of its own, so look in the request's section.
     const section = editor.closest("section")!;
-    expect(within(section).getByRole("button", { name: "Submit" })).toBeDisabled();
+    expect(
+      within(section).getByRole("button", { name: "Submit" }),
+    ).toBeDisabled();
     await user.clear(editor);
     await user.type(editor, "A clearer description");
     mocks.request.mockResolvedValue(
@@ -2455,16 +2639,23 @@ describe("request detail", () => {
 
   it("refreshes in place when the window regains focus", async () => {
     render(detail());
-    await screen.findByRole("heading", { level: 1, name: "Confidential request A" });
+    await screen.findByRole("heading", {
+      level: 1,
+      name: "Confidential request A",
+    });
     const refreshed = deferred<IntakeRequest>();
     mocks.request.mockReturnValue(refreshed.promise);
     act(() => {
       window.dispatchEvent(new Event("focus"));
     });
     expect(mocks.request).toHaveBeenCalledTimes(2);
-    expect(screen.getByRole("heading", { level: 1, name: "Confidential request A" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Confidential request A" }),
+    ).toBeInTheDocument();
     await act(async () => refreshed.resolve(request({ subject: "Renamed A" })));
-    expect(screen.getByRole("heading", { level: 1, name: "Renamed A" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Renamed A" }),
+    ).toBeInTheDocument();
   });
 
   it("hides revoked content immediately after an uncertain 403 while retaining the command", async () => {
@@ -2500,14 +2691,22 @@ describe("request detail", () => {
     const view = render(<IntakeDetail orgId="org-a" requestId="request-a" />);
     mocks.workspace = { ...mocks.workspace, accountId: "account-b" };
     view.rerender(<IntakeDetail orgId="org-a" requestId="request-a" />);
-    await screen.findByRole("heading", { level: 1, name: "Current account request" });
+    await screen.findByRole("heading", {
+      level: 1,
+      name: "Current account request",
+    });
     await act(async () =>
       oldAccount.resolve(request({ subject: "Previous account secret" })),
     );
     expect(
       screen.queryByText("Previous account secret"),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 1, name: "Current account request" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", {
+        level: 1,
+        name: "Current account request",
+      }),
+    ).toBeInTheDocument();
   });
 });
 
@@ -2521,9 +2720,7 @@ describe("history navigation recovery", () => {
     mocks.request.mockResolvedValue(request({ version: 7 }));
     render(detail());
     expect(screen.queryByLabelText("Add comment")).not.toBeInTheDocument();
-    expect(await noteEditor()).toHaveValue(
-      "Retained note!",
-    );
+    expect(await noteEditor()).toHaveValue("Retained note!");
   });
 
   it("hides a retained draft after access is revoked while away", async () => {
@@ -2551,9 +2748,7 @@ describe("history navigation recovery", () => {
     expect(await noteEditor()).toHaveValue("");
     second.unmount();
     const third = render(detail("org-a"));
-    expect(await noteEditor()).toHaveValue(
-      "Account A org A",
-    );
+    expect(await noteEditor()).toHaveValue("Account A org A");
     third.unmount();
     setIntakeMemoryAccount("account-b");
     mocks.workspace.accountId = "account-b";

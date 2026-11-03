@@ -417,7 +417,7 @@ function overlayStatusRows(
 }
 
 /** The deployment's own keys: what everybody has before any saved key. */
-function envApiKeys(): UserApiKeys {
+export function envApiKeys(): UserApiKeys {
     const apiKeys: UserApiKeys = {
         claude: envApiKey("claude"),
         gemini: envApiKey("gemini"),

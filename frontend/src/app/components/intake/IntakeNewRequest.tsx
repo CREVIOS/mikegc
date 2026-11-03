@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type {
   IntakeDetails,
   IntakeMember,
@@ -36,11 +36,7 @@ import {
   useIntakeDraftWarning,
   useIntakeOperation,
 } from "./useIntakeOperation";
-import {
-  intakeTimezones,
-  isIntakeOverdue,
-  isKnownTimezone,
-} from "./intakeLabels";
+import { isIntakeOverdue } from "./intakeLabels";
 import { INTAKE_REQUESTS_PATH } from "./intakeQuery";
 import {
   IntakeDocumentPicker,
@@ -112,11 +108,6 @@ export function IntakeNewRequest({
     "",
   );
   const [date, setDate] = useIntakeDraft(memory, "date", "");
-  const [timezone, setTimezone] = useIntakeDraft(
-    memory,
-    "timezone",
-    () => Intl.DateTimeFormat().resolvedOptions().timeZone,
-  );
   // New requests are assigned to their creator unless someone else is chosen.
   const [assigneeId, setAssigneeId] = useIntakeDraft<string | null>(
     memory,
@@ -235,26 +226,20 @@ export function IntakeNewRequest({
   );
   const locked = operation.locked || addingDocuments;
   const draftGuard = useIntakeDraftWarning(dirty || locked);
-  const timezones = useMemo(() => intakeTimezones(), []);
   const ids = {
     documents: useId(),
     description: useId(),
     name: useId(),
     email: useId(),
     date: useId(),
-    timezone: useId(),
-    timezones: useId(),
   };
   const emailInvalid =
     !!requesterEmail.trim() && !EMAIL.test(requesterEmail.trim());
-  const timezoneInvalid =
-    !!date && !!timezone.trim() && !isKnownTimezone(timezone.trim());
   const complete =
     !!subject.trim() &&
     !!description.trim() &&
     !!requesterName.trim() &&
-    !emailInvalid &&
-    (!date || (!!timezone.trim() && !timezoneInvalid));
+    !emailInvalid;
   const change =
     <T,>(set: (value: T) => void) =>
     (value: T) => {
@@ -279,7 +264,6 @@ export function IntakeNewRequest({
       // The team field is hidden for now; requests are created without one.
       requester_team: null,
       requested_by_date: date || null,
-      timezone: date ? timezone.trim() : null,
     };
     const body = {
       ...details,
@@ -301,7 +285,6 @@ export function IntakeNewRequest({
     isIntakeOverdue({
       state: "submitted",
       requested_by_date: date,
-      timezone: timezone.trim() || null,
     });
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -309,6 +292,7 @@ export function IntakeNewRequest({
         shrink
         breadcrumbs={[
           { label: "Intake", onClick: close, title: "Back to Intake" },
+          { label: "Requests", onClick: close, title: "Back to requests" },
           { label: "New request" },
         ]}
       />
@@ -391,41 +375,6 @@ export function IntakeNewRequest({
                 disabled={locked}
                 onSave={(next) => change(setDate)(next ?? "")}
               />
-              {date && (
-                <div>
-                  <label htmlFor={ids.timezone} className={LABEL_CLASS}>
-                    Timezone
-                  </label>
-                  <input
-                    id={ids.timezone}
-                    list={ids.timezones}
-                    autoComplete="off"
-                    value={timezone}
-                    aria-invalid={timezoneInvalid}
-                    aria-describedby={
-                      timezoneInvalid ? `${ids.timezone}-error` : undefined
-                    }
-                    disabled={locked}
-                    onChange={(event) =>
-                      change(setTimezone)(event.target.value)
-                    }
-                    className={FIELD_CLASS}
-                  />
-                  <datalist id={ids.timezones}>
-                    {timezones.map((zone) => (
-                      <option key={zone} value={zone} />
-                    ))}
-                  </datalist>
-                  {timezoneInvalid && (
-                    <p
-                      id={`${ids.timezone}-error`}
-                      className="mt-1 text-xs text-red-600"
-                    >
-                      Choose a timezone from the list, such as Europe/London.
-                    </p>
-                  )}
-                </div>
-              )}
               <AssigneeField
                 assigneeId={assigneeId}
                 // Until the members load, or if they cannot be, the default
@@ -443,7 +392,7 @@ export function IntakeNewRequest({
         >
           <GlassCardUI>
             <div className="divide-y divide-gray-100">
-              <section className="space-y-2 p-5">
+              <section className="space-y-2 px-5 py-4">
                 <label
                   htmlFor={ids.description}
                   className="block text-sm font-medium text-gray-900"
@@ -468,7 +417,7 @@ export function IntakeNewRequest({
                   />
                 </div>
               </section>
-              <section className="space-y-2 p-5">
+              <section className="space-y-2 px-5 py-4">
                 <p
                   id={ids.documents}
                   className="text-sm font-medium text-gray-900"

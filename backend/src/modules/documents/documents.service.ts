@@ -48,6 +48,13 @@ export {
     loadCurrentVersionBytes,
 } from "./documents.trackedEdits";
 
+export {
+    loadOrgDocument,
+    readOrgDocumentText,
+    applyOrgTrackedEdits,
+    type OrgDocument,
+} from "./documents.system";
+
 export { renameDocument } from "./documents.rename";
 export { deleteCollectionDocuments } from "./documents.cleanup";
 

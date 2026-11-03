@@ -115,7 +115,6 @@ test("Legal creates a business request, works it and resolves it exactly once", 
       .fill("Please check the supplier's confidentiality terms.");
     await lawyerA.getByLabel("Target date", { exact: true }).fill("2026-11-10");
     await lawyerA.getByLabel("Target date", { exact: true }).press("Enter");
-    await lawyerA.getByLabel("Timezone").fill("Europe/Stockholm");
     await lawyerA.locator('input[type="file"]').setInputFiles(PDF_FIXTURE);
     await expect(lawyerA.getByText("test.pdf", { exact: true })).toBeVisible();
     await lawyerA.goBack();
@@ -128,7 +127,6 @@ test("Legal creates a business request, works it and resolves it exactly once", 
       "Jane Business",
     );
     await expect(lawyerA.getByText("test.pdf", { exact: true })).toBeVisible();
-    await expect(lawyerA.getByLabel("Timezone")).toHaveValue("Europe/Stockholm");
     // New requests start assigned to their creator.
     await expect(
       lawyerA.getByRole("button", { name: "Reviewer: Intake Lawyer A" }),

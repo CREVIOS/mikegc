@@ -726,7 +726,8 @@ export interface IntakeRequester { name: string; email: string | null }
 export interface IntakeDetails {
   subject: string; description: string;
   requester_name: string; requester_email: string | null; requester_team: string | null;
-  requested_by_date: string | null; timezone: string | null;
+  /** A calendar date, overdue once it has passed where the viewer is. */
+  requested_by_date: string | null;
 }
 /** A queue row. It omits the description, which the queue never shows. */
 export interface IntakeRequestSummary extends Omit<IntakeDetails, "description"> {
@@ -736,10 +737,16 @@ export interface IntakeRequestSummary extends Omit<IntakeDetails, "description">
   capabilities: { assign: boolean; cancel: boolean; delete: boolean };
 }
 export interface IntakeRequestPage { requests: IntakeRequestSummary[]; next_cursor: string | null }
+/** Where a request came from: typed by a member, or recorded by MikeGC. */
+export type IntakeSource = "manual" | "email" | "slack";
 export interface IntakeRequest extends Omit<IntakeRequestSummary, "capabilities">, IntakeDetails {
   org_id: string;
-  /** Null once the creator's account is erased. */
+  /**
+   * Null once the creator's account is erased, and for requests MikeGC
+   * recorded, whose creator reads as "MikeGC".
+   */
   created_by: string | null; created_by_name: string;
+  source: IntakeSource;
   capabilities: {
     edit: boolean; assign: boolean; note: boolean; wait: boolean;
     resume: boolean; resolve: boolean; cancel: boolean; reopen: boolean;
@@ -751,6 +758,8 @@ export interface IntakeRequest extends Omit<IntakeRequestSummary, "capabilities"
 export interface IntakeMessage {
   id: string; kind: "note" | "resolution" | "cancel_reason" | "question" | "reply" | "answer";
   body: string;
+  /** Posted by MikeGC, such as its preprocessing answer; it has no author. */
+  automated?: boolean;
   /** Null once the author's account is erased. */
   author_id: string | null; author_name: string; created_at: string;
 }
@@ -759,6 +768,103 @@ export interface IntakeEvent {
   /** Null for automatic changes, such as unassignment when a member leaves. */
   actor_id: string | null; actor_name: string | null; assignee_name: string | null; created_at: string;
 }
+/**
+ * Automated intake, as an organization's owners and admins see it. Secrets
+ * are write-only: the response says whether they are set, never what they are.
+ */
+export interface IntakeAutomationSettings {
+  email: {
+    enabled: boolean;
+    /** Whether an inbound webhook URL has been generated. */
+    configured: boolean;
+    /** The last characters of the URL's token, to tell URLs apart. */
+    token_hint: string | null;
+    /** Sender domains accepted, such as "example.com"; empty accepts no one. */
+    allowed_domains: string[];
+  };
+  slack: {
+    enabled: boolean;
+    /** The Request URL for the Slack app's Event Subscriptions. */
+    events_url: string;
+    /** Whether a signing secret and bot token are saved. */
+    configured: boolean;
+    /** The Slack workspace and MikeGC bot the saved token belongs to. */
+    team_id: string | null;
+    team_name: string | null;
+    bot_user_id: string | null;
+  };
+  /** The models triage and AI preprocessing run with; neither runs without one. */
+  models: {
+    /** What either can be set to: every catalogued model with a key. */
+    available: string[];
+    /** Triage's model, or null when none is chosen. */
+    triage: string | null;
+    /** Whether triage's model still has a key, so triage runs. */
+    triage_available: boolean;
+    /** AI preprocessing's model, or null when none is chosen. */
+    preprocessing: string | null;
+    /** Whether preprocessing's model still has a key, so it runs. */
+    preprocessing_available: boolean;
+  };
+  /** How triage chooses a reviewer, in the order they are tried. */
+  rules: IntakeAssignmentRule[];
+  /** The most recent messages received, newest first. */
+  recent: IntakeInboundSummary[];
+}
+/** One message received for intake, without its content. */
+export interface IntakeInboundSummary {
+  id: string; source: Exclude<IntakeSource, "manual">;
+  status: "pending" | "done" | "failed" | "ignored";
+  /** Why it was ignored or failed, in words an admin can act on. */
+  error: string | null;
+  request_id: string | null; created_at: string;
+}
+/** A change to automated intake. Omitted fields keep their saved value. */
+export interface IntakeAutomationUpdate {
+  email_enabled?: boolean;
+  email_allowed_domains?: string[];
+  slack_enabled?: boolean;
+  /** Write-only. Saving a bot token checks it with Slack first. */
+  slack_signing_secret?: string;
+  slack_bot_token?: string;
+  /** One of `models.available`, or null to stop triage. */
+  triage_model?: string | null;
+  /** One of `models.available`, or null to stop AI preprocessing. */
+  preprocessing_model?: string | null;
+  /** Replaces every rule, in this order. */
+  rules?: IntakeAssignmentRule[];
+}
+/**
+ * An assignment rule: triage assigns a request to the first rule, in order,
+ * whose condition it meets, and leaves it unassigned when none does.
+ */
+export interface IntakeAssignmentRule {
+  /** In plain words, such as "The request is about an NDA". */
+  condition: string;
+  assignee_id: string;
+  /**
+   * AI preprocessing: MikeGC answers the request in a note and marks up its
+   * Word documents with tracked changes.
+   */
+  preprocess: boolean;
+  /** The workflow or playbook preprocessing follows; null for neither. */
+  preprocess_with: IntakePreprocessRule | null;
+}
+/** A workflow or playbook that preprocessing follows. */
+export interface IntakePreprocessRule {
+  kind: "workflow" | "playbook";
+  id: string;
+  /**
+   * Its name, as whoever is reading can see it; null when they cannot open
+   * it. Ignored when saving.
+   */
+  name?: string | null;
+}
+/**
+ * A newly generated inbound webhook URL for email. It holds a secret token
+ * and is returned only once; generating another replaces it.
+ */
+export interface IntakeEmailWebhook { webhook_url: string; token_hint: string }
 /** A document attached to a request, readable by every organization member. */
 export interface IntakeDocument {
   document_id: string; filename: string; file_type: string | null; size_bytes: number | null;
@@ -768,7 +874,8 @@ export interface IntakeDocument {
 }
 /**
  * Where an organization's requests stand. Counts of open requests are as of
- * now; weeks start on Monday in the viewer's timezone, oldest first.
+ * now; weeks start on Monday in the viewer's timezone, oldest first, and
+ * a request is overdue once its target date has passed there.
  */
 export type IntakeDashboardDays = 7 | 30 | 90 | 365;
 export type IntakeDashboardMedianDays = 30 | 90 | 365;

@@ -1,7 +1,4 @@
-import type {
-  IntakeMessage,
-  IntakeState,
-} from "@mike/contracts";
+import type { IntakeMessage, IntakeState } from "@mike/contracts";
 import { PERSONAL_WORKSPACE } from "@/app/contexts/WorkspaceContext";
 
 /** Stored states keep their original names; these are what Legal sees. */
@@ -46,18 +43,10 @@ export function formatIntakeDate(date: string) {
   });
 }
 
-/** The calendar date it currently is in a timezone, as YYYY-MM-DD. */
-function todayIn(timezone: string, now: Date) {
-  try {
-    return new Intl.DateTimeFormat("en-CA", {
-      timeZone: timezone,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).format(now);
-  } catch {
-    return now.toISOString().slice(0, 10);
-  }
+/** The viewer's calendar date, as YYYY-MM-DD. */
+function localToday(now: Date) {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }
 
 /** What deleting requests takes, and from whom: an organization's members, or only you. */
@@ -68,19 +57,18 @@ export function intakeDeleteMessage(orgId: string, many: boolean) {
     : `${what} for everyone in your organization. This can't be undone.`;
 }
 
-/** An open request is overdue once its target day has passed where it was set. */
+/** An open request is overdue once its target date has passed where the viewer is. */
 export function isIntakeOverdue(
   request: {
     state: IntakeState;
     requested_by_date: string | null;
-    timezone: string | null;
   },
   now = new Date(),
 ) {
   return (
     !!request.requested_by_date &&
     isOpenIntakeState(request.state) &&
-    todayIn(request.timezone ?? "UTC", now) > request.requested_by_date
+    localToday(now) > request.requested_by_date
   );
 }
 
@@ -99,22 +87,4 @@ export function intakeMemberName(member: {
   email: string | null;
 }) {
   return member.display_name ?? member.email ?? "Member";
-}
-
-/** IANA zones the browser knows, for the timezone suggestions list. */
-export function intakeTimezones(): string[] {
-  try {
-    return Intl.supportedValuesOf("timeZone");
-  } catch {
-    return [];
-  }
-}
-
-export function isKnownTimezone(timezone: string) {
-  try {
-    new Intl.DateTimeFormat("en", { timeZone: timezone });
-    return true;
-  } catch {
-    return false;
-  }
 }

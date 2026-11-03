@@ -1,14 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "../../../lib/supabase";
-const { completeText, getUserApiKeys } = vi.hoisted(() => ({
+const { completeText, getUserApiKeys, getEffectiveApiKeys } = vi.hoisted(() => ({
   completeText: vi.fn(),
   getUserApiKeys: vi.fn(),
+  getEffectiveApiKeys: vi.fn(),
 }));
 vi.mock("../../../lib/llm", async (original) => ({
   ...(await original<typeof import("../../../lib/llm")>()),
   completeText,
 }));
-vi.mock("../../user/user.service", () => ({ getUserApiKeys }));
+vi.mock("../../user/user.service", () => ({ getUserApiKeys, getEffectiveApiKeys }));
 const docs = vi.hoisted(() => ({
   applyTrackedEditsToDocument: vi.fn(),
   loadCurrentVersionBytes: vi.fn(),
@@ -326,6 +327,22 @@ describe("playbook access and autosave", () => {
     expect(run?.payload.content_json).toEqual(blankPlaybookContent("Guide"));
     expect(run?.payload).not.toHaveProperty("version_id");
     expect(result).not.toHaveProperty("versionNumber");
+  });
+  it("runs with the keys of the organization a caller names, not the playbook's owner's", async () => {
+    const { db } = database([book()]);
+    getEffectiveApiKeys.mockResolvedValueOnce({ claude: "sk-org" });
+    const result = await reviewWithPlaybook({
+      userId: "owner",
+      playbookId: "book",
+      documentText: "Contract",
+      model: "claude-opus-5",
+      reviewMode: "strict",
+      keysOrgId: "org-1",
+      db,
+    });
+    expect(result.status).toBe("completed");
+    expect(getEffectiveApiKeys).toHaveBeenCalledWith("owner", "org-1", db);
+    expect(completeText.mock.calls.at(-1)![0]).toMatchObject({ apiKeys: { claude: "sk-org" } });
   });
   it("returns a run before the review finishes, and records how it ended", async () => {
     const { db, tables } = database([book()]);

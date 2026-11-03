@@ -134,8 +134,9 @@ describe.skipIf(!url || !key || !anon)(
         { subject: " " },
         { requester_name: "" },
         { requester_email: "not-an-email" },
-        { requested_by_date: "2026-02-30", timezone: "Europe/Stockholm" },
-        { requested_by_date: "2026-10-26", timezone: "invalid" },
+        { requested_by_date: "2026-02-30" },
+        // Requests keep no timezone.
+        { requested_by_date: "2026-10-26", timezone: "Europe/Stockholm" },
         { requester_id: users[0].id },
         { assignee_id: users[5].id },
       ]) {

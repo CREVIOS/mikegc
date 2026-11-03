@@ -51,12 +51,11 @@ const submit = (
     requester = "Jane Business",
     team = "'Procurement'",
     date = "null",
-    timezone = "null",
     assignee = "null",
   } = {},
 ) =>
   `select public.intake_submit_request(${q(10)},${q(actor)},${q(command)},${q(request)},'${subject}','Please review',` +
-  `'${requester}','jane@acme.test',${team},${date},${timezone},${assignee});`;
+  `'${requester}','jane@acme.test',${team},${date},${assignee});`;
 const state = (request = 20) =>
   sql(
     `select state||':'||version||':'||coalesce(assignee_id::text,'-') from public.intake_requests where id=${q(request)}`,
@@ -90,9 +89,11 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
       "create schema auth; create table auth.users(id uuid primary key,email text,raw_user_meta_data jsonb default '{}',created_at timestamptz default now());",
     );
     sql(readFileSync(resolve("schema.sql"), "utf8"));
-    // The tracker migrations are safe to re-run. Those before the type was
-    // removed expect its column, so it comes back for them and goes again.
+    // The tracker migrations are safe to re-run. Those before the type and
+    // the timezone were removed expect their columns, so they come back for
+    // them and go again.
     sql("alter table public.intake_requests add column category text not null default 'general'");
+    sql("alter table public.intake_requests add column timezone text");
     sql(migration("20261030_02_intake_internal_tracker.sql"));
     sql(migration("20261030_02_intake_internal_tracker.sql"));
     sql(migration("20261030_03_intake_attachments.sql"));
@@ -120,6 +121,16 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
     sql(migration("20261101_08_intake_dashboard_periods.sql"));
     sql(migration("20261102_01_intake_resolve_optional_text.sql"));
     sql(migration("20261102_01_intake_resolve_optional_text.sql"));
+    sql(migration("20261102_02_intake_automation.sql"));
+    sql(migration("20261102_02_intake_automation.sql"));
+    sql(migration("20261102_03_intake_assignment_rules.sql"));
+    sql(migration("20261102_03_intake_assignment_rules.sql"));
+    sql(migration("20261102_04_intake_remove_timezone.sql"));
+    sql(migration("20261102_04_intake_remove_timezone.sql"));
+    sql(migration("20261102_05_intake_rule_preprocessing.sql"));
+    sql(migration("20261102_05_intake_rule_preprocessing.sql"));
+    sql(migration("20261103_04_intake_replace_rules.sql"));
+    sql(migration("20261103_04_intake_replace_rules.sql"));
   }, 60000);
   afterAll(() => {
     execFileSync("docker", [
@@ -345,8 +356,8 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
   });
   it("edits open requests with history and validates details", () => {
     sql(submit());
-    const edit = (command: number, version: number, email = "'sam@acme.test'", date = "'2026-12-01'", timezone = "'Europe/London'") =>
-      `select public.intake_edit_request(${q(10)},${q(3)},${q(command)},${q(20)},${version},'Renamed','Updated text','Sam Business',${email},null,${date},${timezone});`;
+    const edit = (command: number, version: number, email = "'sam@acme.test'", date = "'2026-12-01'") =>
+      `select public.intake_edit_request(${q(10)},${q(3)},${q(command)},${q(20)},${version},'Renamed','Updated text','Sam Business',${email},null,${date});`;
     expect(json(edit(101, 1)).applied_version).toBe(2);
     expect(
       json(`select public.intake_get_request(${q(10)},${q(4)},${q(20)});`),
@@ -357,19 +368,37 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
       requester_email: "sam@acme.test",
       requester_team: null,
       requested_by_date: "2026-12-01",
-      timezone: "Europe/London",
     });
+    expect(
+      json(`select public.intake_get_request(${q(10)},${q(4)},${q(20)});`),
+    ).not.toHaveProperty("timezone");
     expect(sql("select kind from public.intake_events order by id desc limit 1")).toBe("edited");
     expect(() => sql(edit(102, 2, "'not an email'"))).toThrow(/22023/);
-    expect(() => sql(edit(103, 2, "null", "'2026-12-01'", "'Mars/Base'"))).toThrow(/22023/);
-    expect(() => sql(edit(104, 2, "null", "'2026-12-01'", "null"))).toThrow(/22023/);
-    sql(cmd("resolve", 3, 105, 2, ",'Done'"));
-    expect(() => sql(edit(106, 3))).toThrow(/P0001/);
+    // A date alone is enough, and clearing it is fine.
+    expect(json(edit(103, 2, "null", "null")).applied_version).toBe(3);
+    sql(cmd("resolve", 3, 105, 3, ",'Done'"));
+    expect(() => sql(edit(106, 4))).toThrow(/P0001/);
+  });
+  it("judges overdue where the viewer is", () => {
+    // Yesterday at UTC+14 is never past at UTC-11, 25 hours behind.
+    sql(submit(100, {
+      date: "((now() at time zone 'Pacific/Kiritimati')::date - 1)",
+    }));
+    const overdue = (zone: string) =>
+      json(`select public.intake_list_requests(${q(10)},${q(2)},p_scope=>'overdue',p_timezone=>'${zone}');`)
+        .requests.length;
+    expect(overdue("Pacific/Kiritimati")).toBe(1);
+    expect(overdue("Pacific/Pago_Pago")).toBe(0);
+    const dashboard = (zone: string) =>
+      json(`select public.intake_dashboard(${q(10)},${q(2)},'${zone}');`).overdue;
+    expect(dashboard("Pacific/Kiritimati")).toBe(1);
+    expect(dashboard("Pacific/Pago_Pago")).toBe(0);
+    expect(() => overdue("Not/AZone")).toThrow(/22023/);
   });
   it("filters, searches and pages the queue without repeating rows", () => {
-    sql(submit(100, { request: 20, subject: "First", date: "'2026-12-10'", timezone: "'UTC'" }));
+    sql(submit(100, { request: 20, subject: "First", date: "'2026-12-10'" }));
     sql(submit(101, { request: 21, subject: "Second", team: "'Marketing'", assignee: q(3) }));
-    sql(submit(102, { request: 22, subject: "Third", date: "'2026-11-05'", timezone: "'UTC'", assignee: q(4) }));
+    sql(submit(102, { request: 22, subject: "Third", date: "'2026-11-05'", assignee: q(4) }));
     const ids = (page: { requests: { id: string }[] }) =>
       page.requests.map((r) => r.id);
     expect(ids(list(2))).toEqual([22, 21, 20].map(uid));
@@ -913,7 +942,7 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
     );
     const own = (actor: number, command: number) =>
       `select public.intake_submit_request('${personal}',${q(actor)},${q(command)},${q(30)},'Lease renewal','Check the break clause',` +
-      `'Me',null,null,null,null,${q(actor)});`;
+      `'Me',null,null,null,${q(actor)});`;
     expect(json(own(2, 200)).applied_version).toBe(1);
     expect(
       json(`select public.intake_list_requests('${personal}',${q(2)});`).requests,
@@ -933,7 +962,7 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
     ).toEqual([]);
   });
   it("summarizes where requests stand for the dashboard", () => {
-    sql(submit(100, { date: "'2020-01-01'", timezone: "'UTC'" }));
+    sql(submit(100, { date: "'2020-01-01'" }));
     sql(submit(101, { request: 21, subject: "Second", assignee: `${q(3)}` }));
     sql(submit(102, { request: 22, subject: "Third", assignee: `${q(3)}` }));
     sql(cmd("wait", 3, 103, 1, ",'Asked Jane'", 22));
@@ -1002,6 +1031,7 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
   it("backfills legacy requests from their creator's profile", () => {
     // Shape of a request recorded before the tracker migration.
     sql(`alter table public.intake_requests add column category text not null default 'general';
+      alter table public.intake_requests add column timezone text;
       alter table public.intake_requests drop constraint intake_requests_requester_check;
       alter table public.intake_requests alter column requester_name drop not null;
       insert into public.intake_settings(org_id) values(${q(10)});
@@ -1012,6 +1042,9 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
     sql(migration("20261101_04_intake_list_scopes.sql"));
     sql(migration("20261101_05_intake_requester_filter.sql"));
     sql(migration("20261101_06_intake_member_photos.sql"));
+    sql(migration("20261102_02_intake_automation.sql"));
+    sql(migration("20261102_04_intake_remove_timezone.sql"));
+    sql(migration("20261102_05_intake_rule_preprocessing.sql"));
     const profile = sql(
       `select coalesce(nullif(btrim(display_name),''),email) from public.user_profiles where user_id=${q(2)}`,
     );
@@ -1023,5 +1056,211 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
       { created_by: uid(2), name: profile, email: "person2@example.test" },
       { created_by: null, name: "Former member", email: null },
     ]);
+  });
+  // A message received for intake, before MikeGC records it.
+  const inbound = (id = 70, source = "email", org = 10) =>
+    sql(`insert into public.intake_inbound(id,org_id,source,external_id,payload)
+      values(${q(id)},${q(org)},'${source}','message-${id}','{"text":"Please review"}')`);
+  const automated = (message = 70, request = 21, reviewer = "null") =>
+    `select public.intake_submit_automated(${q(10)},${q(message)},${q(request)},'Supplier NDA','Summary',` +
+    `'Jane Business','jane@acme.test',null,${reviewer});`;
+  it("records MikeGC's request from a received message once, as no member", () => {
+    inbound();
+    expect(sql(automated(70, 21, q(3)))).toBe(uid(21));
+    // The same message handled again returns the request it already made.
+    expect(sql(automated(70, 22, q(3)))).toBe(uid(21));
+    expect(sql("select count(*) from public.intake_requests")).toBe("1");
+    expect(
+      json(`select public.intake_get_request(${q(10)},${q(2)},${q(21)});`),
+    ).toMatchObject({
+      created_by: null,
+      created_by_name: "MikeGC",
+      source: "email",
+      state: "in_review",
+      assignee_id: uid(3),
+    });
+    expect(
+      json(`select public.intake_read_history(${q(10)},${q(2)},${q(21)},true);`),
+    ).toMatchObject([
+      {
+        kind: "submitted",
+        actor_id: null,
+        actor_name: "MikeGC",
+        assignee_name: "person3@example.test",
+      },
+    ]);
+    expect(
+      sql(`select request_id from public.intake_inbound where id=${q(70)}`),
+    ).toBe(uid(21));
+    // A member's request still names its creator and source.
+    sql(submit());
+    expect(
+      json(`select public.intake_get_request(${q(10)},${q(2)},${q(20)});`),
+    ).toMatchObject({ created_by_name: "person2@example.test", source: "manual" });
+  });
+  it("leaves MikeGC's request unassigned when its reviewer is not a member", () => {
+    inbound();
+    sql(automated(70, 21, q(6)));
+    expect(state(21)).toBe("submitted:1:-");
+  });
+  it("refuses another organization's message and invalid details", () => {
+    inbound(71, "slack", 11);
+    expect(() => sql(automated(71))).toThrow(/P0002/);
+    inbound(72);
+    expect(() =>
+      sql(
+        `select public.intake_submit_automated(${q(10)},${q(72)},${q(23)},' ','Summary','Jane',null,null,null);`,
+      ),
+    ).toThrow(/22023/);
+    expect(sql("select count(*) from public.intake_requests")).toBe("0");
+  });
+  it("attaches MikeGC's documents as the organization's, with no uploader", () => {
+    inbound();
+    sql(automated());
+    sql(`insert into public.documents(id,org_id,user_id,library_kind,status)
+      values(${q(60)},${q(10)},null,'intake_attachment','ready')`);
+    const attachAutomated = (document: number) =>
+      `select public.intake_attach_automated(${q(10)},${q(21)},${q(document)});`;
+    sql(attachAutomated(60));
+    sql(attachAutomated(60));
+    expect(
+      json(`select public.intake_list_documents(${q(10)},${q(3)},${q(21)});`),
+    ).toMatchObject([{ document_id: uid(60), added_by_name: "MikeGC" }]);
+    expect(readable(60, 4)).toBe("t");
+    expect(readable(60, 6)).toBe("f");
+    // A member's upload is linked by the member, never as MikeGC's.
+    upload(61);
+    expect(() => sql(attachAutomated(61))).toThrow(/P0002/);
+  });
+  it("deletes received messages with the organization's intake data, and their staged files", () => {
+    inbound();
+    sql(automated());
+    inbound(73, "slack");
+    // An email still waiting, with an attachment staged in storage.
+    sql(`insert into public.intake_inbound(id,org_id,source,external_id,payload)
+      values(${q(74)},${q(10)},'email','message-74',
+        '{"kind":"email","attachments":[{"key":"intake-inbound/org/74/0"},{"key":""}]}')`);
+    sql(`select public.intake_purge(${q(10)},${q(1)})`);
+    expect(sql("select count(*) from public.intake_inbound")).toBe("0");
+    expect(
+      sql("select payload->'keys' from public.db_jobs where kind='storage.cleanup'"),
+    ).toBe('["intake-inbound/org/74/0"]');
+    // An organization's purge cascades to its messages the same way.
+    sql(`insert into public.intake_inbound(id,org_id,source,external_id,payload)
+      values(${q(75)},${q(11)},'email','message-75',
+        '{"kind":"email","attachments":[{"key":"intake-inbound/other/75/0"}]}')`);
+    sql(`delete from public.organizations where id=${q(11)}`);
+    expect(
+      sql("select count(*) from public.db_jobs where kind='storage.cleanup' and payload->'keys' ? 'intake-inbound/other/75/0'"),
+    ).toBe("1");
+  });
+  it("keeps automation settings and messages from browser roles", () => {
+    for (const role of ["anon", "authenticated"]) {
+      for (const table of [
+        "intake_automation",
+        "intake_assignment_rules",
+        "intake_inbound",
+      ])
+        expect(
+          sql(`select has_table_privilege('${role}','public.${table}','SELECT')`),
+        ).toBe("f");
+      expect(
+        sql(
+          `select has_function_privilege('${role}','public.intake_submit_automated(uuid,uuid,uuid,text,text,text,text,date,uuid)','EXECUTE')`,
+        ),
+      ).toBe("f");
+      expect(
+        sql(
+          `select has_function_privilege('${role}','public.intake_attach_automated(uuid,uuid,uuid)','EXECUTE')`,
+        ),
+      ).toBe("f");
+    }
+  });
+  it("carries each member's note of what they handle over as a rule", () => {
+    // The table the rules replace, as an upgraded database still has it,
+    // from when requests still had a timezone.
+    sql("alter table public.intake_requests add column timezone text");
+    sql(migration("20261102_02_intake_automation.sql"));
+    sql(`insert into public.intake_member_focus(org_id,user_id,focus,updated_at)
+      values(${q(10)},${q(3)},'Employment','2026-11-02T10:00:00Z'),
+            (${q(10)},${q(2)},'NDAs and procurement contracts','2026-11-02T09:00:00Z')`);
+    sql(migration("20261102_03_intake_assignment_rules.sql"));
+    sql(migration("20261102_04_intake_remove_timezone.sql"));
+    sql(migration("20261102_05_intake_rule_preprocessing.sql"));
+    expect(
+      json(`select jsonb_agg(jsonb_build_object('position',position,'condition',condition,'assignee',assignee_id) order by position)
+        from public.intake_assignment_rules where org_id=${q(10)}`),
+    ).toEqual([
+      { position: 0, condition: "NDAs and procurement contracts", assignee: uid(2) },
+      { position: 1, condition: "Employment", assignee: uid(3) },
+    ]);
+    expect(sql("select to_regclass('public.intake_member_focus') is null")).toBe("t");
+    sql(`delete from public.intake_assignment_rules where org_id=${q(10)}`);
+  });
+  it("posts MikeGC's notes once, as MikeGC", () => {
+    inbound();
+    sql(automated(70, 21));
+    const post = (body: string) =>
+      sql(`select public.intake_note_automated(${q(10)},${q(21)},${q(80)},'${body}');`);
+    expect(post("AI preprocessing\n\nLooks fine.")).toBe("t");
+    expect(post("Posted again")).toBe("f");
+    expect(
+      json(`select public.intake_read_history(${q(10)},${q(2)},${q(21)});`),
+    ).toEqual([
+      expect.objectContaining({
+        id: uid(80),
+        kind: "note",
+        author_id: null,
+        author_name: "MikeGC",
+        automated: true,
+        body: "AI preprocessing\n\nLooks fine.",
+      }),
+    ]);
+    expect(() =>
+      sql(`select public.intake_note_automated(${q(10)},${q(99)},${q(81)},'Lost');`),
+    ).toThrow(/P0002/);
+    expect(() =>
+      sql(`select public.intake_note_automated(${q(10)},${q(21)},${q(82)},' ');`),
+    ).toThrow(/22023/);
+  });
+  it("keeps a rule's preprocessing reference whole", () => {
+    const add = (kind: string, ref: string) =>
+      sql(`insert into public.intake_assignment_rules(org_id,position,condition,assignee_id,preprocess,preprocess_kind,preprocess_ref)
+        values(${q(10)},0,'NDAs',${q(3)},true,${kind},${ref})`);
+    add("'playbook'", "'pb-1'");
+    add("null", "null");
+    expect(() => add("'playbook'", "null")).toThrow(/23514/);
+    expect(() => add("'macro'", "'m-1'")).toThrow(/23514/);
+    sql(`delete from public.intake_assignment_rules where org_id=${q(10)}`);
+  });
+  it("replaces an organization's rules in one transaction, keeping them when the new ones are refused", () => {
+    sql(`insert into public.intake_automation(org_id) values(${q(10)}) on conflict do nothing`);
+    const replace = (rules: unknown[]) =>
+      sql(`select public.intake_replace_rules(${q(10)}, '${JSON.stringify(rules)}'::jsonb)`);
+    replace([
+      { condition: "NDAs", assignee_id: uid(2), preprocess: true, preprocess_kind: "playbook", preprocess_ref: "pb-1" },
+      { condition: "Employment", assignee_id: uid(3), preprocess: false, preprocess_kind: null, preprocess_ref: null },
+    ]);
+    const saved = () =>
+      json(`select jsonb_agg(jsonb_build_object('position',position,'condition',condition,'kind',preprocess_kind) order by position)
+        from public.intake_assignment_rules where org_id=${q(10)}`);
+    expect(saved()).toEqual([
+      { position: 0, condition: "NDAs", kind: "playbook" },
+      { position: 1, condition: "Employment", kind: null },
+    ]);
+    // A rule the table refuses rolls back the deletion too.
+    expect(() =>
+      replace([{ condition: "Disputes", assignee_id: uid(2), preprocess: true, preprocess_kind: "macro", preprocess_ref: "m-1" }]),
+    ).toThrow(/23514/);
+    expect(saved()).toHaveLength(2);
+    expect(() => sql(`select public.intake_replace_rules(${q(99)}, '[]'::jsonb)`)).toThrow(/P0002/);
+    replace([]);
+    expect(sql(`select count(*) from public.intake_assignment_rules where org_id=${q(10)}`)).toBe("0");
+  });
+  it("forgets a member's rules once they leave", () => {
+    sql(`insert into public.intake_assignment_rules(org_id,position,condition,assignee_id)
+      values(${q(10)},0,'The request is about an NDA',${q(3)})`);
+    sql(`delete from public.org_members where org_id=${q(10)} and user_id=${q(3)}`);
+    expect(sql("select count(*) from public.intake_assignment_rules")).toBe("0");
   });
 });

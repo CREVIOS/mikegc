@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_INTAKE_FILTERS,
   intakeFiltersQuery,
+  intakeRequestHref,
   intakeRequestsHref,
   parseIntakeFilters,
 } from "./intakeQuery";
@@ -67,5 +68,16 @@ describe("intake page URLs", () => {
     expect(
       parseIntakeFilters(new URLSearchParams(href.split("?")[1])).status,
     ).toBe("in_review");
+  });
+});
+
+describe("intakeRequestHref", () => {
+  it("opens one request in its own workspace", () => {
+    expect(intakeRequestHref("org-a", "request-a")).toBe(
+      "/intake/request-a?org=org-a",
+    );
+    expect(intakeRequestHref("personal", "a/b")).toBe(
+      "/intake/a%2Fb?org=personal",
+    );
   });
 });
