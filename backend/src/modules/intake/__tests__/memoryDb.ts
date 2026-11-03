@@ -206,6 +206,10 @@ export function memoryDb(
       delete: () => ((op = "delete"), builder),
       eq: (c: string, v: unknown) => (filters.push((r) => r[c] === v), builder),
       neq: (c: string, v: unknown) => (filters.push((r) => r[c] !== v), builder),
+      // Timestamps are ISO strings here, which compare in time order.
+      lt: (c: string, v: unknown) => (
+        filters.push((r) => r[c] !== null && r[c] !== undefined && String(r[c]) < String(v)), builder
+      ),
       in: (c: string, v: unknown[]) => (filters.push((r) => v.includes(r[c])), builder),
       is: (c: string, v: unknown) => (filters.push((r) => (r[c] ?? null) === v), builder),
       not: (c: string, operator: string, v: unknown) => {

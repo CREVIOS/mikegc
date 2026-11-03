@@ -403,6 +403,28 @@ describe("recording an email", () => {
     // A third run finds nothing to do.
     await expect(handleIntakeInbound(memory.db, job())).resolves.toEqual({ skipped: "done" });
   });
+  it("keeps a document an earlier attempt finished when a retry runs again", async () => {
+    setup({ payload: emailPayload(), model: false });
+    const made = mocks.createDocumentVersion.getMockImplementation()!;
+    mocks.createDocumentVersion
+      .mockImplementationOnce(made)
+      .mockRejectedValueOnce(new Error("storage hiccup"));
+    await expect(handleIntakeInbound(memory.db, job())).rejects.toThrow("storage hiccup");
+    const planned = (row().payload as { documents: Record<string, { document_id: string; done: boolean }> }).documents;
+    const first = planned["0"]!.document_id;
+    expect(memory.rows("documents").find((d) => d.id === first)).toMatchObject({ status: "ready" });
+    // As if the job stopped after the first document was finished but
+    // before it was marked done: the retry neither remakes nor removes it.
+    planned["0"]!.done = false;
+    const uploads = mocks.uploadFile.mock.calls.length;
+    mocks.deleteFileBestEffort.mockClear();
+    await handleIntakeInbound(memory.db, job());
+    expect(memory.rows("documents").find((d) => d.id === first)).toMatchObject({ status: "ready" });
+    expect(mocks.uploadFile.mock.calls.length).toBe(uploads + 1);
+    expect(mocks.deleteFileBestEffort).not.toHaveBeenCalled();
+    expect(memory.rows("documents")).toHaveLength(2);
+    expect(row()).toMatchObject({ status: "done" });
+  });
   it("keeps a request deleted after it was recorded deleted when the job retries", async () => {
     setup({ payload: emailPayload(), model: false });
     mocks.createDocumentVersion.mockRejectedValueOnce(new Error("storage hiccup"));

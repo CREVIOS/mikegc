@@ -12184,6 +12184,8 @@ create index if not exists intake_outbound_request on public.intake_outbound(req
 create index if not exists intake_outbound_message on public.intake_outbound(message_id) where message_id is not null;
 create index if not exists intake_outbound_link on public.intake_outbound(link_id);
 create index if not exists intake_outbound_author on public.intake_outbound(author_id) where author_id is not null;
+-- The stale-work sweep finds messages left pending without a job.
+create index if not exists intake_outbound_pending on public.intake_outbound(created_at) where status = 'pending';
 -- A request is acknowledged once.
 create unique index if not exists intake_outbound_acknowledgement
   on public.intake_outbound(request_id) where kind = 'acknowledgement';
@@ -12360,7 +12362,7 @@ begin
       insert into public.intake_events(org_id, request_id, actor_id, kind, from_state, to_state, assignee_id, automated)
         values(p_org, r.id, null, 'resume', r.state, next_state, r.assignee_id, true);
     end if;
-    update public.intake_requests set state = next_state, last_reply_at = now(), updated_at = now(),
+    update public.intake_requests set state = next_state, last_reply_at = clock_timestamp(), updated_at = now(),
       version = version + case when next_state <> r.state then 1 else 0 end
       where id = r.id
       returning * into r;

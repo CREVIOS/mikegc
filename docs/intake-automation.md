@@ -574,7 +574,8 @@ encrypted with `MCP_CONNECTORS_ENCRYPTION_SECRET` (or
 Framework token checks) and `nodemailer` (Gmail MIME building only, never
 SMTP) dependencies. New jobs `intake.reply`, `intake.deliver` and
 `intake.mailbox.poll` run on the existing job runner; the maintenance sweep
-restarts a connected mailbox's poll job if it ever stops.
+restarts a connected mailbox's poll job if it ever stops, and queues again a
+message to a requester left pending for 15 minutes without a job.
 
 Webhook deliveries have their own rate limit, 120 a minute per sending
 address, which `RATE_LIMIT_WEBHOOK_MAX` and

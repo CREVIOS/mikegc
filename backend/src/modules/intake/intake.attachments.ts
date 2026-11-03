@@ -138,6 +138,16 @@ export async function addDocument(
     if (attached.kind === "error") throw attached.error;
     throw new IntakeAutomationError(RECORDED_INCOMPLETE);
   }
+  if (!created) {
+    // An earlier attempt that finished the document before it stopped.
+    const { data: existing, error: existingError } = await db
+      .from("documents")
+      .select("status")
+      .eq("id", documentId)
+      .maybeSingle();
+    if (existingError) throw existingError;
+    if ((existing as { status?: string } | null)?.status === "ready") return true;
+  }
   const key = storageKey(ownerSegment(orgId), documentId, args.name);
   try {
     await uploadFile(key, args.bytes, contentTypeForDocumentType(args.fileType));
@@ -162,10 +172,13 @@ export async function addDocument(
       .eq("id", documentId);
     if (readyError) throw readyError;
   } catch (error) {
-    await Promise.all([
-      deleteFileBestEffort(key, "intake-automation-rollback"),
-      db.from("documents").delete().eq("id", documentId),
-    ]);
+    // Only this attempt's own new document is removed; one an earlier
+    // attempt made, and its request link, stay for the next retry.
+    if (created)
+      await Promise.all([
+        deleteFileBestEffort(key, "intake-automation-rollback"),
+        db.from("documents").delete().eq("id", documentId),
+      ]);
     throw error;
   }
   if (shouldConvertToPdf(args.fileType)) {

@@ -127,6 +127,30 @@ describe("recording email from the intake mailbox", () => {
     expect(await recordMail(memory.db, settings(), mail())).toBe("duplicate");
     expect(kinds()).toHaveLength(2);
   });
+  it("queues mail another poll stored first, in case that poll stopped before queueing it", async () => {
+    // Between this poll's lookup and its insert, another poll stores the
+    // same mail and stops before queueing it.
+    const db = Object.assign(Object.create(memory.db), {
+      from: (name: string) => {
+        const query = memory.db.from(name);
+        if (name !== "intake_inbound") return query;
+        const insert = query.insert.bind(query);
+        return Object.assign(query, {
+          insert: (values: { external_id: string }) => {
+            if (!inbound().length)
+              inbound().push({ id: "other-poll", org_id: org, source: "gmail", kind: "request", external_id: values.external_id, status: "pending", payload: {} });
+            return insert(values);
+          },
+        });
+      },
+    }) as typeof memory.db;
+    expect(await recordMail(db, settings(), mail())).toBe("duplicate");
+    expect(inbound()).toHaveLength(1);
+    expect(mocks.enqueueDbJob).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ kind: "intake.inbound", dedupeKey: "intake.inbound:other-poll" }),
+    );
+  });
   it("ignores automatic mail, mail not to the intake address, other domains and an unauthenticated sender", async () => {
     const cases: [Partial<ReadMail>, RegExp][] = [
       [{ headers: [{ name: "Auto-Submitted", value: "auto-replied" }] }, /automatic reply/],

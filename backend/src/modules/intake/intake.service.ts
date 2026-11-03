@@ -48,7 +48,11 @@ export {
   markIntakePreprocessFailed,
 } from "./intake.preprocess";
 export { handleIntakeReply, markIntakeReplyFailed } from "./intake.reply";
-export { handleIntakeDeliver, markIntakeDeliverFailed } from "./intake.deliver";
+export {
+  handleIntakeDeliver,
+  markIntakeDeliverFailed,
+  requeueStalledIntakeDeliveries,
+} from "./intake.deliver";
 export {
   handleIntakeMailboxPoll,
   ensureIntakeMailboxPolls,

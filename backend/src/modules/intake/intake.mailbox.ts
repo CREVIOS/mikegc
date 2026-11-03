@@ -117,26 +117,31 @@ export async function recordMail(
   const source = mailSource(mail.provider);
   const externalId =
     normalizeMessageId(mail.internetMessageId) ?? `${mail.provider}:${mail.providerId}`;
-  const { data: seen, error: seenError } = await db
-    .from("intake_inbound")
-    .select("id, status, kind")
-    .eq("org_id", settings.org_id)
-    .eq("source", source)
-    .eq("external_id", externalId)
-    .maybeSingle();
-  if (seenError) throw seenError;
-  if (seen) {
-    // Read again while still waiting, as when its job couldn't be queued
-    // the first time: queue it again (deduplicated while one is live).
-    const row = seen as { id: string; status: string; kind: string };
-    if (row.status === "pending")
+  type Seen = { id: string; status: string; kind: string };
+  const lookup = async (): Promise<Seen | null> => {
+    const { data, error } = await db
+      .from("intake_inbound")
+      .select("id, status, kind")
+      .eq("org_id", settings.org_id)
+      .eq("source", source)
+      .eq("external_id", externalId)
+      .maybeSingle();
+    if (error) throw error;
+    return data as Seen | null;
+  };
+  // Read again, or stored first by another poll: one still waiting is queued
+  // again, in case its job never was (deduplicated while one is live).
+  const requeue = async (row: Seen | null): Promise<MailReceipt> => {
+    if (row?.status === "pending")
       await (row.kind === "reply" ? dispatchIntakeReply : dispatchIntakeInbound)(
         db,
         settings.org_id,
         row.id,
       );
     return "duplicate";
-  }
+  };
+  const seen = await lookup();
+  if (seen) return requeue(seen);
   const ignored = async (reason: string): Promise<MailReceipt> => {
     const stored = await insertInbound(db, {
       org_id: settings.org_id,
@@ -198,6 +203,7 @@ export async function recordMail(
     if (!routed.ok || routed.data === "duplicate")
       await discardStaged(staged.attachments.map((a) => a.key));
     if (!routed.ok) throw failureError(routed);
+    if (routed.data === "duplicate") return requeue(await lookup());
     if (routed.data === "received") await markRecorded(settings, mail);
     return routed.data;
   }
@@ -236,7 +242,7 @@ export async function recordMail(
   if (!stored.ok || stored.data === null)
     await discardStaged(staged.attachments.map((a) => a.key));
   if (!stored.ok) throw failureError(stored);
-  if (stored.data === null) return "duplicate";
+  if (stored.data === null) return requeue(await lookup());
   await dispatchIntakeInbound(db, settings.org_id, stored.data);
   await markRecorded(settings, mail);
   return "received";

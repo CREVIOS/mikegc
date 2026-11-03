@@ -17,6 +17,7 @@ import {
   dispatchIntakeDeliverOrFail,
   handleIntakeDeliver,
   markIntakeDeliverFailed,
+  requeueStalledIntakeDeliveries,
 } from "../intake.deliver";
 
 const org = "00000000-0000-4000-8000-000000000001";
@@ -242,6 +243,42 @@ describe("sending a message to the requester", () => {
       memory.db,
       expect.objectContaining({ kind: "intake.deliver", dedupeKey: `intake.deliver:${outboundId}` }),
     );
+  });
+  it("leaves a message it couldn't queue or mark failed for the stale-work sweep", async () => {
+    setup();
+    process.env.DB_JOBS_ENABLED = "true";
+    mocks.enqueueDbJob.mockRejectedValueOnce(new Error("connection reset"));
+    const rpc = vi
+      .spyOn(memory.db, "rpc")
+      .mockResolvedValueOnce({ data: null, error: { code: "08006", message: "connection lost" } } as never);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await expect(dispatchIntakeDeliverOrFail(memory.db, org, outboundId)).rejects.toThrow("connection reset");
+    expect(rpc).toHaveBeenCalledWith("intake_record_delivery", expect.objectContaining({ p_status: "failed" }));
+    rpc.mockRestore();
+    // The mark's failure is said, not swallowed, and the row stays pending.
+    expect(warn).toHaveBeenCalledWith("[intake-deliver] unqueued message not marked failed", expect.anything());
+    warn.mockRestore();
+    expect(outbox()).toMatchObject({ status: "pending" });
+  });
+  it("queues again messages left pending without a job, and only those", async () => {
+    setup();
+    process.env.DB_JOBS_ENABLED = "true";
+    const old = new Date(Date.now() - 60 * 60_000).toISOString();
+    outbox().created_at = old;
+    memory.rows("intake_outbound").push(
+      { ...outbox(), id: "recent", created_at: new Date().toISOString() },
+      { ...outbox(), id: "sent", status: "sent", created_at: old },
+    );
+    mocks.enqueueDbJob.mockResolvedValue({ id: "job-3", deduped: false });
+    expect(await requeueStalledIntakeDeliveries(memory.db)).toBe(1);
+    expect(mocks.enqueueDbJob).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueueDbJob).toHaveBeenCalledWith(
+      memory.db,
+      expect.objectContaining({ kind: "intake.deliver", dedupeKey: `intake.deliver:${outboundId}` }),
+    );
+    // Without the job queue a delivery may be running inline, so none is started.
+    process.env.DB_JOBS_ENABLED = "false";
+    expect(await requeueStalledIntakeDeliveries(memory.db)).toBe(0);
   });
   it("posts nothing on a retry it can't tell landed, and says to check the thread", async () => {
     setup();

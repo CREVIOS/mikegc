@@ -44,6 +44,8 @@ import {
   handleIntakePreprocess,
   markIntakePreprocessFailed,
   preprocessNoteId,
+  playbookContext,
+  promptThread,
   queueIntakePreprocess,
 } from "../intake.preprocess";
 
@@ -429,5 +431,30 @@ describe("checking what preprocessing needs first", () => {
     // Stopped before asking anything: no check, straight to preprocessing.
     expect(mocks.completeText).toHaveBeenCalledTimes(1);
     expect(memory.rows("intake_messages").filter((m) => m.kind === "question")).toEqual([]);
+  });
+});
+
+describe("what preprocessing reads of a long thread", () => {
+  const entry = (n: number) => `Jane Business, 3 Nov 2026 10:${String(n % 60).padStart(2, "0")} UTC:\nReply ${n}. ${"x".repeat(200)}`;
+  const thread = Array.from({ length: 200 }, (_, i) => entry(i)).join("\n\n");
+  it("gives an answer the newest 30,000 characters of the thread", () => {
+    const read = promptThread(thread);
+    expect(read.length).toBeLessThanOrEqual(30_000);
+    expect(read.startsWith("…")).toBe(true);
+    expect(read.endsWith(entry(199))).toBe(true);
+    expect(promptThread("Short.")).toBe("Short.");
+  });
+  it("keeps a playbook the subject and opening, trimming the oldest thread first", () => {
+    const description = `Please review the NDA with Acme. ${"Background. ".repeat(400)}`;
+    const context = playbookContext({ subject: "Acme NDA", description, thread });
+    expect(context.length).toBeLessThanOrEqual(3_900);
+    expect(context.startsWith("Subject: Acme NDA\n\nPlease review the NDA with Acme.")).toBe(true);
+    expect(context).toContain("--- Thread with the requester ---\n…");
+    expect(context.endsWith(entry(199))).toBe(true);
+    // A short request is read whole.
+    expect(playbookContext({ subject: "S", description: "D", thread: "" })).toBe("Subject: S\n\nD");
+    expect(playbookContext({ subject: "S", description: "D", thread: "T" })).toBe(
+      "Subject: S\n\nD\n\n--- Thread with the requester ---\nT",
+    );
   });
 });

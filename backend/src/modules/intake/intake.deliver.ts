@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { NonRetryableJobError } from "../../lib/dbq/runner";
+import { dbJobsEnabled, NonRetryableJobError } from "../../lib/dbq/runner";
 import type { DbJob } from "../../lib/dbq/types";
 import { isPersonalOrg } from "../../lib/personalOrgs";
 import { configuredFrontendUrl } from "../../lib/runtimeConfig";
@@ -302,16 +302,47 @@ export async function dispatchIntakeDeliverOrFail(
   try {
     await dispatchIntakeDeliver(db, orgId, outboundId);
   } catch (error) {
-    await intakeRpc<boolean>(db, "intake_record_delivery", {
-      p_org: orgId,
-      p_outbound: outboundId,
-      p_status: "failed",
-      p_external_id: null,
-      p_error: "MikeGC couldn't queue this message. Try again.",
-      p_documents: null,
-    }).catch(() => undefined);
+    try {
+      const marked = await intakeRpc<boolean>(db, "intake_record_delivery", {
+        p_org: orgId,
+        p_outbound: outboundId,
+        p_status: "failed",
+        p_external_id: null,
+        p_error: "MikeGC couldn't queue this message. Try again.",
+        p_documents: null,
+      });
+      if (!marked.ok) throw marked.kind === "error" ? marked.error : new Error(marked.kind);
+    } catch (markError) {
+      // Left pending: the stale-work sweep queues it again.
+      console.warn("[intake-deliver] unqueued message not marked failed", safeError(markError));
+    }
     throw error;
   }
+}
+
+/** A message pending this long is queued again, in case it never was. */
+const STALLED_DELIVERY_MS = 15 * 60_000;
+
+/**
+ * Queue again the messages left pending without a job: queueing failed and
+ * so did marking them failed, or the process stopped in between. A message
+ * whose job is still live is deduplicated by its key, so nothing goes twice.
+ * Without the job queue there is nothing to lose a job from, and a delivery
+ * running inline must not be started again, so the sweep does nothing.
+ */
+export async function requeueStalledIntakeDeliveries(db: Db): Promise<number> {
+  if (!dbJobsEnabled()) return 0;
+  const { data, error } = await db
+    .from("intake_outbound")
+    .select("id, org_id")
+    .eq("status", "pending")
+    .lt("created_at", new Date(Date.now() - STALLED_DELIVERY_MS).toISOString())
+    .order("created_at", { ascending: true })
+    .limit(100);
+  if (error) throw error;
+  const rows = (data ?? []) as { id: string; org_id: string }[];
+  for (const row of rows) await dispatchIntakeDeliver(db, row.org_id, row.id);
+  return rows.length;
 }
 
 /** Queue an outbox row's delivery. */
