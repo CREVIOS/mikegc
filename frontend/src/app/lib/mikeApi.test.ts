@@ -3739,6 +3739,20 @@ describe("intake API boundary", () => {
         fetchMock.mockImplementation(async () => jsonResponse({ detail: "Only owners and admins can change automated intake." }, { status: 403 }));
         await expect(getIntakeAutomation("org-1")).rejects.toMatchObject({ status: 403 });
     });
+    it("lists requests without a timezone when the browser can't name one", async () => {
+        const zone = vi.spyOn(Intl, "DateTimeFormat").mockImplementation(() => {
+            throw new RangeError("no time zone data");
+        });
+        try {
+            fetchMock.mockImplementation(async () => jsonResponse({ requests: [], next_cursor: null }));
+            await listIntakeRequests("org-1");
+            expect(lastFetchCall().url).toBe("/api/intake/org-1/requests");
+            await listIntakeRequests("org-1", { state: "in_review" });
+            expect(lastFetchCall().url).toBe("/api/intake/org-1/requests?state=in_review");
+        } finally {
+            zone.mockRestore();
+        }
+    });
     it("copies more documents than one call takes in order, 20 at a time", async () => {
         const listed = [{ document_id: "copy-45" }];
         fetchMock.mockImplementation(async () => jsonResponse(listed));
