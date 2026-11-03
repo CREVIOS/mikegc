@@ -1,18 +1,24 @@
 # Automated intake
 
 MikeGC can record intake requests itself, so a lawyer doesn't have to retype
-what arrived. It reads two channels:
+what arrived, and holds a conversation with the requester in the thread the
+request came from (see [The requester loop](#the-requester-loop)). It reads
+three kinds of channel:
 
-- **Email.** Mail sent to a shared address, such as
-  `legal-intake@example.com`, is forwarded to
-  [Postmark](https://postmarkapp.com/)'s inbound processing, which posts each
-  message to MikeGC.
+- **Email (Outlook or Gmail).** Company users email a designated intake
+  address, such as `intake@example.com`. MikeGC connects to that mailbox
+  itself, through Microsoft Graph for Microsoft 365 or the Gmail API for
+  Google Workspace, reads new mail from it and replies as it, so replies
+  thread natively and land in the mailbox's Sent folder.
 - **Slack.** Anyone in the organization's Slack workspace mentions `@MikeGC`
   in a channel MikeGC has been added to. A top-level message becomes the
   request, and its author is the requester. A mention in a thread sends the
   whole thread, up to the mention, and the thread's first author is the
-  requester. MikeGC replies in the thread with a link to the request and who
-  it went to.
+  requester.
+- **Microsoft Teams.** Anyone mentions `@MikeGC` in a channel of a team the
+  organization's own MikeGC bot has been added to, the same way as in Slack.
+
+MikeGC answers in the thread with a link to the request and who it went to.
 
 Each message becomes a **New** or **In progress** request in the
 organization's queue, created by **MikeGC**: MikeGC is not an account, so the
@@ -22,14 +28,20 @@ Slack").
 
 An organization's owners and admins set this up in the **Intake** section of
 the organization's settings (`/organizations/<id>/settings/intake`, also
-reached from the settings icon in Intake's header), with Email, Slack and
-**Triage rules** one after another. The models triage and preprocessing run
+reached from the settings icon in Intake's header), with Email, Slack, Teams
+and **Triage rules** one after another. The models triage and preprocessing run
 with are chosen in the organization's **Model Preferences** tab
-(`/organizations/<id>/settings/models`), also for owners and admins. A channel's setup shows while it is on, and the info button beside its
-heading shows how to set it up. Changes save by themselves: switches and lists
-at once, text when typing pauses, and the Slack secrets once entered in full.
-A channel turned on starts once it is set up: email once its webhook URL
-exists, Slack once both its secrets are saved. Who each request goes to, and
+(`/organizations/<id>/settings/models`), also for owners and admins. Each
+channel is a card that says whether it is set up and what needs attention, with
+one button: **Set up** before the channel is configured, **Manage** after. The
+button opens a dialog with everything for that channel: its switch, its IDs and
+secrets (write-only, never shown again), the URL to give Slack, Teams or
+Microsoft, notices about missing permissions, and the setup steps. Details and
+secrets are saved with the dialog's button; closing it without saving discards
+them. Triage rules save by themselves as before.
+A channel turned on starts once it is set up: email once its mailbox is
+connected, Slack once both its secrets are saved, Teams once its app ID,
+tenant ID and secret are saved and Microsoft accepts them. Who each request goes to, and
 whether MikeGC preprocesses it, is set on the rules page beside it
 (`…/settings/intake/rules`). Other members aren't offered either page, and one
 who follows a link to it is told it is for owners and admins; the API refuses
@@ -52,6 +64,8 @@ doesn't run without one. With a model, MikeGC reads each message and:
 - assigns a reviewer using the organization's **rules**: the request goes to
   the member of the first rule, in order, whose condition it meets, and is
   left unassigned when none does;
+- asks the requester first, when it can't choose a rule without a fact the
+  message doesn't state (see [Stage 1](#stage-1-choosing-the-rule));
 - attaches the documents that matter to the request and leaves out the rest,
   such as signature logos.
 
@@ -84,7 +98,10 @@ requests are left unassigned and nothing is preprocessed.
 
 With AI preprocessing on, once MikeGC has recorded a request the rule assigns,
 and attached its documents, it works on the request in the background, before
-the reviewer picks it up:
+the reviewer picks it up. For a request from a thread, it first checks that
+the workflow or playbook has what it needs and asks the requester for
+anything missing (see [Stage 2](#stage-2-what-the-playbook-or-workflow-needs)).
+Then:
 
 - **With a workflow**, MikeGC follows the workflow's instructions to answer
   the request and suggest changes to its documents.
@@ -137,6 +154,132 @@ they use only the deployment's own keys. The Intake settings say, for each,
 when there is no model to choose, none is chosen, or the chosen model's key
 has gone; preprocessing that can't run says why in its note instead.
 
+## The requester loop
+
+MikeGC holds a two-way conversation with the requester in the Outlook,
+Gmail, Teams or Slack thread a request came from. It does three things
+there:
+
+1. **Asks for missing details on its own**: first what it needs to choose a
+   triage rule, then, once a rule applies, what that rule's playbook or
+   workflow needs before preprocessing can run.
+2. **Posts a lawyer's questions**, asked from the request page.
+3. **Replies on resolution** with the resolution text and the documents the
+   lawyer chooses.
+
+The requester's answers come back onto the request and move it forward.
+Everything else a lawyer does (notes, assignments, edits, other status
+changes, cancellations) stays inside MikeGC. Requests recorded through
+Postmark, and requests a member typed, have no thread, so none of this
+applies to them.
+
+A request is recorded and assigned as soon as it arrives, so a lawyer can
+see it while MikeGC waits for answers. MikeGC asks in at most **two rounds**
+in total, across both stages; a round is one message with up to three
+numbered questions. **Ask requesters for missing details**, a switch under
+Triage rules (on by default), turns MikeGC's own questions off; triage and
+preprocessing then work as they did before.
+
+### Stage 1: choosing the rule
+
+Triage compares the message with the rules' plain-language conditions. It
+also returns questions when no rule clearly matches but one or more is
+plausible (the conditions "supplier contracts" and "customer contracts" both
+fit an NDA with Acme, so MikeGC asks "Is Acme a customer or a supplier?"), or
+when a condition turns on a fact the message doesn't state, such as
+"contracts over $250k". With questions, the request is recorded unassigned
+and **Waiting on requester**, and the questions go in MikeGC's
+acknowledgement. Each answer runs triage again over the whole thread. A
+request that still matches no rule once the rounds run out is left
+unassigned.
+
+### Stage 2: what the playbook or workflow needs
+
+Once a rule with AI preprocessing applies, a readiness check runs before
+preprocessing. It reads the request, its replies, its documents (the first
+20,000 characters of each), the rule's condition, and the workflow's
+instructions or the playbook's description, represented party, document
+types, jurisdictions and rule names and conditions (required rules first,
+without positions or sample clauses). It asks only what that playbook or
+workflow needs: an agreement that isn't attached, a schedule it refers to,
+which side we are on or which entity is signing, a deadline the workflow asks
+for. If something is missing, the request (already assigned) waits on the
+requester and preprocessing waits too; MikeGC's acknowledgement waits for
+this check, so its questions go in the same message. When nothing is missing,
+or the rounds have run out, preprocessing runs; in the second case its note
+starts with "Still missing: …". A rule without preprocessing skips stage 2.
+If the model can't be reached, the check counts as ready, so a request never
+waits on a broken model.
+
+### Answers
+
+- Any person's message in the thread counts as an answer, with no mention
+  needed. In email, only messages from the requester, someone already on the
+  thread, or a colleague at the requester's domain count, and only when the
+  sender's mail system authenticated them (see [Receiving](#how-it-works)).
+- An answer is recorded on the request as a reply, named for its author and
+  channel, and its files become the request's documents, tagged on the reply.
+- An answer to MikeGC's question runs the stage that asked again. When
+  nothing is missing, the request returns to the state it would have had
+  (**New** if unassigned, **In progress** if assigned).
+- An answer to a lawyer's question moves the request from **Waiting on
+  requester** back to work and runs no AI.
+- A message on a resolved or cancelled request is recorded and flagged, and
+  the request doesn't reopen.
+- Every reply raises a plain-text **New reply** marker in the queue until
+  someone opens the request; the **Has new reply** filter lists them.
+
+### A lawyer's questions
+
+The note box on a request with a thread has two modes: **Internal note** (the
+default) and **Message requester**. In the second, **Ask requester** posts
+the text in the thread and marks the request **Waiting on requester**; a
+follow-up can be asked while it waits. In Slack it is posted under the
+lawyer's name, "Emma Chen (Legal)", which Slack still shows with its APP badge
+(without the app's `chat:write.customize` scope it reads "Emma Chen (Legal)
+asks: …"). Teams can't change the sender of one message, so there it reads
+"Emma Chen (Legal) asks: …". In Gmail it comes from "Emma Chen via Legal" at
+the intake address; Outlook sets the same name and also starts the message
+with it, in case Exchange keeps the mailbox's own. "Legal" is the
+organization's sender name, set in the Email section.
+
+### Resolution reply
+
+**Resolve request** on a request with a thread opens a dialog with the
+resolution text, a checklist of the request's documents and a **Reply to
+requester** switch (on). Documents whose current version is newer than the
+one that arrived, such as MikeGC's redline after a lawyer accepted its
+changes, are ticked by default. Sending posts the text and the current
+version of each ticked document in the thread. With no text and no documents,
+nothing is sent. By email, documents are attached in the order they were
+ticked until the next would pass the size limit (25 MB after encoding for
+Gmail, the mailbox's send limit for Outlook, 35 MB by default); the rest are
+named in the email ("Too large to email: … Ask Legal for a copy.") and on the
+request.
+
+### Delivery
+
+Each message to the requester shows its delivery under its entry in the
+request's activity: "Sending", "Sent", or "Couldn't send: …" with **Retry**
+and **Copy text**. Transient failures are retried up to five times; a
+permanent one, such as MikeGC removed from the channel, a revoked token or
+Graph consent withdrawn, says what to fix.
+
+### Stopping MikeGC
+
+While MikeGC waits on an answer, the request's details say "MikeGC is waiting
+for the requester's answer (round 1 of 2)" with **Stop asking**. That, or any
+other lawyer command on the request (assign, wait, resume, resolve, cancel,
+edit), stops MikeGC asking for good: later answers are recorded but run no
+AI. If it was waiting on the readiness check, preprocessing then runs with
+what the request has.
+
+### Visibility
+
+A Slack or Teams thread is visible to everyone in the channel, and the send
+controls say so ("Posts in the Slack thread in #legal-requests, visible to
+everyone in the channel"). An email goes to the requester and those copied.
+
 ## Documents
 
 PDF, Word, Excel and PowerPoint attachments are accepted: up to 10 per message
@@ -150,32 +293,79 @@ converted for the viewer the same way, and they are stored under
 
 ## Setting up email
 
-You need a [Postmark](https://postmarkapp.com/) account. Its free tier handles
-inbound mail.
+Company users email the intake address; MikeGC reads that mailbox and replies
+as it. One mailbox per organization, on Microsoft 365 or Google Workspace.
+Postmark is no longer used, for receiving or sending.
 
-1. In MikeGC, open the organization's **Settings → Intake**, turn on **Record
-   requests from email** and choose **Generate**. Copy the webhook URL
-   straight away: it contains a secret and is shown only once. **Replace**
-   generates another, and the old one stops working.
-2. In Postmark, open your server's **Inbound** message stream. Paste the URL as
-   its **Webhook URL** and save. Note the stream's inbound address
-   (`…@inbound.postmarkapp.com`), or set up an inbound domain.
-3. Forward your intake address to that inbound address: a Google Workspace
-   routing rule or Gmail forwarding for Gmail, or a mail flow rule or mailbox
-   forwarding for Outlook and Exchange Online.
-4. List the **sender domains** to accept, such as `example.com` (which also
-   accepts its subdomains, such as `eu.example.com`). Until at least one is
-   listed, no mail is recorded. Mail from other domains is recorded as
-   ignored, without creating a request. The check reads the From header,
-   which a sender can forge: it keeps out stray mail, not a determined
-   impostor.
-5. Send a test message from an accepted domain, then check that it appears in
-   Intake's requests.
+### What counts as a request
 
-Automatic replies, such as out-of-office messages, and bulk or list mail
-are recorded as ignored, without their content. A message Postmark delivers
-twice is recorded once. A webhook URL that has been replaced, or email
-switched off, answers `403`, which tells Postmark to stop retrying.
+- A new email with the intake address in To or Cc. A forward counts too: the
+  forwarder is the requester, and triage names the original sender in the
+  summary.
+- From an accepted **sender domain**. The list starts with the intake
+  address's own domain; add the company's other domains (`example.com` also
+  accepts its subdomains, such as `eu.example.com`). Mail from other domains
+  is recorded as ignored, without creating a request.
+- Authenticated by the sender's mail system: the receiving servers'
+  `Authentication-Results` header must report `dmarc=pass`, or an SPF or DKIM
+  pass aligned with the From address's domain. A forged From address is
+  recorded as ignored.
+- Automatic replies, such as out-of-office messages, bulk and list mail, and
+  mail the mailbox sent itself are recorded as ignored, without their content.
+
+A message in a request's thread from someone else at an accepted domain
+becomes a new request, and the original request gets a note linking to it.
+Outlook notifications usually arrive within a minute; Gmail is read every 60
+seconds.
+
+### Microsoft 365 (Outlook)
+
+A shared mailbox is the recommended intake address: it needs no licence and
+no one signs in to it. A user mailbox works too, and aliases or distribution
+lists that deliver into it are fine.
+
+1. In Microsoft Entra ID, register an app (or reuse the Teams one), create a
+   client secret, and grant the Microsoft Graph application permissions
+   `Mail.ReadWrite` and `Mail.Send` with admin consent.
+2. Limit the app to the intake mailbox with an Exchange
+   [RBAC for Applications](https://learn.microsoft.com/exchange/permissions-exo/application-rbac)
+   management scope, so it can't read any other mailbox.
+3. In MikeGC, open **Settings → Intake**, choose **Connect Outlook (Microsoft
+   365)**, and enter the mailbox address, tenant ID, client ID and client
+   secret.
+4. MikeGC checks it can open the mailbox, starts reading from now (mail
+   already there isn't recorded), subscribes to new-mail notifications at its
+   **notification URL** (`/webhooks/intake/graph/<id>`), and sends you a test
+   email. If Microsoft can't reach the notification URL, the settings say so
+   and MikeGC reads the mailbox every 15 minutes instead.
+
+MikeGC marks recorded mail with the "MikeGC" category.
+
+### Google Workspace (Gmail)
+
+The intake address must be a licensed Workspace user account, such as
+`intake@example.com`: the Gmail API reads only user mailboxes, so a Google
+Group can't be connected, but a group can deliver into the account.
+
+1. The deployment needs a Google Cloud service account's JSON key in
+   `INTAKE_GMAIL_SERVICE_ACCOUNT_KEY`. The Email section shows its client ID.
+2. In the Google Admin console, under **Security → API controls → Domain-wide
+   delegation**, add that client ID with the scope
+   `https://www.googleapis.com/auth/gmail.modify`.
+3. In MikeGC, choose **Connect Gmail (Google Workspace)** and enter the
+   mailbox address. MikeGC reads the mailbox profile to check access, starts
+   from its current history, and sends you a test email.
+
+MikeGC marks recorded mail with the "MikeGC" label.
+
+### Moving from Postmark
+
+Organizations that recorded email through Postmark see "Connect your intake
+mailbox to keep recording email" in Intake settings; until one is connected,
+no email is recorded. Remove the rule that forwarded the intake address to
+Postmark: the mailbox you forwarded from becomes the connected mailbox. The
+old webhook URL answers `403`, which tells Postmark to stop retrying, and
+mail Postmark delivered before the upgrade is still processed.
 
 ## Setting up Slack
 
@@ -187,8 +377,8 @@ the app's credentials in MikeGC first.
    New App → From an app manifest**, pick the workspace, and paste
    [`slack-intake-app-manifest.example.json`](slack-intake-app-manifest.example.json).
    It creates a bot called MikeGC that can read messages that mention it and
-   the threads they're in, read their files, look up the people in them, and
-   reply.
+   the threads they're in, read and post files, name channels, look up the
+   people in them, and reply under a member's name.
 2. Install the app to the workspace. Copy its **Bot User OAuth Token**
    (`xoxb-…`, under **OAuth & Permissions**) and its **Signing Secret** (under
    **Basic Information**).
@@ -198,49 +388,145 @@ the app's credentials in MikeGC first.
    token with Slack and shows the workspace it belongs to.
 4. Back in the Slack app, open **Event Subscriptions**, turn events on, and
    paste MikeGC's **Events Request URL** from the settings page. Slack should
-   show it as verified. Under **Subscribe to bot events**, add `app_mention`,
-   save, and reinstall the app if Slack asks.
+   show it as verified. Under **Subscribe to bot events**, add
+   `app_mention`, `message.channels` and `message.groups`, save, and reinstall
+   the app if Slack asks. The message events are how answers in a request's
+   thread reach MikeGC without a mention; messages in threads no request is
+   linked to are dropped without being stored.
 5. Invite MikeGC to the channels people ask Legal in (`/invite @MikeGC`).
    Slack only tells MikeGC about mentions in channels it's a member of.
 
 MikeGC's reply in the thread includes the request's subject and its reviewer,
 so anyone in the channel can see them.
 
+**Upgrading an existing app.** The requester loop needs `files:write` (to
+post documents), `chat:write.customize` (to post under a lawyer's name),
+`channels:read` and `groups:read` (to name the channel), and the two
+`message.*` events. Add them from the manifest and reinstall the app. Until
+then MikeGC still records requests and posts text without documents; the
+Slack section names the missing scopes, and a request says "Reinstall the
+Slack app to send documents".
+
+## Setting up Teams
+
+Each organization brings its own bot, as it brings its own Slack app.
+Microsoft no longer creates new multi-tenant Azure bots, so the bot is
+single-tenant. Your Microsoft 365 admin does this once:
+
+1. In Microsoft Entra ID, register a single-tenant app and create a client
+   secret.
+2. Create an Azure Bot resource for that app ID. Set its messaging endpoint to
+   MikeGC's **Teams events URL** from the Teams section
+   (`/webhooks/intake/teams/<id>`) and turn on the Microsoft Teams channel.
+3. Build a Teams app package from
+   [`teams-intake-app-manifest.example.json`](teams-intake-app-manifest.example.json)
+   (replace `YOUR-ENTRA-APP-ID`, add two icons), upload it to the
+   organization's app catalog, and add it to the teams whose channels ask
+   Legal. It declares the bot in team scope and the resource-specific consent
+   permission `ChannelMessage.Read.Group`, which a team owner consents to when
+   adding the app, so MikeGC receives thread replies without a mention.
+4. Optional, for documents: grant the app the Microsoft Graph application
+   permission `Sites.Selected` for the chosen teams' sites (preferred over
+   tenant-wide `Files.ReadWrite.All`), with admin consent.
+5. In MikeGC, paste the app ID, tenant ID and client secret into the Teams
+   section and turn Teams on. MikeGC requests a token to check them and shows
+   whether document access works.
+
+Every request from Teams carries a Bot Connector token, which MikeGC checks
+against Bot Framework's signing keys, the bot's app ID, the activity's service
+URL and the configured tenant before reading it. Files shared in the channel
+are read through Graph when document access works, and listed as not attached
+otherwise. MikeGC's replies go through the Bot Connector; a resolution's
+documents are uploaded to the channel's files folder, under
+`MikeGC/<request subject>/`, and linked from the message, so channel members
+open them with their existing access. Without document access, the message
+names them and says to ask Legal for a copy. Whether Teams delivers thread
+replies from private and shared channels depends on Microsoft; standard
+channels are supported.
+
 ## How it works
 
-- **Receiving.** Webhooks arrive under `/webhooks/intake/` on the API, outside
-  the signed-in `/intake` API. Slack requests are checked against the signing
-  secret (HMAC-SHA256 over the raw body, rejected after five minutes). Email
-  requests must carry the secret token from the generated URL; MikeGC keeps
-  only its SHA-256 hash and last four characters.
+- **Receiving.** Webhooks arrive under `/webhooks/intake/` on the API,
+  outside the signed-in `/intake` API. Slack requests are checked against the
+  signing secret (HMAC-SHA256 over the raw body, rejected after five
+  minutes). Teams activities must carry a Bot Connector JWT signed with Bot
+  Framework's keys (cached, refreshed on an unknown key ID), issued by
+  `https://api.botframework.com` to the bot's app ID, within its lifetime
+  (five minutes' skew), for the activity's own service URL and the configured
+  tenant. Graph notifications must echo the client state MikeGC set, of which
+  it keeps only a SHA-256 hash; they hold no content, so a forged one can only
+  make MikeGC read real mail. Gmail is polled (`intake.mailbox.poll`, a
+  self-rescheduling job per mailbox), and so is Outlook every 15 minutes as a
+  backstop, with its subscription renewed every three days.
+- **Routing.** Each channel's event is either a message in a thread linked to
+  a request (`intake_channel_links`), stored in `intake_inbound` as a reply
+  and handed to the `intake.reply` job, or a new request: a mention of MikeGC
+  in an unlinked thread, or a new email to the intake address, handed to
+  `intake.inbound`. Anything else (chatter in an unlinked thread, bots' own
+  messages, edits and deletions) is acknowledged and dropped after one indexed
+  link lookup, without storing its content. An email reply is matched by its
+  Outlook `conversationId` or Gmail `threadId`, or else by a Message-ID in its
+  `In-Reply-To` or `References` that MikeGC saw or sent in the thread
+  (`intake_email_message_ids`).
 - **Recording.** Each message is stored once in `intake_inbound`, keyed by its
-  Slack channel and timestamp or its email `Message-ID`, so a webhook
-  delivered again records nothing new. Email attachments are stored
-  temporarily until the message is handled. A background job (`intake.inbound`)
-  then runs triage, records the request with `intake_submit_automated`, makes
-  its documents and links them with `intake_attach_automated`, and replies in
-  Slack. A retried job reuses the request and documents it already made and
-  never replies twice. A message that still fails after its retries is
+  Slack channel and timestamp, its Teams activity ID or its email
+  `Message-ID`, so a webhook delivered again records nothing new. Email
+  attachments are stored temporarily until the message is handled. The
+  `intake.inbound` job then runs triage, records the request with
+  `intake_submit_automated`, links its thread with `intake_link_thread`, makes
+  its documents and links them with `intake_attach_automated`, and asks
+  (`intake_ask_automated`) or acknowledges (`intake_acknowledge_automated`). A
+  retried job reuses the request and documents it already made and never
+  acknowledges twice. A message that still fails after its retries is
   recorded as failed, with a reason, in `intake_inbound`, and MikeGC says so
-  in the Slack thread.
-- **Preprocessing.** When a request's rule asks for it, the inbound job queues
-  `intake.preprocess` once its documents are attached. The job reads the
-  documents through the documents module's organization-owned path (they have
-  no uploader, so no member's access applies), writes tracked changes as a new
-  version through the same module, and posts its note with
-  `intake_note_automated`. The note's ID is fixed when the job is queued, so a
-  retried job posts it once and does nothing after; a job that fails for good
-  posts a short note saying preprocessing couldn't finish.
-- **Secrets.** The Slack signing secret and bot token are encrypted at rest
-  with `MCP_CONNECTORS_ENCRYPTION_SECRET`, like connector credentials, and are
-  never sent back to the browser.
+  in a Slack thread.
+- **Replies.** The `intake.reply` job reads the reply from its channel,
+  records it with `intake_reply_automated`, adds its files, and reruns the
+  stage that asked: triage, or the next round of `intake.preprocess`
+  (deduplicated per request and round, `intake.preprocess:<request>:<round>`).
+  `intake_settle_clarify_automated` returns a request whose stage has what it
+  needs to New or In progress.
+- **Outbox.** Every requester-facing message (an acknowledgement, a question
+  or a resolution reply) is an `intake_outbound` row written in the same
+  transaction as the message it carries, and sent by the `intake.deliver`
+  job through its channel's adapter. Before a retry (never on the first
+  attempt) the adapter asks the channel whether an earlier attempt landed:
+  Slack by the message's metadata, Outlook by an extended property in Sent
+  Items, Gmail by its Message-ID (or an `X-MikeGC-Outbound` header in the
+  thread), Teams by the bot's message with the same text in the thread. Each
+  document's channel ID is saved as it lands, so a retry posts only the rest.
+  Failures store a sentence MikeGC writes from a known code, never a
+  provider's response.
+- **Questions are untrusted output.** The thread is untrusted, and the
+  questions go to people in the business, so at most three are posted, each
+  one line of at most 300 characters; any with a link, an email address, a
+  mention or markup is dropped; each is escaped for its channel; and MikeGC's
+  own wording, "Before Legal starts, MikeGC needs:", frames them. If every
+  question is dropped, the stage counts as ready. Lawyers write every
+  resolution, and documents go only to the request's own thread when a lawyer
+  ticks them.
+- **Preprocessing.** When a request's rule asks for it, preprocessing reads
+  the documents through the documents module's organization-owned path, runs
+  the readiness check, writes tracked changes as a new version through the
+  same module, and posts its note with `intake_note_automated`. The note's ID
+  is fixed per request, so it is posted once however many rounds run; a job
+  that fails for good posts a short note saying preprocessing couldn't
+  finish.
+- **Secrets.** The Slack signing secret and bot token, the Graph client
+  secret and the Teams client secret are encrypted at rest with
+  `MCP_CONNECTORS_ENCRYPTION_SECRET`, like connector credentials, are
+  write-only in the UI, and are never logged.
 - **Retention.** A message's content is kept only until it is handled; the
-  request then holds it. Deleting all intake requests in **Privacy & Data**,
-  and purging the organization, delete received messages too, and a database
-  trigger hands the attachments of any still waiting to the storage worker.
-  A member's assignment rules are deleted when they leave the organization.
+  request then holds it. Threads, the outbox and Message-IDs cascade from
+  their request, so deleting a request, deleting all intake requests in
+  **Privacy & Data**, and purging the organization remove them; received
+  messages go too, and a database trigger hands the attachments of any still
+  waiting to the storage worker. A reply arriving while its request is purged
+  is settled without its content. A member's assignment rules are deleted
+  when they leave the organization.
 - **Not recorded.** Changes to these settings are not written to the audit
-  log yet.
+  log yet. Each message sent to a requester is part of the request's activity,
+  with its author and delivery status.
 
 ## Deployment
 
@@ -250,8 +536,11 @@ Apply `backend/migrations/20261102_02_intake_automation.sql`,
 `backend/migrations/20261102_05_intake_rule_preprocessing.sql`,
 `backend/migrations/20261103_01_intake_triage_always_on.sql`,
 `backend/migrations/20261103_02_intake_triage_model.sql`,
-`backend/migrations/20261103_03_intake_preprocessing_model.sql` and
-`backend/migrations/20261103_04_intake_replace_rules.sql` before starting
+`backend/migrations/20261103_03_intake_preprocessing_model.sql`,
+`backend/migrations/20261103_04_intake_replace_rules.sql`,
+`backend/migrations/20261103_05_intake_requester_loop.sql`,
+`backend/migrations/20261103_06_intake_mailbox.sql` and
+`backend/migrations/20261103_07_intake_teams.sql` before starting
 the new build. The second turns any note of what a member handles into a rule
 assigning to them, and stops if an organization has more than 100 notes, more
 than the 100 rules it can hold. The third removes the timezone that requests kept with
@@ -262,16 +551,37 @@ organization, including any that had switched it off. The sixth adds the
 triage model, and the seventh the preprocessing model; settings that already
 exist have neither, so an admin chooses them before triage and preprocessing
 run again. The eighth saves an organization's rules in one transaction, so
-two saves at once can't delete each other's rules. No new environment variables are required: the webhook URLs are
-built from `API_PUBLIC_URL`, the request links in Slack replies from
-`FRONTEND_URL`, and secrets are encrypted with `MCP_CONNECTORS_ENCRYPTION_SECRET`
-(or `USER_API_KEYS_ENCRYPTION_SECRET`). Webhook deliveries have their own rate
-limit, 120 a minute per sending address, which `RATE_LIMIT_WEBHOOK_MAX` and
-`RATE_LIMIT_WEBHOOK_WINDOW_MINUTES` can change.
+two saves at once can't delete each other's rules. The ninth adds the
+requester loop: thread links, the outbox, replies, MikeGC's clarifying stages
+and rounds, the New reply flag, the lawyer's send options on wait and resolve,
+and **Stop asking**. Its command boundary takes new arguments, so an older
+binary can't work requests once it has run; roll application code forward.
+The tenth connects the intake mailbox and retires Postmark: it drops the
+Postmark token columns, turns email off for organizations that used it and
+shows them a notice to connect their mailbox. The eleventh adds Teams.
 
-Both webhooks must reach the API over public HTTPS. The frontend's `/api`
-gateway forwards them unchanged, including Slack's signature headers, the raw
-body Slack signs and large Postmark messages, so `API_PUBLIC_URL` can be the
-usual same-origin gateway. For local development, run a tunnel and set
+`INTAKE_GMAIL_SERVICE_ACCOUNT_KEY` (a Google service account's JSON key) is
+needed only for Gmail mailboxes. Otherwise no new environment variables are
+required: the webhook and notification URLs are built from `API_PUBLIC_URL`,
+the request links in acknowledgements from `FRONTEND_URL`, and secrets are
+encrypted with `MCP_CONNECTORS_ENCRYPTION_SECRET` (or
+`USER_API_KEYS_ENCRYPTION_SECRET`). The backend gains the `jose` (Bot
+Framework token checks) and `nodemailer` (Gmail MIME building only, never
+SMTP) dependencies. New jobs `intake.reply`, `intake.deliver` and
+`intake.mailbox.poll` run on the existing job runner; the maintenance sweep
+restarts a connected mailbox's poll job if it ever stops.
+
+Webhook deliveries have their own rate limit, 120 a minute per sending
+address, which `RATE_LIMIT_WEBHOOK_MAX` and
+`RATE_LIMIT_WEBHOOK_WINDOW_MINUTES` can change. Slack, Teams and Graph send
+every organization's deliveries from the same addresses, so their webhooks are
+limited per organization's webhook URL instead, 600 a minute by default
+(`RATE_LIMIT_SLACK_WEBHOOK_MAX`, `RATE_LIMIT_TEAMS_WEBHOOK_MAX`,
+`RATE_LIMIT_GRAPH_WEBHOOK_MAX`).
+
+Every webhook must reach the API over public HTTPS. The frontend's `/api`
+gateway forwards them unchanged, including Slack's signature headers and the
+raw body Slack signs, so `API_PUBLIC_URL` can be the usual same-origin
+gateway. For local development, run a tunnel and set
 `API_PUBLIC_URL` to it, as for the Slack connector in
 [connectors.md](connectors.md).

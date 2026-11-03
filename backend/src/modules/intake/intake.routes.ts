@@ -13,8 +13,12 @@ import {
   getIntakeRequest,
   listIntakeDocuments,
   copyIntakeDocuments,
-  generateIntakeEmailWebhook,
+  connectIntakeMailbox,
+  disconnectIntakeMailbox,
   getIntakeAutomation,
+  markIntakeReplySeen,
+  retryIntakeDelivery,
+  sendIntakeMailboxTest,
   listIntakeEvents,
   listIntakeMembers,
   listIntakeRequesters,
@@ -34,6 +38,7 @@ import {
   intakeEdit,
   intakeId,
   intakeList,
+  intakeMailboxConnection,
   intakePage,
   intakeSubmit,
   intakeWorkspace,
@@ -137,13 +142,41 @@ intakeRouter.patch(
     );
   }),
 );
+// The intake mailbox: connect Outlook (Microsoft 365) or Gmail (Google
+// Workspace), disconnect it, or send a test email to the admin.
 intakeRouter.post(
-  "/:orgId/automation/email-webhook",
+  "/:orgId/automation/mailbox",
+  asyncRoute(async (req, res) => {
+    const parsed = intakeMailboxConnection.safeParse(req.body);
+    if (!parsed.success)
+      return void res.status(400).json({
+        detail: "Enter the intake address and, for Microsoft 365, the Entra app's tenant ID, client ID and secret.",
+      });
+    send(
+      res,
+      await connectIntakeMailbox(
+        createServerSupabase(),
+        { ...scopeOf(res), userEmail: res.locals.userEmail },
+        parsed.data,
+      ),
+    );
+  }),
+);
+intakeRouter.delete(
+  "/:orgId/automation/mailbox",
+  asyncRoute(async (req, res) => {
+    send(res, await disconnectIntakeMailbox(createServerSupabase(), scopeOf(res)));
+  }),
+);
+intakeRouter.post(
+  "/:orgId/automation/mailbox/test",
   asyncRoute(async (req, res) => {
     send(
       res,
-      await generateIntakeEmailWebhook(createServerSupabase(), scopeOf(res)),
-      201,
+      await sendIntakeMailboxTest(createServerSupabase(), {
+        ...scopeOf(res),
+        userEmail: res.locals.userEmail,
+      }),
     );
   }),
 );
@@ -228,6 +261,31 @@ intakeRouter.post(
         req.params.orgId === "personal" ? null : res.locals.intakeOrgId,
       ),
       201,
+    );
+  }),
+);
+intakeRouter.post(
+  "/:orgId/requests/:requestId/outbound/:outboundId/retry",
+  asyncRoute(async (req, res) => {
+    if (!intakeId.safeParse(req.params.outboundId).success)
+      return void res.status(400).json({ detail: "Invalid message ID." });
+    send(
+      res,
+      await retryIntakeDelivery(
+        createServerSupabase(),
+        scopeOf(res),
+        req.params.requestId,
+        req.params.outboundId,
+      ),
+    );
+  }),
+);
+intakeRouter.post(
+  "/:orgId/requests/:requestId/reply-seen",
+  asyncRoute(async (req, res) => {
+    send(
+      res,
+      await markIntakeReplySeen(createServerSupabase(), scopeOf(res), req.params.requestId),
     );
   }),
 );

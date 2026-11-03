@@ -1,3 +1,6 @@
+// First: organization deletion reads purgeIntake when it loads, and loading
+// the rest of intake reaches organization deletion again.
+export { validateIntakeExport, purgeIntake } from "./intake.lifecycle";
 export {
   listIntakeMembers,
   listIntakeRequesters,
@@ -8,6 +11,8 @@ export {
   listIntakeEvents,
   commandIntakeRequest,
   editIntakeRequest,
+  retryIntakeDelivery,
+  markIntakeReplySeen,
 } from "./intake.requests";
 export type { IntakeScope } from "./intake.requests";
 export {
@@ -22,13 +27,18 @@ export {
   personalIntakeOrgId,
   resolveIntakeOrg,
 } from "./intake.workspace";
-export { validateIntakeExport, purgeIntake } from "./intake.lifecycle";
 export {
   getIntakeAutomation,
   updateIntakeAutomation,
-  generateIntakeEmailWebhook,
+  connectIntakeMailbox,
+  disconnectIntakeMailbox,
+  sendIntakeMailboxTest,
 } from "./intake.automation";
-export { receiveSlackEvent, receiveInboundEmail } from "./intake.inbound";
+export {
+  receiveSlackEvent,
+  receiveTeamsActivity,
+  receiveInboundEmail,
+} from "./intake.inbound";
 export {
   handleIntakeInbound,
   markIntakeInboundFailed,
@@ -37,3 +47,10 @@ export {
   handleIntakePreprocess,
   markIntakePreprocessFailed,
 } from "./intake.preprocess";
+export { handleIntakeReply, markIntakeReplyFailed } from "./intake.reply";
+export { handleIntakeDeliver, markIntakeDeliverFailed } from "./intake.deliver";
+export {
+  handleIntakeMailboxPoll,
+  ensureIntakeMailboxPolls,
+  receiveGraphNotification,
+} from "./intake.mailbox";

@@ -6,8 +6,10 @@ member of an organization is on the Legal team and works one shared queue.
 Business colleagues never use MikeGC: a lawyer creates the request that arrived
 by email, chat, phone or in a meeting, and the business person appears only as
 the named requester on that record. An organization can also have MikeGC record
-requests itself from email sent to a shared address and from Slack messages
-that mention @MikeGC; see [Automated intake](intake-automation.md).
+requests itself from its intake mailbox (Outlook or Gmail) and from Slack and
+Teams messages that mention @MikeGC, and hold a conversation with the requester
+in that thread: asking for missing details, posting a lawyer's questions and
+replying with the resolution; see [Automated intake](intake-automation.md).
 
 Intake is always on in every organization and in Personal; there is no
 setting to switch it off. In Personal it tracks the person's own requests,
@@ -115,6 +117,14 @@ validated against that theme's card surface.
    open, resolve it with an optional resolution, cancel it with a required
    reason, reopen it, and delete it. A resolution or cancellation reason
    reads in the timeline beside the change.
+4. On a request MikeGC recorded from a thread, a member can also message the
+   requester there (**Message requester** in the note box, which marks the
+   request **Waiting on requester**), send the resolution and chosen
+   documents with **Resolve request**, and stop MikeGC asking for missing
+   details. The requester's replies appear in the timeline under their name,
+   and the queue marks a request with an unopened reply **New reply**. The
+   [requester loop](intake-automation.md#the-requester-loop) describes what is
+   sent and when.
 
 The request page centres the request beside a **Details** sidebar. The page
 header shows the subject in its breadcrumb, with a **Copy link** button
@@ -170,7 +180,8 @@ reports how many changed in the meantime, and leaves those still selected.
 
 Statuses are **New**, **In progress**, **Waiting on requester**, **Resolved**
 and **Cancelled** (stored as `submitted`, `in_review`, `needs_information`,
-`resolved` and `cancelled`). Assigning a new request moves it to In progress;
+`resolved` and `cancelled`). While MikeGC itself waits on the requester's
+answer, the queue reads "Waiting on requester (MikeGC asked)". Assigning a new request moves it to In progress;
 unassigning moves it back to New. Resuming or reopening returns a request to
 In progress when it has an assignee and to New otherwise. History records who
 made each change and, for assignments, to whom.
@@ -228,9 +239,10 @@ then copies it to the request.
   purging the organization deletes its attachments, and the document version
   trigger queues their storage objects for durable cleanup.
 
-Apart from the triage that [automated intake](intake-automation.md) runs on
-the messages it receives, intake does not include notifications, scheduled
-processing or automatic legal decisions.
+Apart from the triage, clarifying questions and preprocessing that
+[automated intake](intake-automation.md) runs on the messages it receives,
+intake does not include notifications, scheduled processing or automatic legal
+decisions. A requester's reply is flagged in the queue rather than notified.
 
 ## Access and retention
 
@@ -354,6 +366,10 @@ Apply migrations before starting the new application build:
   `source`, the `automated` mark on events and attachments, and
   `intake_submit_automated` and `intake_attach_automated`, which record a
   request and its documents as MikeGC.
+- `20261103_05_intake_requester_loop.sql`, `20261103_06_intake_mailbox.sql`
+  and `20261103_07_intake_teams.sql` add the requester loop, the Outlook and
+  Gmail intake mailbox (retiring Postmark) and Teams. See
+  [Automated intake](intake-automation.md#deployment) for what each changes.
 
 Use the existing migration runner documented in [deployment.md](deployment.md).
 Do not replay historical migrations over a fresh schema. Fresh installations use

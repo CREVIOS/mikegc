@@ -114,7 +114,21 @@ const webhookLimiter = makeLimiter({
   windowMs: minutes(envInt("RATE_LIMIT_WEBHOOK_WINDOW_MINUTES", 1)),
   max: envInt("RATE_LIMIT_WEBHOOK_MAX", 120),
   message: "Too many webhook deliveries. Please try again later.",
+  skip: (req) => CHANNEL_WEBHOOK.test(req.path),
 });
+
+// Slack, Teams and Microsoft Graph send every organization's deliveries
+// from the same addresses, and thread messages make them busy, so each
+// organization's webhook URL has its own budget: one busy channel can't use
+// up another organization's.
+const CHANNEL_WEBHOOK = /^\/(?:webhooks\/)?intake\/(slack|teams|graph)\/([^/?#]{1,64})\/?$/;
+const channelWebhookLimiter = (channel: "slack" | "teams" | "graph") =>
+  makeLimiter({
+    windowMs: minutes(envInt("RATE_LIMIT_WEBHOOK_WINDOW_MINUTES", 1)),
+    max: envInt(`RATE_LIMIT_${channel.toUpperCase()}_WEBHOOK_MAX`, 600),
+    message: "Too many webhook deliveries. Please try again later.",
+    keyGenerator: (req) => `${channel}:${req.params.webhookId ?? ""}`,
+  });
 
 // The filesystem storage driver's signed PUT (see downloads.routes.ts) is the
 // local-mode stand-in for a direct browser upload to object storage — which,
@@ -349,6 +363,9 @@ app.put("/download/signed/:token", blobUploadLimiter, blobUploadHandler);
 // Ahead of the global JSON parser: Slack's signature covers the raw body, so
 // the webhook router chooses each route's parser itself.
 app.use("/webhooks", webhookLimiter);
+app.use("/webhooks/intake/slack/:webhookId", channelWebhookLimiter("slack"));
+app.use("/webhooks/intake/teams/:webhookId", channelWebhookLimiter("teams"));
+app.use("/webhooks/intake/graph/:webhookId", channelWebhookLimiter("graph"));
 app.use("/webhooks/intake", intakeWebhooksRouter);
 
 app.use(express.json({ limit: JSON_BODY_LIMIT }));

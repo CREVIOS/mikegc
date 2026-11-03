@@ -235,6 +235,7 @@ describe("intake route contracts", () => {
       p_requester: null,
       // Overdue is judged where the viewer is.
       p_timezone: "Asia/Tokyo",
+      p_new_reply: false,
     });
     await request(app).get(`${path}/requests?requester=%20Jane%20Business%20`);
     expect(mocks.rpc.mock.calls.at(-1)?.[1]).toMatchObject({

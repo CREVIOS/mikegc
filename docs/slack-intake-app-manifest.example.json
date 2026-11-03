@@ -1,7 +1,7 @@
 {
     "display_information": {
         "name": "MikeGC",
-        "description": "Mention @MikeGC to send a message or thread to Legal as an intake request.",
+        "description": "Mention @MikeGC to send a message or thread to Legal as an intake request. MikeGC answers in the thread.",
         "background_color": "#1f2937"
     },
     "features": {
@@ -15,15 +15,27 @@
             "bot": [
                 "app_mentions:read",
                 "channels:history",
+                "channels:read",
                 "groups:history",
+                "groups:read",
                 "chat:write",
+                "chat:write.customize",
                 "files:read",
+                "files:write",
                 "users:read",
                 "users:read.email"
             ]
         }
     },
     "settings": {
+        "event_subscriptions": {
+            "request_url": "https://your-mikegc.example.com/api/webhooks/intake/slack/YOUR-WEBHOOK-ID",
+            "bot_events": [
+                "app_mention",
+                "message.channels",
+                "message.groups"
+            ]
+        },
         "org_deploy_enabled": false,
         "socket_mode_enabled": false,
         "token_rotation_enabled": false

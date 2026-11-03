@@ -54,6 +54,11 @@ export const intakeList = z.object({
   requester: z.string().trim().min(1).max(200).optional(),
   /** The viewer's, in which a target date that has passed is overdue. */
   timezone: viewerTimezone,
+  /** Only requests with a reply nobody has opened yet. */
+  new_reply: z
+    .enum(["true", "false"])
+    .transform((v) => v === "true")
+    .optional(),
   cursor: z.string().max(200).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
@@ -106,12 +111,30 @@ export const intakeCommands = {
     .object({ ...versioned, assignee_id: intakeId.nullable() })
     .strict(),
   notes: z.object({ command_id: intakeId, body: text(20000) }).strict(),
-  wait: z.object({ ...versioned, body: text(20000).optional() }).strict(),
+  // Sent to the requester, a question needs its text.
+  wait: z
+    .object({
+      ...versioned,
+      body: text(20000).optional(),
+      send_to_requester: z.boolean().default(false),
+    })
+    .strict()
+    .refine((v) => !v.send_to_requester || v.body !== undefined),
   resume: z.object({ ...versioned, body: text(20000).optional() }).strict(),
-  resolve: z.object({ ...versioned, body: text(20000).optional() }).strict(),
+  resolve: z
+    .object({
+      ...versioned,
+      body: text(20000).optional(),
+      send_to_requester: z.boolean().default(false),
+      /** The request's documents to send with the resolution; the database checks them. */
+      documents: z.array(intakeId).max(10).optional(),
+    })
+    .strict()
+    .refine((v) => v.send_to_requester || v.documents === undefined),
   cancel: z.object({ ...versioned, body: text(20000) }).strict(),
   reopen: z.object(versioned).strict(),
   delete: z.object(versioned).strict(),
+  stop_asking: z.object(versioned).strict(),
 } as const;
 export type IntakeCommandAction = keyof typeof intakeCommands;
 export type IntakeCommandInput = {
@@ -119,12 +142,20 @@ export type IntakeCommandInput = {
   expected_version?: number;
   body?: string;
   assignee_id?: string | null;
+  send_to_requester?: boolean;
+  documents?: string[];
 };
 /** A change to automated intake; secrets are write-only and bounded. */
 export const intakeAutomationUpdate = z
   .object({
+    clarify_enabled: z.boolean().optional(),
     email_enabled: z.boolean().optional(),
     email_allowed_domains: z.array(z.string().max(255)).max(50).optional(),
+    email_from_name: z.string().trim().min(1).max(80).optional(),
+    teams_enabled: z.boolean().optional(),
+    teams_app_id: z.string().trim().regex(/^[0-9a-fA-F-]{36}$/).optional(),
+    teams_tenant_id: z.string().trim().regex(/^[0-9a-fA-F-]{36}$/).optional(),
+    teams_client_secret: z.string().trim().min(1).max(500).optional(),
     slack_enabled: z.boolean().optional(),
     slack_signing_secret: z.string().trim().min(1).max(300).optional(),
     slack_bot_token: z
@@ -163,6 +194,10 @@ const AUTOMATION_PROBLEMS: Record<string, string> = {
   email_allowed_domains: "List at most 50 sender domains.",
   slack_signing_secret: "Paste the Slack app's signing secret.",
   slack_bot_token: "Paste the Bot User OAuth Token, which starts with xoxb-.",
+  email_from_name: "Give the sender name 1 to 80 characters.",
+  teams_app_id: "Paste the Teams app's Application (client) ID.",
+  teams_tenant_id: "Paste your Microsoft 365 Directory (tenant) ID.",
+  teams_client_secret: "Paste the Teams app's client secret value.",
   rules: "Give each rule a condition of 1 to 500 characters and a member, with at most 100 rules.",
 };
 /** What to fix in a rejected automation change, by its first problem. */
@@ -173,3 +208,22 @@ export function automationUpdateProblem(error: z.ZodError): string {
     "Check the automation settings."
   );
 }
+
+/** Connect the intake mailbox: Microsoft 365 or Google Workspace. */
+export const intakeMailboxConnection = z.discriminatedUnion("provider", [
+  z
+    .object({
+      provider: z.literal("graph"),
+      mailbox: z.string().trim().min(3).max(320),
+      tenant_id: z.string().trim().min(1).max(200),
+      client_id: z.string().trim().min(1).max(200),
+      client_secret: z.string().trim().min(1).max(500).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      provider: z.literal("gmail"),
+      mailbox: z.string().trim().min(3).max(320),
+    })
+    .strict(),
+]);

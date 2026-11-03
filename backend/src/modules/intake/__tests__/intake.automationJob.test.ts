@@ -45,6 +45,7 @@ import {
   handleIntakeInbound,
   markIntakeInboundFailed,
 } from "../intake.automationJob";
+import { handleIntakeDeliver } from "../intake.deliver";
 import { purgeIntake } from "../intake.lifecycle";
 
 const org = "00000000-0000-4000-8000-000000000001";
@@ -180,8 +181,10 @@ function stubSlack(overrides: Record<string, (params: Record<string, string>) =>
     }),
     "chat.postMessage": (p) => {
       slackReplies = p;
-      return { ok: true };
+      return { ok: true, ts: "1793610999.000900" };
     },
+    "chat.getPermalink": () => ({ ok: true, permalink: "https://acme.slack.com/archives/C42/p1793610840000100" }),
+    "conversations.info": () => ({ ok: true, channel: { name: "legal-requests" } }),
     ...overrides,
   };
   vi.stubGlobal(
@@ -232,12 +235,30 @@ afterAll(() => {
   vi.unstubAllGlobals();
 });
 
+/** Run every intake.deliver job the code under test queued, as the runner would. */
+async function deliverQueued(attempts = 1) {
+  const queued = mocks.enqueueDbJob.mock.calls
+    .map(([, input]) => input)
+    .filter((input) => input.kind === "intake.deliver");
+  for (const input of queued)
+    await handleIntakeDeliver(memory.db, {
+      ...job(),
+      kind: "intake.deliver",
+      payload: input.payload,
+      attempts,
+      max_attempts: 5,
+      dedupe_key: input.dedupeKey,
+    });
+  return queued.length;
+}
+
 describe("recording an email", () => {
   it("records MikeGC's triaged request with the relevant documents, then forgets the message", async () => {
     setup({ payload: emailPayload() });
     await expect(handleIntakeInbound(memory.db, job())).resolves.toEqual({
       request_id: inboundId,
       triaged: true,
+      asked: false,
     });
     expect(memory.rpcCalls.find((c) => c.name === "intake_submit_automated")?.args).toMatchObject({
       p_org: org,
@@ -317,8 +338,12 @@ describe("recording an email", () => {
             orgId: org,
             requestId: inboundId,
             with: { kind: "playbook", id: "pb-1" },
+            condition: "The request is about an NDA",
+            round: 0,
+            // Postmark mail has no thread to acknowledge in.
+            acknowledge: false,
           }),
-          dedupeKey: `intake.preprocess:${inboundId}`,
+          dedupeKey: `intake.preprocess:${inboundId}:0`,
         }),
       ],
     ]);
@@ -452,23 +477,51 @@ describe("recording a Slack thread", () => {
       pdf_storage_path: mocks.uploadFile.mock.calls[0]![0],
     });
     expect(mocks.enqueueConversion).not.toHaveBeenCalled();
+    // Linked to its thread, named for the request page.
+    expect(memory.rows("intake_channel_links")).toEqual([
+      expect.objectContaining({
+        request_id: inboundId,
+        source: "slack",
+        thread_key: ":C42:1793610840.000100",
+        address: expect.objectContaining({
+          channel: "C42",
+          thread_ts: "1793610840.000100",
+          channel_name: "legal-requests",
+          permalink: "https://acme.slack.com/archives/C42/p1793610840000100",
+        }),
+      }),
+    ]);
+    // The acknowledgement waits in the outbox until intake.deliver sends it.
+    expect(memory.rows("intake_outbound")).toEqual([
+      expect.objectContaining({ kind: "acknowledgement", status: "pending", message_id: null }),
+    ]);
+    expect(slackCalls.some((c) => c.method === "chat.postMessage")).toBe(false);
+    expect(row()).toMatchObject({ status: "done", payload: null });
+    expect(await deliverQueued()).toBe(1);
     expect(slackReplies).toMatchObject({
       channel: "C42",
       thread_ts: "1793610840.000100",
       text: `Logged for Legal: <https://mike.example.com/intake/${inboundId}?org=${org}|Need the Supplier Co NDA signed off>. Not assigned to a reviewer yet.`,
     });
-    expect(row()).toMatchObject({ status: "done", payload: null });
+    // Marked, so a retry can find it; MikeGC's own name, not a member's.
+    expect(JSON.parse(String(slackReplies.metadata))).toEqual({
+      event_type: "mikegc_intake",
+      event_payload: { outbound_id: memory.rows("intake_outbound")[0]!.id },
+    });
+    expect(slackReplies.username).toBeUndefined();
+    expect(memory.rows("intake_outbound")[0]).toMatchObject({ status: "sent", external_id: "1793610999.000900" });
   });
   it("names the reviewer, and links Personal requests as personal", async () => {
     setup({ payload: slackPayload({ thread_ts: null, ts: "1793610840.000100", user: "U1", text: "<@UBOT> NDA please" }), source: "slack", kind: "personal" });
     await handleIntakeInbound(memory.db, job());
     expect(slackCalls.some((c) => c.method === "conversations.replies")).toBe(false);
+    await deliverQueued();
     expect(slackReplies.thread_ts).toBe("1793610840.000100");
     expect(slackReplies.text).toBe(
       `Logged for Legal: <https://mike.example.com/intake/${inboundId}?org=personal|Review Supplier Co NDA>. Assigned to Sam Lawyer.`,
     );
   });
-  it("never replies twice when a retry follows a sent reply", async () => {
+  it("acknowledges once when the job is retried", async () => {
     setup({ payload: slackPayload(), source: "slack", model: false });
     let failDone = true;
     memory.intercept = ({ table, values }) => {
@@ -479,11 +532,107 @@ describe("recording a Slack thread", () => {
       return undefined;
     };
     await expect(handleIntakeInbound(memory.db, job())).rejects.toMatchObject({ code: "08006" });
-    expect(slackCalls.filter((c) => c.method === "chat.postMessage")).toHaveLength(1);
     await handleIntakeInbound(memory.db, job());
-    expect(slackCalls.filter((c) => c.method === "chat.postMessage")).toHaveLength(1);
+    expect(memory.rows("intake_outbound")).toHaveLength(1);
     expect(memory.rows("documents")).toHaveLength(1);
     expect(row()).toMatchObject({ status: "done" });
+  });
+  it("never posts twice when a delivery is retried after Slack took it", async () => {
+    setup({ payload: slackPayload(), source: "slack", model: false });
+    await handleIntakeInbound(memory.db, job());
+    const outbound = memory.rows("intake_outbound")[0]!;
+    // Slack posts the message, but the answer is lost on the way back.
+    let posted: Record<string, string> | null = null;
+    stubSlack({
+      "chat.postMessage": (p) => {
+        posted = p;
+        throw new Error("connection reset");
+      },
+      "conversations.replies": () => ({
+        ok: true,
+        messages: posted
+          ? [{ ts: "1793610999.000900", bot_id: "B1", metadata: JSON.parse(posted.metadata!) }]
+          : [],
+      }),
+    });
+    const fetchMock = vi.mocked(globalThis.fetch);
+    const inner = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url).endsWith("chat.postMessage")) {
+        posted = Object.fromEntries(new URLSearchParams(String(init?.body ?? "")));
+        throw new TypeError("fetch failed");
+      }
+      return inner(url, init);
+    });
+    await expect(deliverQueued(1)).rejects.toBeTruthy();
+    expect(outbound.status).toBe("pending");
+    expect(outbound.attempted_at).toBeTruthy();
+    // The retry finds the post by its metadata and doesn't post again.
+    await deliverQueued(2);
+    expect(slackCalls.find((c) => c.method === "conversations.replies")?.params).toMatchObject({
+      include_all_metadata: "true",
+    });
+    expect(outbound).toMatchObject({ status: "sent", external_id: "1793610999.000900" });
+  });
+  it("asks the requester in the acknowledgement when it can't yet choose a rule", async () => {
+    setup({ payload: slackPayload(), source: "slack" });
+    mocks.completeText.mockResolvedValue(
+      JSON.stringify({
+        subject: "Review Acme NDA",
+        summary: "An NDA with Acme.",
+        requester_name: "Jane Business",
+        rule: null,
+        questions: ["Is Acme a customer or a supplier?", "See https://evil.test for details"],
+        attachments: [1],
+      }),
+    );
+    await expect(handleIntakeInbound(memory.db, job())).resolves.toMatchObject({ asked: true });
+    expect(memory.rows("intake_requests")[0]).toMatchObject({
+      assignee_id: null,
+      state: "needs_information",
+      clarify_stage: "rule",
+      clarify_rounds: 1,
+    });
+    // A question with a link is dropped; MikeGC frames the rest itself.
+    expect(memory.rows("intake_messages")).toEqual([
+      expect.objectContaining({
+        kind: "question",
+        automated: true,
+        body: "Before Legal starts, MikeGC needs:\n1. Is Acme a customer or a supplier?",
+      }),
+    ]);
+    expect(memory.rows("intake_outbound")).toEqual([
+      expect.objectContaining({ kind: "acknowledgement", message_id: memory.rows("intake_messages")[0]!.id }),
+    ]);
+    expect(mocks.enqueueDbJob.mock.calls.some(([, input]) => input.kind === "intake.preprocess")).toBe(false);
+    await deliverQueued();
+    expect(slackReplies.text).toBe(
+      `Logged for Legal: <https://mike.example.com/intake/${inboundId}?org=${org}|Review Acme NDA>. Not assigned to a reviewer yet.\n\n` +
+        "Before Legal starts, MikeGC needs:\n1. Is Acme a customer or a supplier?",
+    );
+  });
+  it("doesn't ask with asking switched off, or by email through Postmark", async () => {
+    const asking = JSON.stringify({ subject: "NDA", rule: 1, questions: ["Is the contract over $250k?"], attachments: [] });
+    setup({ payload: slackPayload(), source: "slack" });
+    memory.rows("intake_automation")[0]!.clarify_enabled = false;
+    mocks.completeText.mockResolvedValue(asking);
+    await handleIntakeInbound(memory.db, job());
+    expect(memory.rows("intake_requests")[0]).toMatchObject({ assignee_id: sam, state: "in_review" });
+    expect(memory.rows("intake_messages")).toEqual([]);
+    setup({ payload: emailPayload() });
+    mocks.completeText.mockResolvedValue(asking);
+    await handleIntakeInbound(memory.db, job());
+    expect(memory.rows("intake_requests")[0]).toMatchObject({ assignee_id: sam });
+    expect(memory.rows("intake_messages")).toEqual([]);
+  });
+  it("leaves the acknowledgement to preprocessing's readiness check, which may ask too", async () => {
+    setup({ payload: slackPayload(), source: "slack" });
+    Object.assign(memory.rows("intake_assignment_rules")[0]!, { preprocess: true });
+    await handleIntakeInbound(memory.db, job());
+    expect(memory.rows("intake_outbound")).toEqual([]);
+    expect(
+      mocks.enqueueDbJob.mock.calls.find(([, input]) => input.kind === "intake.preprocess")?.[1].payload,
+    ).toMatchObject({ round: 0, acknowledge: true, condition: "The request is about an NDA" });
   });
   it("fails at once, with a reason an admin can act on, when MikeGC can't read the channel", async () => {
     setup({ payload: slackPayload(), source: "slack" });
@@ -516,15 +665,36 @@ describe("when a message fails for good", () => {
   });
   it("points the thread at a request that was recorded", async () => {
     setup({ payload: slackPayload(), source: "slack", model: false });
-    stubSlack({ "chat.postMessage": () => ({ ok: false, error: "ratelimited" }) });
+    // The request is recorded, then its file can't be downloaded.
+    const fetchMock = vi.mocked(globalThis.fetch);
+    const inner = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (url: string | URL | Request, init?: RequestInit) =>
+      String(url).startsWith("https://files.slack.com/")
+        ? new Response("busy", { status: 503 })
+        : inner(url, init),
+    );
     await expect(handleIntakeInbound(memory.db, job())).rejects.toBeTruthy();
     stubSlack();
     await markIntakeInboundFailed(memory.db, job());
     expect(row()).toMatchObject({
       status: "failed",
       request_id: inboundId,
-      error: "The request was recorded, but MikeGC couldn't add all of its documents or reply in Slack.",
+      error: "The request was recorded, but MikeGC couldn't add all of its documents or reply in its thread.",
     });
+    await deliverQueued();
+    expect(String(slackReplies.text)).toMatch(/^Logged for Legal: </);
+  });
+  it("links the thread before acknowledging, when the job failed before it could", async () => {
+    setup({ payload: slackPayload(), source: "slack", model: false });
+    // Recorded, then Slack refuses the call that links its thread.
+    stubSlack({ "chat.getPermalink": () => ({ ok: false, error: "invalid_auth" }) });
+    await expect(handleIntakeInbound(memory.db, job())).rejects.toBeTruthy();
+    expect(row()).toMatchObject({ request_id: inboundId });
+    expect(memory.rows("intake_channel_links")).toEqual([]);
+    stubSlack();
+    await markIntakeInboundFailed(memory.db, job());
+    expect(memory.rows("intake_channel_links")).toHaveLength(1);
+    await deliverQueued();
     expect(String(slackReplies.text)).toMatch(/^Logged for Legal: </);
   });
   it("releases an email's staged attachments before it settles, so settling can't leave them behind", async () => {

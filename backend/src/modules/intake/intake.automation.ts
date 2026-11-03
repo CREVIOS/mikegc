@@ -1,14 +1,14 @@
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes, createHash } from "node:crypto";
 import type {
   IntakeAssignmentRule,
   IntakeAutomationSettings,
   IntakeAutomationUpdate,
-  IntakeEmailWebhook,
   IntakeInboundSummary,
+  IntakeMailboxConnection,
 } from "@mike/contracts";
 import { getOrgRole, isOrgAdmin } from "../../lib/access";
-import { decryptString, encryptString } from "../../lib/mcp/client";
 import { configuredApiPublicUrl } from "../../lib/runtimeConfig";
+import { safeError } from "../../lib/safeError";
 import {
   failure,
   internalFailure,
@@ -19,7 +19,36 @@ import {
 import type { Db } from "../../lib/supabase";
 import type { IntakeScope } from "./intake.requests";
 import { cleanText } from "./intake.inboundPayload";
-import { SLACK_TOKEN_ERRORS, SlackApiError, slackAuthTest } from "./intake.slack";
+import { GmailApiError, gmailProfile, gmailSendTest, gmailServiceAccount } from "./intake.gmail";
+import { graphNotificationUrl, startMailboxPolling } from "./intake.mailbox";
+import { MicrosoftApiError, clearMicrosoftTokens } from "./intake.microsoft";
+import {
+  checkGraphMailbox,
+  graphDelta,
+  graphSendTest,
+  graphSubscribe,
+  graphUnsubscribe,
+  type GraphCredentials,
+} from "./intake.outlook";
+import {
+  encryptedColumns,
+  graphClientSecret,
+  slackBotToken,
+  slackSigningSecret,
+  teamsClientSecret,
+} from "./intake.secrets";
+import {
+  AUTOMATION_COLUMNS,
+  loadAutomationRow,
+  type AutomationRow,
+} from "./intake.settingsRow";
+import {
+  SLACK_LOOP_SCOPES,
+  SLACK_TOKEN_ERRORS,
+  SlackApiError,
+  slackAuthTest,
+} from "./intake.slack";
+import { checkTeamsCredentials } from "./intake.teams";
 import { namePreprocessRules, openPreprocessRule } from "./intake.preprocess";
 import {
   availableIntakeModels,
@@ -43,78 +72,20 @@ const preprocessRef = (r: RuleRow) =>
 
 /**
  * Automated intake's settings, which an organization's owners and admins
- * manage. Secrets are encrypted at rest and never returned; the email
- * webhook's token is kept only as its SHA-256 hash and last characters.
+ * manage. Secrets are encrypted at rest and never returned.
  */
 
-export type AutomationRow = {
-  org_id: string;
-  email_enabled: boolean;
-  email_token_hash: string | null;
-  email_token_hint: string | null;
-  email_allowed_domains: string[] | null;
-  slack_enabled: boolean;
-  slack_webhook_id: string;
-  slack_team_id: string | null;
-  slack_team_name: string | null;
-  slack_bot_user_id: string | null;
-  slack_signing_secret_encrypted: string | null;
-  slack_signing_secret_iv: string | null;
-  slack_signing_secret_tag: string | null;
-  slack_bot_token_encrypted: string | null;
-  slack_bot_token_iv: string | null;
-  slack_bot_token_tag: string | null;
-  /** The models triage and preprocessing run with; neither runs without one. */
-  triage_model: string | null;
-  preprocessing_model: string | null;
-  configured_by: string | null;
-};
-
-const COLUMNS =
-  "org_id, email_enabled, email_token_hash, email_token_hint, email_allowed_domains, " +
-  "slack_enabled, slack_webhook_id, slack_team_id, slack_team_name, slack_bot_user_id, " +
-  "slack_signing_secret_encrypted, slack_signing_secret_iv, slack_signing_secret_tag, " +
-  "slack_bot_token_encrypted, slack_bot_token_iv, slack_bot_token_tag, " +
-  "triage_model, preprocessing_model, configured_by";
-
-/** The organization's settings, or null before anyone has opened them. */
-export async function loadAutomationRow(
-  db: Db,
-  orgId: string,
-): Promise<AutomationRow | null> {
-  const { data, error } = await db
-    .from("intake_automation")
-    .select(COLUMNS)
-    .eq("org_id", orgId)
-    .maybeSingle();
-  if (error) throw error;
-  return (data as AutomationRow | null) ?? null;
-}
-
-export function slackSigningSecret(row: AutomationRow): string | null {
-  return decryptString(
-    row.slack_signing_secret_encrypted,
-    row.slack_signing_secret_iv,
-    row.slack_signing_secret_tag,
-  );
-}
-
-export function slackBotToken(row: AutomationRow): string | null {
-  return decryptString(
-    row.slack_bot_token_encrypted,
-    row.slack_bot_token_iv,
-    row.slack_bot_token_tag,
-  );
-}
-
-/** How a webhook URL's token is found again without storing it. */
-export function emailTokenHash(token: string): string {
-  return createHash("sha256").update(token).digest("hex");
-}
+export { AUTOMATION_COLUMNS, loadAutomationRow, slackBotToken, slackSigningSecret };
+export type { AutomationRow };
 
 /** Where the organization's Slack app sends its events. */
 export function slackEventsUrl(webhookId: string): string {
   return `${configuredApiPublicUrl()}/webhooks/intake/slack/${webhookId}`;
+}
+
+/** The Azure Bot's messaging endpoint for the organization's Teams bot. */
+export function teamsEventsUrl(webhookId: string): string {
+  return `${configuredApiPublicUrl()}/webhooks/intake/teams/${webhookId}`;
 }
 
 const FORBIDDEN = failure(
@@ -160,6 +131,29 @@ async function ensureRow(
   }
 }
 
+/**
+ * Read the Slack token's scopes again, so the settings page can say when
+ * the app needs reinstalling. Best effort: Slack being unreachable changes
+ * nothing.
+ */
+async function refreshSlackScopes(db: Db, row: AutomationRow): Promise<AutomationRow> {
+  const token = row.slack_enabled ? slackBotToken(row) : null;
+  if (!token) return row;
+  try {
+    const identity = await slackAuthTest(token);
+    if (!identity.scopes || JSON.stringify(identity.scopes) === JSON.stringify(row.slack_scopes))
+      return row;
+    await db
+      .from("intake_automation")
+      .update({ slack_scopes: identity.scopes })
+      .eq("org_id", row.org_id);
+    return { ...row, slack_scopes: identity.scopes };
+  } catch (error) {
+    console.warn("[intake-automation] Slack scopes not checked", safeError(error));
+    return row;
+  }
+}
+
 async function present(
   db: Db,
   scope: IntakeScope,
@@ -178,7 +172,7 @@ async function present(
         .order("position", { ascending: true }),
       db
         .from("intake_inbound")
-        .select("id, source, status, error, request_id, created_at")
+        .select("id, source, kind, status, error, request_id, created_at")
         .eq("org_id", scope.orgId)
         .order("created_at", { ascending: false })
         .limit(20),
@@ -196,12 +190,28 @@ async function present(
       scope.actorId,
       ruleRows.map(preprocessRef),
     );
+    const gmail = gmailServiceAccount();
     return ok({
+      clarify_enabled: row.clarify_enabled !== false,
       email: {
         enabled: row.email_enabled,
-        configured: row.email_token_hash !== null,
-        token_hint: row.email_token_hint,
+        provider: row.email_provider,
+        mailbox: row.email_mailbox,
         allowed_domains: row.email_allowed_domains ?? [],
+        from_name: row.email_from_name?.trim() || "Legal",
+        graph: {
+          tenant_id: row.graph_tenant_id,
+          client_id: row.graph_client_id,
+          secret_set: row.graph_client_secret_encrypted !== null,
+        },
+        notification_url: graphNotificationUrl(row.email_webhook_id),
+        gmail_client_id: gmail ? gmail.client_id ?? gmail.client_email : null,
+        status: {
+          subscription_expires_at: row.graph_subscription_expires_at,
+          last_read_at: row.email_last_read_at,
+          error: row.email_error,
+        },
+        needs_reconnect: row.email_reconnect_notice && !row.email_provider,
       },
       slack: {
         enabled: row.slack_enabled,
@@ -212,6 +222,21 @@ async function present(
         team_id: row.slack_team_id,
         team_name: row.slack_team_name,
         bot_user_id: row.slack_bot_user_id,
+        missing_scopes: row.slack_scopes
+          ? SLACK_LOOP_SCOPES.filter((s) => !row.slack_scopes!.includes(s))
+          : [],
+        message_events_seen: row.slack_messages_seen_at !== null,
+      },
+      teams: {
+        enabled: row.teams_enabled,
+        events_url: teamsEventsUrl(row.teams_webhook_id),
+        configured:
+          !!row.teams_app_id &&
+          !!row.teams_tenant_id &&
+          row.teams_client_secret_encrypted !== null,
+        app_id: row.teams_app_id,
+        tenant_id: row.teams_tenant_id,
+        files_access: row.teams_files_access,
       },
       models: {
         available: (viewer ?? runner).available,
@@ -229,6 +254,7 @@ async function present(
       recent: ((recent.data ?? []) as IntakeInboundSummary[]).map((r) => ({
         id: r.id,
         source: r.source,
+        kind: r.kind ?? "request",
         status: r.status,
         error: r.error,
         request_id: r.request_id,
@@ -248,7 +274,7 @@ export async function getIntakeAutomation(
   if (refused) return refused;
   const row = await ensureRow(db, scope);
   if (!row.ok) return row;
-  return present(db, scope, row.data);
+  return present(db, scope, await refreshSlackScopes(db, row.data));
 }
 
 const DOMAIN =
@@ -279,23 +305,12 @@ const ENCRYPTION_UNAVAILABLE = failure(
   "Secrets can't be saved because the server's encryption secret isn't configured.",
 );
 
-function encrypted(prefix: string, value: string): Record<string, string> | null {
-  try {
-    const sealed = encryptString(value);
-    return {
-      [`${prefix}_encrypted`]: sealed.encrypted,
-      [`${prefix}_iv`]: sealed.iv,
-      [`${prefix}_tag`]: sealed.tag,
-    };
-  } catch {
-    return null;
-  }
-}
-
-/** Check a bot token with Slack and learn its workspace and bot user. */
+/** Check a bot token with Slack and learn its workspace, bot user and scopes. */
 async function checkBotToken(
   token: string,
-): Promise<ServiceResult<{ team_id: string; team: string | null; user_id: string }>> {
+): Promise<
+  ServiceResult<{ team_id: string; team: string | null; user_id: string; scopes: string[] | null }>
+> {
   try {
     return ok(await slackAuthTest(token));
   } catch (error) {
@@ -339,15 +354,22 @@ export async function updateIntakeAutomation(
     patch.email_allowed_domains = domains.data;
   }
   if (input.slack_signing_secret !== undefined) {
-    const sealed = encrypted("slack_signing_secret", input.slack_signing_secret.trim());
+    const sealed = encryptedColumns("slack_signing_secret", input.slack_signing_secret.trim());
     if (!sealed) return ENCRYPTION_UNAVAILABLE;
     Object.assign(patch, sealed);
   }
+  if (input.clarify_enabled !== undefined) patch.clarify_enabled = input.clarify_enabled;
+  if (input.email_from_name !== undefined) {
+    const name = cleanText(input.email_from_name).replace(/[\r\n<>"]/g, " ").trim();
+    if (name.length < 1 || name.length > 80)
+      return failure("validation", "Give the sender name 1 to 80 characters.");
+    patch.email_from_name = name;
+  }
   if (input.email_enabled !== undefined) {
-    if (input.email_enabled && !row.email_token_hash)
+    if (input.email_enabled && !row.email_provider)
       return failure(
         "validation",
-        "Generate the email webhook URL before turning email on.",
+        "Connect the intake mailbox before turning email on.",
       );
     patch.email_enabled = input.email_enabled;
   }
@@ -458,17 +480,58 @@ export async function updateIntakeAutomation(
       }
     }
   }
+  // Teams: the IDs as given; the credentials are checked with Microsoft
+  // once the app ID, tenant ID and secret are all known.
+  if (input.teams_app_id !== undefined) patch.teams_app_id = input.teams_app_id.trim().toLowerCase();
+  if (input.teams_tenant_id !== undefined) patch.teams_tenant_id = input.teams_tenant_id.trim().toLowerCase();
+  const teamsSecret = input.teams_client_secret?.trim() ?? teamsClientSecret(row);
+  const teamsApp = (patch.teams_app_id as string | undefined) ?? row.teams_app_id;
+  const teamsTenant = (patch.teams_tenant_id as string | undefined) ?? row.teams_tenant_id;
+  if (input.teams_client_secret !== undefined) {
+    const sealed = encryptedColumns("teams_client_secret", input.teams_client_secret.trim());
+    if (!sealed) return ENCRYPTION_UNAVAILABLE;
+    Object.assign(patch, sealed);
+  }
+  if (input.teams_enabled !== undefined) {
+    if (input.teams_enabled && !(teamsApp && teamsTenant && teamsSecret))
+      return failure(
+        "validation",
+        "Save the Teams app ID, tenant ID and client secret before turning Teams on.",
+      );
+    patch.teams_enabled = input.teams_enabled;
+  }
+  const teamsChanged =
+    input.teams_app_id !== undefined ||
+    input.teams_tenant_id !== undefined ||
+    input.teams_client_secret !== undefined;
+  if (teamsChanged && teamsApp && teamsTenant && teamsSecret) {
+    const checked = await checkTeamsCredentials({
+      appId: teamsApp,
+      tenantId: teamsTenant,
+      secret: teamsSecret,
+    });
+    if (!checked.ok)
+      return checked.refused
+        ? failure(
+            "validation",
+            "Microsoft didn't accept these Teams credentials. Check the app ID, tenant ID and client secret.",
+            "teams_credentials_invalid",
+          )
+        : failure("unavailable", "Couldn't reach Microsoft to check the Teams credentials. Try again.");
+    patch.teams_files_access = checked.filesAccess;
+  }
   // Checked with Slack last, once everything local is known to be valid.
   if (input.slack_bot_token !== undefined) {
     const token = input.slack_bot_token.trim();
     const identity = await checkBotToken(token);
     if (!identity.ok) return identity;
-    const sealed = encrypted("slack_bot_token", token);
+    const sealed = encryptedColumns("slack_bot_token", token);
     if (!sealed) return ENCRYPTION_UNAVAILABLE;
     Object.assign(patch, sealed, {
       slack_team_id: identity.data.team_id,
       slack_team_name: identity.data.team,
       slack_bot_user_id: identity.data.user_id,
+      slack_scopes: identity.data.scopes,
     });
   }
 
@@ -514,32 +577,202 @@ async function replaceRules(
   return ok(null);
 }
 
+const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+const ID = /^[A-Za-z0-9.-]{1,200}$/;
+
+/** What a failed mailbox call means for the admin connecting it. */
+function mailboxFailure(error: unknown, fallback: string): ServiceFailure {
+  if ((error instanceof MicrosoftApiError || error instanceof GmailApiError) && error.permanent)
+    return failure("validation", error.sentence, "intake_mailbox_refused");
+  if (error instanceof MicrosoftApiError || error instanceof GmailApiError)
+    return failure("unavailable", fallback);
+  return internalFailure(error);
+}
+
 /**
- * A new email webhook URL, which replaces the previous one. Its token is the
- * credential, so it is returned only now; MikeGC keeps its hash.
+ * Connect the organization's intake mailbox: Microsoft 365 through Graph,
+ * or Google Workspace through the Gmail API. MikeGC checks it can open the
+ * mailbox, records only mail that arrives from now on, starts reading it,
+ * and turns email on. The sender domains start with the address's own.
  */
-export async function generateIntakeEmailWebhook(
+export async function connectIntakeMailbox(
   db: Db,
-  scope: IntakeScope,
-): Promise<ServiceResult<IntakeEmailWebhook>> {
+  scope: IntakeScope & { userEmail?: string | null },
+  input: IntakeMailboxConnection,
+): Promise<ServiceResult<IntakeAutomationSettings>> {
   const refused = await denied(db, scope);
   if (refused) return refused;
   const current = await ensureRow(db, scope);
   if (!current.ok) return current;
-  const token = randomBytes(32).toString("base64url");
-  const hint = token.slice(-4);
+  const row = current.data;
+  const mailbox = input.mailbox.trim().toLowerCase();
+  if (!EMAIL.test(mailbox) || mailbox.length > 320)
+    return failure("validation", "Enter the intake address, such as intake@example.com.");
+  const patch: Record<string, unknown> = {
+    email_provider: input.provider,
+    email_mailbox: mailbox,
+    email_enabled: true,
+    email_error: null,
+    email_reconnect_notice: false,
+    email_last_read_at: new Date().toISOString(),
+    configured_by: scope.actorId,
+    updated_at: new Date().toISOString(),
+  };
+  const domain = mailbox.split("@").pop()!;
+  if (!(row.email_allowed_domains ?? []).length) patch.email_allowed_domains = [domain];
+  if (input.provider === "graph") {
+    const tenantId = input.tenant_id.trim().toLowerCase();
+    const clientId = input.client_id.trim().toLowerCase();
+    if (!ID.test(tenantId) || !ID.test(clientId))
+      return failure("validation", "Enter the Entra app's tenant ID and client ID.");
+    const secret = input.client_secret?.trim() || graphClientSecret(row);
+    if (!secret) return failure("validation", "Enter the Entra app's client secret.");
+    if (input.client_secret) {
+      const sealed = encryptedColumns("graph_client_secret", secret);
+      if (!sealed) return ENCRYPTION_UNAVAILABLE;
+      Object.assign(patch, sealed);
+    }
+    clearMicrosoftTokens();
+    const credentials: GraphCredentials = { tenantId, clientId, clientSecret: secret, mailbox };
+    try {
+      await checkGraphMailbox(credentials);
+      // Mail from now on: the first delta read starts at this moment.
+      patch.graph_delta_link = (await graphDelta(credentials, null)).deltaLink;
+    } catch (error) {
+      return mailboxFailure(error, "Couldn't reach Microsoft to check the mailbox. Try again.");
+    }
+    if (row.graph_subscription_id && row.graph_tenant_id && row.graph_client_id && row.email_mailbox) {
+      const old = graphClientSecret(row);
+      if (old)
+        await graphUnsubscribe(
+          { tenantId: row.graph_tenant_id, clientId: row.graph_client_id, clientSecret: old, mailbox: row.email_mailbox },
+          row.graph_subscription_id,
+        );
+    }
+    const clientState = randomBytes(32).toString("base64url");
+    try {
+      const subscription = await graphSubscribe(credentials, {
+        notificationUrl: graphNotificationUrl(row.email_webhook_id),
+        clientState,
+      });
+      Object.assign(patch, {
+        graph_subscription_id: subscription.id,
+        graph_subscription_expires_at: subscription.expiresAt,
+        graph_client_state_hash: createHash("sha256").update(clientState).digest("hex"),
+      });
+    } catch (error) {
+      // Without notifications, the mailbox is still read every 15 minutes.
+      console.warn("[intake-automation] Graph subscription not created", safeError(error));
+      Object.assign(patch, {
+        graph_subscription_id: null,
+        graph_subscription_expires_at: null,
+        email_error:
+          "Microsoft couldn't reach MikeGC's notification URL, so MikeGC reads the mailbox every 15 minutes instead.",
+      });
+    }
+    Object.assign(patch, {
+      graph_tenant_id: tenantId,
+      graph_client_id: clientId,
+      gmail_history_id: null,
+    });
+  } else {
+    if (!gmailServiceAccount())
+      return failure(
+        "unavailable",
+        "This deployment has no Gmail service account. Set INTAKE_GMAIL_SERVICE_ACCOUNT_KEY first.",
+      );
+    try {
+      const profile = await gmailProfile(mailbox);
+      patch.gmail_history_id = profile.historyId;
+    } catch (error) {
+      return mailboxFailure(error, "Couldn't reach Gmail to check the mailbox. Try again.");
+    }
+    Object.assign(patch, { graph_delta_link: null, graph_subscription_id: null, graph_subscription_expires_at: null });
+  }
+  const { error } = await db.from("intake_automation").update(patch).eq("org_id", scope.orgId);
+  if (error) return internalFailure(error);
+  try {
+    await startMailboxPolling(db, scope.orgId);
+  } catch (cause) {
+    return internalFailure(cause);
+  }
+  const updated = await ensureRow(db, scope);
+  if (!updated.ok) return updated;
+  // The test message to the admin: best effort, the button sends another.
+  if (scope.userEmail) await sendTest(updated.data, scope.userEmail).catch(() => undefined);
+  return present(db, scope, updated.data);
+}
+
+/** Stop reading the intake mailbox. The sender domains stay for next time. */
+export async function disconnectIntakeMailbox(
+  db: Db,
+  scope: IntakeScope,
+): Promise<ServiceResult<IntakeAutomationSettings>> {
+  const refused = await denied(db, scope);
+  if (refused) return refused;
+  const current = await ensureRow(db, scope);
+  if (!current.ok) return current;
+  const row = current.data;
+  const secret = graphClientSecret(row);
+  if (row.graph_subscription_id && row.graph_tenant_id && row.graph_client_id && secret && row.email_mailbox)
+    await graphUnsubscribe(
+      { tenantId: row.graph_tenant_id, clientId: row.graph_client_id, clientSecret: secret, mailbox: row.email_mailbox },
+      row.graph_subscription_id,
+    );
   const { error } = await db
     .from("intake_automation")
     .update({
-      email_token_hash: emailTokenHash(token),
-      email_token_hint: hint,
+      email_enabled: false,
+      email_provider: null,
+      email_error: null,
+      graph_subscription_id: null,
+      graph_subscription_expires_at: null,
+      graph_client_state_hash: null,
+      graph_delta_link: null,
+      gmail_history_id: null,
       configured_by: scope.actorId,
       updated_at: new Date().toISOString(),
     })
     .eq("org_id", scope.orgId);
   if (error) return internalFailure(error);
-  return ok({
-    webhook_url: `${configuredApiPublicUrl()}/webhooks/intake/email/${token}`,
-    token_hint: hint,
-  });
+  const updated = await ensureRow(db, scope);
+  if (!updated.ok) return updated;
+  return present(db, scope, updated.data);
+}
+
+async function sendTest(row: AutomationRow, to: string) {
+  const fromName = row.email_from_name?.trim() || "Legal";
+  if (row.email_provider === "graph") {
+    const secret = graphClientSecret(row);
+    if (!secret || !row.graph_tenant_id || !row.graph_client_id || !row.email_mailbox)
+      throw new Error("not connected");
+    await graphSendTest(
+      { tenantId: row.graph_tenant_id, clientId: row.graph_client_id, clientSecret: secret, mailbox: row.email_mailbox },
+      to,
+      fromName,
+    );
+  } else if (row.email_provider === "gmail" && row.email_mailbox) {
+    await gmailSendTest(row.email_mailbox, to, fromName);
+  } else throw new Error("not connected");
+}
+
+/** Send a test email from the intake mailbox to the admin asking. */
+export async function sendIntakeMailboxTest(
+  db: Db,
+  scope: IntakeScope & { userEmail?: string | null },
+): Promise<ServiceResult<{ sent_to: string }>> {
+  const refused = await denied(db, scope);
+  if (refused) return refused;
+  const current = await ensureRow(db, scope);
+  if (!current.ok) return current;
+  if (!current.data.email_provider)
+    return failure("validation", "Connect the intake mailbox first.");
+  const to = scope.userEmail?.trim();
+  if (!to) return failure("validation", "Your account has no email address to send the test to.");
+  try {
+    await sendTest(current.data, to);
+  } catch (error) {
+    return mailboxFailure(error, "Couldn't send the test email. Try again.");
+  }
+  return ok({ sent_to: to });
 }

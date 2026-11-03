@@ -7,6 +7,9 @@ import { intakeRulesRpc, memoryDb, type MemoryDb } from "./memoryDb";
 
 const mocks = vi.hoisted(() => ({
   memory: null as unknown as { db: unknown },
+  gmailProfile: vi.fn(),
+  gmailSendTest: vi.fn(),
+  enqueueDbJob: vi.fn(),
   getEffectiveApiKeys: vi.fn(),
   envApiKeys: vi.fn(),
   getPlaybook: vi.fn(),
@@ -27,6 +30,12 @@ vi.mock("../../user/user.service", () => ({
   getEffectiveApiKeys: mocks.getEffectiveApiKeys,
   envApiKeys: mocks.envApiKeys,
 }));
+vi.mock("../intake.gmail", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../intake.gmail")>()),
+  gmailProfile: mocks.gmailProfile,
+  gmailSendTest: mocks.gmailSendTest,
+}));
+vi.mock("../../../lib/dbq/enqueue", () => ({ enqueueDbJob: mocks.enqueueDbJob }));
 vi.mock("../../../lib/supabase", () => ({
   createServerSupabase: () => mocks.memory.db,
 }));
@@ -37,11 +46,15 @@ vi.mock("../../../middleware/auth", () => ({
     next: express.NextFunction,
   ) => {
     res.locals.userId = mocks.userId;
+    res.locals.userEmail = "olive@firm.test";
     next();
   },
 }));
+import { clearMicrosoftTokens } from "../intake.microsoft";
 import {
-  generateIntakeEmailWebhook,
+  connectIntakeMailbox,
+  disconnectIntakeMailbox,
+  sendIntakeMailboxTest,
   getIntakeAutomation,
   normalizeDomains,
   slackBotToken,
@@ -78,6 +91,9 @@ app.use("/intake", intakeRouter);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  clearMicrosoftTokens();
+  delete process.env.INTAKE_GMAIL_SERVICE_ACCOUNT_KEY;
+  mocks.enqueueDbJob.mockResolvedValue({ id: "job-1", deduped: false });
   process.env.MCP_CONNECTORS_ENCRYPTION_SECRET = "test-encryption-secret-for-intake";
   process.env.API_PUBLIC_URL = "https://app.example.com/api/";
   mocks.envApiKeys.mockReturnValue({});
@@ -110,7 +126,9 @@ describe("who manages automated intake", () => {
     for (const result of [
       await getIntakeAutomation(memory.db, scope(actor)),
       await updateIntakeAutomation(memory.db, scope(actor), { email_enabled: false }),
-      await generateIntakeEmailWebhook(memory.db, scope(actor)),
+      await connectIntakeMailbox(memory.db, scope(actor), { provider: "gmail", mailbox: "intake@firm.test" }),
+      await disconnectIntakeMailbox(memory.db, scope(actor)),
+      await sendIntakeMailboxTest(memory.db, scope(actor)),
     ])
       expect(result).toMatchObject({ ok: false, kind: "forbidden" });
     expect(memory.rows("intake_automation")).toEqual([]);
@@ -120,7 +138,19 @@ describe("who manages automated intake", () => {
     expect(result).toEqual({
       ok: true,
       data: {
-        email: { enabled: false, configured: false, token_hint: null, allowed_domains: [] },
+        clarify_enabled: true,
+        email: {
+          enabled: false,
+          provider: null,
+          mailbox: null,
+          allowed_domains: [],
+          from_name: "Legal",
+          graph: { tenant_id: null, client_id: null, secret_set: false },
+          notification_url: `https://app.example.com/api/webhooks/intake/graph/${row().email_webhook_id}`,
+          gmail_client_id: null,
+          status: { subscription_expires_at: null, last_read_at: null, error: null },
+          needs_reconnect: false,
+        },
         slack: {
           enabled: false,
           events_url: `https://app.example.com/api/webhooks/intake/slack/${row().slack_webhook_id}`,
@@ -128,6 +158,16 @@ describe("who manages automated intake", () => {
           team_id: null,
           team_name: null,
           bot_user_id: null,
+          missing_scopes: [],
+          message_events_seen: false,
+        },
+        teams: {
+          enabled: false,
+          events_url: `https://app.example.com/api/webhooks/intake/teams/${row().teams_webhook_id}`,
+          configured: false,
+          app_id: null,
+          tenant_id: null,
+          files_access: null,
         },
         models: {
           available: expect.arrayContaining(["claude-haiku-4-5", "claude-sonnet-5-5"]),
@@ -244,7 +284,7 @@ describe("who manages automated intake", () => {
       source: i % 2 ? "slack" : "email",
       external_id: `m-${i}`,
       status: "done",
-      payload: { text: "secret" },
+      payload: { text: "the message's own words" },
       request_id: null,
       error: null,
       created_at: new Date(Date.UTC(2026, 10, 1, 0, i)).toISOString(),
@@ -255,12 +295,13 @@ describe("who manages automated intake", () => {
     expect(result.data.recent[0]).toEqual({
       id: "00000000-0000-4000-8000-000000000121",
       source: "slack",
+      kind: "request",
       status: "done",
       error: null,
       request_id: null,
       created_at: new Date(Date.UTC(2026, 10, 1, 0, 21)).toISOString(),
     });
-    expect(JSON.stringify(result.data)).not.toContain("secret");
+    expect(JSON.stringify(result.data)).not.toContain("the message's own words");
   });
 });
 
@@ -325,31 +366,208 @@ describe("saving Slack's credentials", () => {
   });
 });
 
-describe("the email webhook URL", () => {
-  it("is a fresh secret token, kept only as its hash, and replaces the last one", async () => {
-    const first = await generateIntakeEmailWebhook(memory.db, scope(owner));
-    if (!first.ok) throw new Error("expected a URL");
-    const token = first.data.webhook_url.split("/").pop()!;
-    expect(first.data.webhook_url).toBe(
-      `https://app.example.com/api/webhooks/intake/email/${token}`,
+/** A Microsoft token whose payload grants `roles`, as Entra issues one. */
+const msToken = (roles: string[] = []) =>
+  `h.${Buffer.from(JSON.stringify({ roles })).toString("base64url")}.s`;
+
+describe("the intake mailbox", () => {
+  it("connects Microsoft 365: checks the mailbox, starts at now, subscribes and starts reading", async () => {
+    const calls: { url: string; method: string; body: unknown }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL, init?: RequestInit) => {
+        const target = String(url);
+        const body = typeof init?.body === "string" ? init.body : init?.body ? String(init.body) : null;
+        calls.push({ url: target, method: init?.method ?? "GET", body });
+        if (target.startsWith("https://login.microsoftonline.com/"))
+          return Response.json({ access_token: msToken(), expires_in: 3600 });
+        if (target.includes("/mailFolders/inbox")) return Response.json({ id: "inbox" });
+        if (target.includes("/messages/delta"))
+          return Response.json({ value: [], "@odata.deltaLink": "https://graph.microsoft.com/v1.0/delta?token=1" });
+        if (target.endsWith("/subscriptions"))
+          return Response.json({ id: "sub-1", expirationDateTime: "2026-11-06T10:00:00Z" });
+        if (target.endsWith("/sendMail")) return new Response(null, { status: 202 });
+        return Response.json({}, { status: 404 });
+      }),
     );
-    expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    expect(first.data.token_hint).toBe(token.slice(-4));
-    expect(row()).toMatchObject({
-      email_token_hash: createHash("sha256").update(token).digest("hex"),
-      email_token_hint: token.slice(-4),
-      configured_by: owner,
-    });
-    expect(JSON.stringify(memory.tables)).not.toContain(token);
-    const second = await generateIntakeEmailWebhook(memory.db, scope(owner));
-    expect(second.ok && second.data.webhook_url).not.toBe(first.data.webhook_url);
-    const settings = await updateIntakeAutomation(memory.db, scope(owner), {
-      email_enabled: true,
-    });
-    expect(settings).toMatchObject({
+    const result = await connectIntakeMailbox(
+      memory.db,
+      { ...scope(owner), userEmail: "olive@firm.test" },
+      {
+        provider: "graph",
+        mailbox: "Intake@Firm.test",
+        tenant_id: "tenant-1",
+        client_id: "client-1",
+        client_secret: "graph-secret",
+      },
+    );
+    expect(result).toMatchObject({
       ok: true,
-      data: { email: { enabled: true, configured: true } },
+      data: {
+        email: {
+          enabled: true,
+          provider: "graph",
+          mailbox: "intake@firm.test",
+          // The sender domains start with the address's own.
+          allowed_domains: ["firm.test"],
+          graph: { tenant_id: "tenant-1", client_id: "client-1", secret_set: true },
+          status: { subscription_expires_at: "2026-11-06T10:00:00Z", error: null },
+        },
+      },
     });
+    // Mail already there isn't recorded: the first read starts now.
+    expect(calls.find((c) => c.url.includes("/messages/delta"))?.url).toMatch(/receivedDateTime%20ge%20/);
+    const subscription = JSON.parse(String(calls.find((c) => c.url.endsWith("/subscriptions"))!.body));
+    expect(subscription).toMatchObject({
+      changeType: "created",
+      resource: "users/intake@firm.test/mailFolders('Inbox')/messages",
+      notificationUrl: `https://app.example.com/api/webhooks/intake/graph/${row().email_webhook_id}`,
+    });
+    // Only the client state's hash is kept; the secret is encrypted.
+    expect(row().graph_client_state_hash).toBe(
+      createHash("sha256").update(subscription.clientState).digest("hex"),
+    );
+    expect(JSON.stringify(memory.tables)).not.toContain("graph-secret");
+    expect(row().graph_delta_link).toBe("https://graph.microsoft.com/v1.0/delta?token=1");
+    // Reading starts, and the admin gets a test email.
+    expect(mocks.enqueueDbJob).toHaveBeenCalledWith(memory.db, expect.objectContaining({
+      kind: "intake.mailbox.poll",
+      dedupeKey: `intake.mailbox.poll:${org}`,
+    }));
+    expect(calls.some((c) => c.url.endsWith("/users/intake%40firm.test/sendMail"))).toBe(true);
+  });
+  it("says what to fix when Microsoft refuses the app", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL) =>
+        String(url).startsWith("https://login.microsoftonline.com/")
+          ? Response.json({ error: "invalid_client" }, { status: 401 })
+          : Response.json({}),
+      ),
+    );
+    const result = await connectIntakeMailbox(memory.db, scope(owner), {
+      provider: "graph",
+      mailbox: "intake@firm.test",
+      tenant_id: "tenant-1",
+      client_id: "client-1",
+      client_secret: "wrong",
+    });
+    expect(result).toMatchObject({ ok: false, kind: "validation", detail: expect.stringMatching(/tenant ID, client ID and secret/) });
+    expect(row().email_provider).toBeNull();
+  });
+  it("connects Google Workspace from the mailbox's current history, with the deployment's service account", async () => {
+    expect(
+      await connectIntakeMailbox(memory.db, scope(owner), { provider: "gmail", mailbox: "intake@firm.test" }),
+    ).toMatchObject({ ok: false, kind: "unavailable", detail: expect.stringMatching(/INTAKE_GMAIL_SERVICE_ACCOUNT_KEY/) });
+    process.env.INTAKE_GMAIL_SERVICE_ACCOUNT_KEY = JSON.stringify({
+      client_email: "mikegc@project.iam.gserviceaccount.com",
+      private_key: "-----BEGIN PRIVATE KEY-----",
+      client_id: "1234567890",
+    });
+    mocks.gmailProfile.mockResolvedValue({ emailAddress: "intake@firm.test", historyId: "9001" });
+    const result = await connectIntakeMailbox(
+      memory.db,
+      { ...scope(owner), userEmail: "olive@firm.test" },
+      { provider: "gmail", mailbox: "intake@firm.test" },
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      data: { email: { provider: "gmail", enabled: true, gmail_client_id: "1234567890" } },
+    });
+    expect(row().gmail_history_id).toBe("9001");
+    expect(mocks.gmailSendTest).toHaveBeenCalledWith("intake@firm.test", "olive@firm.test", "Legal");
+    // A test email on request, then disconnecting stops email.
+    expect(await sendIntakeMailboxTest(memory.db, { ...scope(owner), userEmail: "olive@firm.test" })).toEqual({
+      ok: true,
+      data: { sent_to: "olive@firm.test" },
+    });
+    expect(await disconnectIntakeMailbox(memory.db, scope(owner))).toMatchObject({
+      ok: true,
+      data: { email: { enabled: false, provider: null } },
+    });
+    expect(
+      await updateIntakeAutomation(memory.db, scope(owner), { email_enabled: true }),
+    ).toMatchObject({ ok: false, kind: "validation" });
+  });
+  it("tells an organization that used Postmark to connect its mailbox", async () => {
+    memory.tables.intake_automation = [{ ...row(), org_id: org }];
+    await getIntakeAutomation(memory.db, scope(owner));
+    row().email_reconnect_notice = true;
+    const result = await getIntakeAutomation(memory.db, scope(owner));
+    expect(result.ok && result.data.email.needs_reconnect).toBe(true);
+  });
+});
+
+describe("Teams", () => {
+  const teams = {
+    teams_app_id: "11111111-1111-4111-8111-111111111111",
+    teams_tenant_id: "22222222-2222-4222-8222-222222222222",
+    teams_client_secret: "teams-secret",
+  };
+  it("checks the app's credentials with Microsoft and detects document access", async () => {
+    const fetchMock = vi.fn(async (_url: string | URL, init?: RequestInit) => {
+      const scope = new URLSearchParams(String(init?.body)).get("scope");
+      return Response.json({
+        access_token: msToken(scope === "https://graph.microsoft.com/.default" ? ["Sites.Selected"] : []),
+        expires_in: 3600,
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await updateIntakeAutomation(memory.db, scope(owner), { ...teams, teams_enabled: true });
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        teams: {
+          enabled: true,
+          configured: true,
+          app_id: teams.teams_app_id,
+          tenant_id: teams.teams_tenant_id,
+          files_access: true,
+          events_url: `https://app.example.com/api/webhooks/intake/teams/${row().teams_webhook_id}`,
+        },
+      },
+    });
+    expect(String(fetchMock.mock.calls[0]![0])).toBe(
+      `https://login.microsoftonline.com/${teams.teams_tenant_id}/oauth2/v2.0/token`,
+    );
+    expect(JSON.stringify(memory.tables)).not.toContain("teams-secret");
+  });
+  it("refuses credentials Microsoft refuses, and won't turn Teams on without them", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ error: "invalid_client" }, { status: 401 })));
+    expect(await updateIntakeAutomation(memory.db, scope(owner), teams)).toMatchObject({
+      ok: false,
+      kind: "validation",
+      code: "teams_credentials_invalid",
+    });
+    expect(await updateIntakeAutomation(memory.db, scope(owner), { teams_enabled: true })).toMatchObject({
+      ok: false,
+      kind: "validation",
+    });
+    expect(row().teams_enabled).toBe(false);
+  });
+});
+
+describe("asking requesters", () => {
+  it("is on by default and can be switched off", async () => {
+    const off = await updateIntakeAutomation(memory.db, scope(owner), { clarify_enabled: false });
+    expect(off.ok && off.data.clarify_enabled).toBe(false);
+  });
+  it("names the Slack scopes the requester loop still needs", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json(
+          { ok: true, team_id: "T1", team: "Acme", user_id: "UBOT" },
+          { headers: { "x-oauth-scopes": "app_mentions:read,chat:write,channels:history" } },
+        ),
+      ),
+    );
+    const saved = await updateIntakeAutomation(memory.db, scope(owner), {
+      slack_signing_secret: "s",
+      slack_bot_token: "xoxb-1",
+      slack_enabled: true,
+    });
+    expect(saved.ok && saved.data.slack.missing_scopes).toEqual(["files:write", "chat:write.customize"]);
   });
 });
 
@@ -516,7 +734,8 @@ describe("automation routes", () => {
   it("answers a member with 403 and an admin with the settings", async () => {
     mocks.userId = member;
     expect((await request(app).get(path)).status).toBe(403);
-    expect((await request(app).post(`${path}/email-webhook`)).status).toBe(403);
+    expect((await request(app).post(`${path}/mailbox/test`)).status).toBe(403);
+    expect((await request(app).delete(`${path}/mailbox`)).status).toBe(403);
     mocks.userId = admin;
     const res = await request(app).patch(path).send({ email_allowed_domains: ["acme.test"] });
     expect(res.status).toBe(200);
@@ -524,8 +743,9 @@ describe("automation routes", () => {
     // Triage can't be switched off: it runs whenever a model is available.
     const off = await request(app).patch(path).send({ triage_enabled: false });
     expect(off.status).toBe(400);
-    const made = await request(app).post(`${path}/email-webhook`);
-    expect(made.status).toBe(201);
-    expect(made.body.webhook_url).toMatch(/\/webhooks\/intake\/email\/[A-Za-z0-9_-]{43}$/);
+    // The Postmark webhook generator is gone.
+    expect((await request(app).post(`${path}/email-webhook`)).status).toBe(404);
+    const bad = await request(app).post(`${path}/mailbox`).send({ provider: "imap", mailbox: "x@y.test" });
+    expect(bad.status).toBe(400);
   });
 });

@@ -714,7 +714,7 @@ export interface AuditActorPage {
  * contacts, not accounts. Dates are business targets, not legal deadlines.
  */
 export type IntakeState = "submitted" | "in_review" | "needs_information" | "resolved" | "cancelled";
-export type IntakeAction = "assignment" | "notes" | "wait" | "resume" | "resolve" | "cancel" | "reopen" | "delete";
+export type IntakeAction = "assignment" | "notes" | "wait" | "resume" | "resolve" | "cancel" | "reopen" | "delete" | "stop_asking";
 export interface IntakeMember {
   user_id: string; display_name: string | null; email: string | null;
   /** A data URL, or null when the member has not set a photo. */
@@ -734,11 +734,44 @@ export interface IntakeRequestSummary extends Omit<IntakeDetails, "description">
   id: string; state: IntakeState; version: number;
   assignee_id: string | null; assignee_name: string | null;
   created_at: string; updated_at: string;
+  /** The stage MikeGC is waiting on the requester's answer for, if any. */
+  clarify_stage: IntakeClarifyStage | null;
+  /** The requester replied after the request was last opened. */
+  new_reply: boolean;
   capabilities: { assign: boolean; cancel: boolean; delete: boolean };
 }
 export interface IntakeRequestPage { requests: IntakeRequestSummary[]; next_cursor: string | null }
-/** Where a request came from: typed by a member, or recorded by MikeGC. */
-export type IntakeSource = "manual" | "email" | "slack";
+/**
+ * Where a request came from: typed by a member, or recorded by MikeGC from a
+ * channel. "email" is a request recorded through Postmark, before MikeGC
+ * read the intake mailbox itself.
+ */
+export type IntakeSource = "manual" | "email" | "slack" | "outlook" | "gmail" | "teams";
+/** A channel MikeGC holds a conversation with the requester in. */
+export type IntakeChannel = "slack" | "outlook" | "gmail" | "teams";
+/**
+ * Which question MikeGC is waiting on the requester to answer: what it needs
+ * to choose a triage rule, or what the rule's playbook or workflow needs.
+ */
+export type IntakeClarifyStage = "rule" | "readiness";
+/** The thread a request came from, where messages to the requester go. */
+export interface IntakeConversation {
+  source: IntakeChannel;
+  /** Slack or Teams channel name, without "#", when known. */
+  channel_name: string | null;
+  /** Teams team name, when known. */
+  team_name: string | null;
+  /** A link to the thread: a Slack permalink or a Teams deep link. */
+  permalink: string | null;
+  /** Email: the intake mailbox replies come from, and their recipients. */
+  mailbox: string | null;
+  to: string[];
+  cc: string[];
+  /** Email: the most a message's attachments can add up to, in bytes. */
+  max_attachment_bytes: number | null;
+  /** False when the channel can take text only, such as a Slack app without files:write. */
+  documents: boolean;
+}
 export interface IntakeRequest extends Omit<IntakeRequestSummary, "capabilities">, IntakeDetails {
   org_id: string;
   /**
@@ -747,40 +780,99 @@ export interface IntakeRequest extends Omit<IntakeRequestSummary, "capabilities"
    */
   created_by: string | null; created_by_name: string;
   source: IntakeSource;
+  /** How many of its automatic rounds of questions MikeGC has asked. */
+  clarify_rounds: number;
+  clarify_max_rounds: number;
+  /** The request's thread, or null when it has none to send to. */
+  conversation: IntakeConversation | null;
   capabilities: {
     edit: boolean; assign: boolean; note: boolean; wait: boolean;
     resume: boolean; resolve: boolean; cancel: boolean; reopen: boolean;
     /** Any member may delete a request, in any state. */
     delete: boolean;
+    /** A question or the resolution can be posted in the request's thread. */
+    send_to_requester: boolean;
+    /** MikeGC is waiting on the requester and can be stopped. */
+    stop_asking: boolean;
   };
 }
-/** Legacy question, reply and answer messages are shown as notes. */
+/** How a message sent to the requester is going. */
+export interface IntakeDelivery {
+  outbound_id: string;
+  kind: "acknowledgement" | "question" | "answer";
+  status: "pending" | "sent" | "failed";
+  /** Why it couldn't be sent, in words a member can act on. */
+  error: string | null;
+  sent_at: string | null;
+  /** The documents it carries; left_out when they couldn't be sent. */
+  documents: { document_id: string; filename: string; left_out: boolean }[];
+}
+/** Who wrote a requester's reply, as the channel names them. */
+export interface IntakeExternalAuthor {
+  name: string | null;
+  email: string | null;
+  source: IntakeChannel;
+  /** The channel's ID for the person, such as a Slack user ID. */
+  user_id?: string | null;
+}
+/**
+ * A note, resolution or cancellation reason; a question to the requester
+ * (a member's, or MikeGC's when automated); or the requester's reply.
+ * Legacy answer messages are shown as notes.
+ */
 export interface IntakeMessage {
   id: string; kind: "note" | "resolution" | "cancel_reason" | "question" | "reply" | "answer";
   body: string;
   /** Posted by MikeGC, such as its preprocessing answer; it has no author. */
   automated?: boolean;
-  /** Null once the author's account is erased. */
+  /** Null once the author's account is erased, and for a requester's reply. */
   author_id: string | null; author_name: string; created_at: string;
+  /** A requester's reply: who wrote it, in which channel. */
+  external_author?: IntakeExternalAuthor | null;
+  /** A question sent to the requester: how its delivery is going. */
+  delivery?: IntakeDelivery | null;
 }
 export interface IntakeEvent {
   id: number; kind: string; from_state: IntakeState | null; to_state: IntakeState | null;
   /** Null for automatic changes, such as unassignment when a member leaves. */
   actor_id: string | null; actor_name: string | null; assignee_name: string | null; created_at: string;
+  /** A resolution sent to the requester: how its delivery is going. */
+  delivery?: IntakeDelivery | null;
 }
 /**
  * Automated intake, as an organization's owners and admins see it. Secrets
  * are write-only: the response says whether they are set, never what they are.
  */
 export interface IntakeAutomationSettings {
+  /** Ask requesters for missing details, in up to two rounds of questions. */
+  clarify_enabled: boolean;
   email: {
     enabled: boolean;
-    /** Whether an inbound webhook URL has been generated. */
-    configured: boolean;
-    /** The last characters of the URL's token, to tell URLs apart. */
-    token_hint: string | null;
+    /** The intake mailbox MikeGC reads and replies from, once connected. */
+    provider: IntakeMailProvider | null;
+    /** The intake address, such as intake@example.com. */
+    mailbox: string | null;
     /** Sender domains accepted, such as "example.com"; empty accepts no one. */
     allowed_domains: string[];
+    /** The sender name on MikeGC's own emails, such as "Legal". */
+    from_name: string;
+    /** Microsoft 365: the Entra app MikeGC connects with; the secret is write-only. */
+    graph: { tenant_id: string | null; client_id: string | null; secret_set: boolean };
+    /** Where Microsoft Graph sends new-mail notifications. */
+    notification_url: string;
+    /** Google Workspace: the service account's client ID admins add under domain-wide delegation; null when the deployment has no key. */
+    gmail_client_id: string | null;
+    /** The connection's state, for the settings page. */
+    status: {
+      /** When the Graph subscription runs out; it is renewed before then. */
+      subscription_expires_at: string | null;
+      /** When MikeGC last read the mailbox. */
+      last_read_at: string | null;
+      /** Why the connection isn't working, in words an admin can act on. */
+      error: string | null;
+    };
+    /** The organization recorded email through Postmark: it stops until a mailbox is connected. */
+    needs_reconnect: boolean;
   };
   slack: {
     enabled: boolean;
@@ -792,6 +884,21 @@ export interface IntakeAutomationSettings {
     team_id: string | null;
     team_name: string | null;
     bot_user_id: string | null;
+    /** Scopes the requester loop needs that the bot token lacks, such as files:write. */
+    missing_scopes: string[];
+    /** Whether a thread message has arrived, so message events are subscribed. */
+    message_events_seen: boolean;
+  };
+  teams: {
+    enabled: boolean;
+    /** The Azure Bot's messaging endpoint. */
+    events_url: string;
+    /** Whether the app ID, tenant ID and client secret are saved. */
+    configured: boolean;
+    app_id: string | null;
+    tenant_id: string | null;
+    /** Whether MikeGC can read and post documents through Microsoft Graph; null before it is checked. */
+    files_access: boolean | null;
   };
   /** The models triage and AI preprocessing run with; neither runs without one. */
   models: {
@@ -814,6 +921,8 @@ export interface IntakeAutomationSettings {
 /** One message received for intake, without its content. */
 export interface IntakeInboundSummary {
   id: string; source: Exclude<IntakeSource, "manual">;
+  /** A new request, or a message in a request's thread. */
+  kind: "request" | "reply";
   status: "pending" | "done" | "failed" | "ignored";
   /** Why it was ignored or failed, in words an admin can act on. */
   error: string | null;
@@ -821,8 +930,15 @@ export interface IntakeInboundSummary {
 }
 /** A change to automated intake. Omitted fields keep their saved value. */
 export interface IntakeAutomationUpdate {
+  clarify_enabled?: boolean;
   email_enabled?: boolean;
   email_allowed_domains?: string[];
+  email_from_name?: string;
+  teams_enabled?: boolean;
+  teams_app_id?: string;
+  teams_tenant_id?: string;
+  /** Write-only. Saving it checks the app's credentials with Microsoft. */
+  teams_client_secret?: string;
   slack_enabled?: boolean;
   /** Write-only. Saving a bot token checks it with Slack first. */
   slack_signing_secret?: string;
@@ -860,17 +976,27 @@ export interface IntakePreprocessRule {
    */
   name?: string | null;
 }
-/**
- * A newly generated inbound webhook URL for email. It holds a secret token
- * and is returned only once; generating another replaces it.
- */
-export interface IntakeEmailWebhook { webhook_url: string; token_hint: string }
+/** Which mail system the intake mailbox is on. */
+export type IntakeMailProvider = "graph" | "gmail";
+/** Connect the organization's intake mailbox. */
+export type IntakeMailboxConnection =
+  | {
+      provider: "graph";
+      mailbox: string;
+      tenant_id: string;
+      client_id: string;
+      /** Write-only; may be left out to keep the saved one. */
+      client_secret?: string;
+    }
+  | { provider: "gmail"; mailbox: string };
 /** A document attached to a request, readable by every organization member. */
 export interface IntakeDocument {
   document_id: string; filename: string; file_type: string | null; size_bytes: number | null;
   status: string; added_by_name: string; created_at: string;
-  /** The note the document was added with, if any. */
+  /** The note, resolution or requester's reply the document was added with, if any. */
   message_id: string | null;
+  /** Its current version is newer than the one it arrived as, such as an accepted redline. */
+  revised: boolean;
 }
 /**
  * Where an organization's requests stand. Counts of open requests are as of
@@ -900,8 +1026,18 @@ export interface IntakeDashboard {
     open: number; waiting: number; overdue: number;
   }[];
 }
-export interface IntakeReceipt { request_id: string | null; applied_version: number; message_id: string | null; replayed: boolean }
+export interface IntakeReceipt {
+  request_id: string | null; applied_version: number; message_id: string | null; replayed: boolean;
+  /** The message to the requester the command wrote, if any. */
+  outbound_id?: string | null;
+}
 export interface IntakeSubmission extends IntakeDetails { id: string; command_id: string; assignee_id: string | null }
 export interface IntakeEdit extends IntakeDetails { command_id: string; expected_version: number }
 /** Notes carry no version: they never change the request itself. */
-export interface IntakeCommand { command_id: string; expected_version?: number; body?: string; assignee_id?: string | null }
+export interface IntakeCommand {
+  command_id: string; expected_version?: number; body?: string; assignee_id?: string | null;
+  /** Wait and resolve: post the text (and resolve's documents) in the request's thread. */
+  send_to_requester?: boolean;
+  /** Resolve with send_to_requester: up to 10 of the request's documents to send. */
+  documents?: string[];
+}

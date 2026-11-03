@@ -108,12 +108,14 @@ describe("checking triage against the message", () => {
       requested_by_date: "2026-11-06",
       assignee_id: sam,
       preprocess: null,
+      questions: [],
       attachments: [0],
     });
   });
   it("preprocesses only what a rule that asks for it assigns", () => {
     expect(applyTriage({ rule: 2 }, context).preprocess).toEqual({
       with: { kind: "playbook", id: "pb-1" },
+      condition: rules[1]!.condition,
     });
     expect(applyTriage({ rule: 1 }, context).preprocess).toBeNull();
     expect(applyTriage({ rule: null }, context).preprocess).toBeNull();

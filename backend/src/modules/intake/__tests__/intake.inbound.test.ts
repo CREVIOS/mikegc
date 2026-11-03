@@ -1,4 +1,4 @@
-import { createHash, createHmac } from "node:crypto";
+import { createHmac } from "node:crypto";
 import express from "express";
 import request from "supertest";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -56,7 +56,6 @@ function settings(overrides: Record<string, unknown> = {}) {
     slack_signing_secret_iv: sealed.iv,
     slack_signing_secret_tag: sealed.tag,
     email_enabled: true,
-    email_token_hash: createHash("sha256").update(token).digest("hex"),
     email_allowed_domains: ["acme.test"],
     ...overrides,
   };
@@ -154,6 +153,7 @@ describe("Slack events", () => {
         status: "pending",
         payload: {
           kind: "slack",
+          team_id: "T1",
           channel: "C42",
           ts: "1762074840.000100",
           thread_ts: null,
@@ -183,6 +183,81 @@ describe("Slack events", () => {
     await slack(mention({ thread_ts: "1762074000.000001" }));
     expect(inbound()[0]!.payload).toMatchObject({ thread_ts: "1762074000.000001" });
   });
+  const request21 = "00000000-0000-4000-8000-000000000021";
+  const linkThread = () =>
+    memory.rows("intake_channel_links").push({
+      id: "link-1",
+      org_id: org,
+      request_id: request21,
+      source: "slack",
+      thread_key: "T1:C42:1762074000.000001",
+      address: { channel: "C42", thread_ts: "1762074000.000001" },
+    });
+  const threadMessage = (event: Record<string, unknown> = {}) => ({
+    type: "event_callback",
+    team_id: "T1",
+    event: {
+      type: "message",
+      user: "U9",
+      text: "Acme is a customer.",
+      ts: "1762074900.000200",
+      thread_ts: "1762074000.000001",
+      channel: "C42",
+      ...event,
+    },
+  });
+  it("records any person's message in a request's thread as its reply, once", async () => {
+    linkThread();
+    expect((await slack(threadMessage())).status).toBe(200);
+    // A mention in the same thread fires app_mention too: the same message.
+    expect((await slack(threadMessage({ type: "app_mention", text: "<@UBOT> Acme is a customer." }))).status).toBe(200);
+    expect(inbound()).toEqual([
+      expect.objectContaining({
+        kind: "reply",
+        source: "slack",
+        external_id: "C42:1762074900.000200",
+        request_id: request21,
+        status: "pending",
+        payload: {
+          kind: "slack_reply",
+          channel: "C42",
+          ts: "1762074900.000200",
+          thread_ts: "1762074000.000001",
+          user: "U9",
+        },
+      }),
+    ]);
+    const id = inbound()[0]!.id as string;
+    expect(mocks.enqueueDbJob).toHaveBeenCalledWith(memory.db, {
+      kind: "intake.reply",
+      payload: { inboundId: id, orgId: org },
+      dedupeKey: `intake.reply:${id}`,
+      maxAttempts: 4,
+    });
+    // Settings learn that message events arrive.
+    expect(memory.rows("intake_automation")[0]!.slack_messages_seen_at).toBeTruthy();
+    // A file shared in the thread is a reply too.
+    await slack(threadMessage({ ts: "1762074901.000300", subtype: "file_share" }));
+    expect(inbound()).toHaveLength(2);
+  });
+  it("drops chatter, edits and top-level messages without storing them", async () => {
+    linkThread();
+    for (const body of [
+      // A thread no request is linked to.
+      threadMessage({ thread_ts: "1762070000.000009" }),
+      // A top-level message, a thread's own root, an edit and a deletion.
+      threadMessage({ thread_ts: undefined }),
+      threadMessage({ ts: "1762074000.000001" }),
+      threadMessage({ subtype: "message_changed" }),
+      threadMessage({ subtype: "message_deleted" }),
+      // MikeGC's own post and another bot's.
+      threadMessage({ user: "UBOT" }),
+      threadMessage({ bot_id: "B1" }),
+    ])
+      expect((await slack(body)).status).toBe(200);
+    expect(inbound()).toEqual([]);
+    expect(mocks.enqueueDbJob).not.toHaveBeenCalled();
+  });
   it("ignores bots, MikeGC itself, other events and a turned-off Slack", async () => {
     for (const body of [
       mention({ bot_id: "B1" }),
@@ -206,157 +281,17 @@ describe("Slack events", () => {
   });
 });
 
-const pdf = (bytes = 10) => Buffer.alloc(bytes, 1).toString("base64");
-const email = (overrides: Record<string, unknown> = {}) => ({
-  From: "jane@acme.test",
-  FromName: "Jane Business",
-  FromFull: { Email: "Jane@Acme.test", Name: "Jane Business", MailboxHash: "" },
-  To: "legal-intake@example.com",
-  Subject: "NDA with Supplier Co",
-  MessageID: "postmark-1",
-  Date: "Mon, 2 Nov 2026 09:14:00 +0000",
-  TextBody: "Please review the attached NDA.",
-  HtmlBody: "<p>Please review the attached NDA.</p>",
-  StrippedTextReply: "",
-  Headers: [{ Name: "Message-ID", Value: "<abc@mail.acme.test>" }],
-  Attachments: [],
-  ...overrides,
-});
 const postEmail = (body: unknown, path = token) =>
   request(app).post(`/webhooks/intake/email/${path}`).send(body as object);
 
-describe("inbound email", () => {
-  it("refuses an unknown token, a malformed one, or email turned off with 403, which ends Postmark's retries", async () => {
-    expect((await postEmail(email(), "B".repeat(43))).status).toBe(403);
-    expect((await postEmail(email(), "short")).status).toBe(403);
-    memory.rows("intake_automation")[0]!.email_enabled = false;
-    expect((await postEmail(email())).status).toBe(403);
-    expect(inbound()).toEqual([]);
-  });
-  it("stores the message, staging accepted attachments and listing the rest", async () => {
-    const attachments = [
-      { Name: "nda.docx", Content: pdf(), ContentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", ContentLength: 10 },
-      { Name: "photo.png", Content: pdf(), ContentType: "image/png", ContentLength: 10 },
-      { Name: "logo.png", Content: pdf(), ContentType: "image/png", ContentLength: 10, ContentID: "logo@1" },
-      { Name: "huge.pdf", Content: pdf(65), ContentType: "application/pdf", ContentLength: 65 },
-      ...Array.from({ length: 10 }, (_, i) => ({ Name: `part-${i}.pdf`, Content: pdf(), ContentType: "application/pdf" })),
-    ];
-    const res = await postEmail(email({ Attachments: attachments }));
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual({ status: "received" });
-    const row = inbound()[0]!;
-    expect(row).toMatchObject({
-      source: "email",
-      external_id: "<abc@mail.acme.test>",
-      status: "pending",
-    });
-    const payload = row.payload as Record<string, unknown>;
-    expect(payload).toMatchObject({
-      kind: "email",
-      from: { name: "Jane Business", email: "jane@acme.test" },
-      subject: "NDA with Supplier Co",
-      date: "2026-11-02T09:14:00.000Z",
-      text: "Please review the attached NDA.",
-      skipped: [
-        { name: "photo.png", reason: "type" },
-        { name: "huge.pdf", reason: "size" },
-        { name: "part-9.pdf", reason: "count" },
-      ],
-    });
-    const staged = payload.attachments as { name: string; key: string }[];
-    expect(staged).toHaveLength(10);
-    expect(staged[0]).toEqual({
-      name: "nda.docx",
-      file_type: "docx",
-      size: 10,
-      key: `intake-inbound/${org}/${row.id}/0`,
-    });
-    expect(mocks.uploadFile).toHaveBeenCalledTimes(10);
-    expect(mocks.uploadFile.mock.calls[0]![0]).toBe(`intake-inbound/${org}/${row.id}/0`);
-    expect(mocks.enqueueDbJob).toHaveBeenCalledTimes(1);
-  });
-  it("records a message delivered twice once, without staging it again", async () => {
-    const body = email({ Attachments: [{ Name: "a.pdf", Content: pdf() }] });
-    await postEmail(body);
-    const again = await postEmail(body);
-    expect(again.body).toEqual({ status: "duplicate" });
-    expect(inbound()).toHaveLength(1);
-    expect(mocks.uploadFile).toHaveBeenCalledTimes(1);
-  });
-  it("falls back to Postmark's ID and the HTML body", async () => {
-    await postEmail(email({ Headers: [], TextBody: "", HtmlBody: "<p>Hello<br>Legal &amp; co</p>" }));
-    expect(inbound()[0]).toMatchObject({
-      external_id: "postmark-1",
-      payload: { text: "Hello\nLegal & co" },
-    });
-  });
-  it("records automatic replies and bulk mail as ignored, with no content", async () => {
-    for (const [i, header] of [
-      { Name: "Auto-Submitted", Value: "auto-replied" },
-      { Name: "Precedence", Value: "bulk" },
-      { Name: "X-Autoreply", Value: "yes" },
-    ].entries()) {
-      const res = await postEmail(email({ MessageID: `auto-${i}`, Headers: [header] }));
-      expect(res.body).toEqual({ status: "ignored" });
-    }
-    expect(inbound().map((r) => [r.status, r.payload])).toEqual([
-      ["ignored", null],
-      ["ignored", null],
-      ["ignored", null],
-    ]);
-    expect(inbound()[0]!.error).toMatch(/automatic reply/);
-    // "no" means a person sent it.
-    await postEmail(email({ MessageID: "human", Headers: [{ Name: "Auto-Submitted", Value: "no" }] }));
-    expect(inbound()[3]).toMatchObject({ status: "pending" });
-    expect(mocks.enqueueDbJob).toHaveBeenCalledTimes(1);
-  });
-  it("ignores senders outside the accepted domains, accepting their subdomains", async () => {
-    memory.rows("intake_automation")[0]!.email_allowed_domains = ["example.com"];
-    await postEmail(email({ Attachments: [{ Name: "a.pdf", Content: pdf() }] }));
-    expect(inbound()[0]).toMatchObject({
-      status: "ignored",
-      payload: null,
-      error: "The sender's domain, acme.test, isn't one of the accepted domains.",
-    });
-    expect(mocks.uploadFile).not.toHaveBeenCalled();
-    await postEmail(email({ MessageID: "m2", Headers: [], FromFull: { Email: "sam@eu.example.com" } }));
-    expect(inbound()[1]).toMatchObject({ status: "pending" });
-  });
-  it("records no mail until a sender domain is accepted", async () => {
-    memory.rows("intake_automation")[0]!.email_allowed_domains = [];
-    await postEmail(email({ Attachments: [{ Name: "a.pdf", Content: pdf() }] }));
-    expect(inbound()[0]).toMatchObject({
-      status: "ignored",
-      payload: null,
-      error: "No sender domains are accepted yet. Add one in Intake settings.",
-    });
-    expect(mocks.uploadFile).not.toHaveBeenCalled();
-    expect(mocks.enqueueDbJob).not.toHaveBeenCalled();
-  });
-  it("rejects a body that isn't an email", async () => {
-    expect((await postEmail([1, 2])).status).toBe(400);
-    expect((await postEmail({ Subject: "no id" })).status).toBe(400);
-  });
-  it("keeps the URL's token out of error logs", async () => {
-    mocks.memory = {
-      db: {
-        from: () => {
-          throw new Error("database unavailable");
-        },
-      },
-    };
+describe("the retired Postmark webhook", () => {
+  it("answers 403, which ends Postmark's retries, and records nothing", async () => {
     const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const res = await postEmail(email());
-    expect(res.status).toBe(500);
-    expect(logged).toHaveBeenCalled();
-    expect(JSON.stringify(logged.mock.calls.map((c) => c.map(String)))).not.toContain(token);
-    expect(JSON.stringify(logged.mock.calls[0]?.[1] ?? {})).toContain(":token");
-    // A percent-encoded token is the same credential, and is kept out too.
-    logged.mockClear();
-    const encoded = `%${token.charCodeAt(0).toString(16).toUpperCase()}${token.slice(1)}`;
-    expect((await postEmail(email(), encoded)).status).toBe(500);
-    const lines = JSON.stringify(logged.mock.calls.map((c) => c.map(String)));
-    expect(lines).not.toContain(token.slice(1));
+    for (const path of [token, "B".repeat(43), "short"])
+      expect((await postEmail({ Subject: "NDA", MessageID: "postmark-1" }, path)).status).toBe(403);
+    expect(inbound()).toEqual([]);
+    expect(mocks.enqueueDbJob).not.toHaveBeenCalled();
+    expect(JSON.stringify(logged.mock.calls)).not.toContain(token);
   });
 });
 
