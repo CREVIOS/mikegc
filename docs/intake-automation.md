@@ -266,6 +266,14 @@ Gmail, the mailbox's send limit for Outlook, 35 MB by default); the rest are
 named in the email ("Too large to email: … Ask Legal for a copy.") and on the
 request.
 
+On the request, the resolution reads under its change in **Activity** in two
+parts: the **Internal comment**, which stayed in the app, and the **Reply to
+the requester**, if one was sent: its text, or "Documents only.", with its
+delivery. The reply also reads in **Messages**, as part of the conversation;
+the internal comment never does. A delivery names the message whose text it
+sent (`message_id`, none for documents alone), which is how the page tells
+them apart.
+
 ### Delivery
 
 Each message to the requester shows its delivery under it in the request's

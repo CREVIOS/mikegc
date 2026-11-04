@@ -12512,11 +12512,12 @@ returns jsonb language sql stable set search_path = public, pg_temp as $$
   where r.id = p_request and r.org_id = p_org and public.intake_can_read(p_org, p_actor, p_request)
 $$;
 
--- How a requester-facing message is going, with the documents it carries.
+-- How a requester-facing message is going, with the documents it carries and
+-- the message whose text it sent (none for a resolution's documents alone).
 create or replace function public.intake_delivery(o public.intake_outbound)
 returns jsonb language sql stable set search_path = public, pg_temp as $$
   select jsonb_build_object('outbound_id', o.id, 'kind', o.kind, 'status', o.status, 'error', o.error,
-    'sent_at', o.sent_at,
+    'sent_at', o.sent_at, 'message_id', o.message_id,
     'documents', coalesce((select jsonb_agg(jsonb_build_object(
         'document_id', d->>'document_id',
         'filename', coalesce(v.filename, 'Document'),
@@ -12910,5 +12911,6 @@ insert into public.schema_migrations (filename) values
   ('20261104_04_intake_assistant.sql'),
   ('20261104_05_intake_unread_reply_count.sql'),
   ('20261104_06_intake_always_clarify.sql'),
-  ('20261104_07_intake_notifications.sql')
+  ('20261104_07_intake_delivery_message.sql'),
+  ('20261104_08_intake_notifications.sql')
 on conflict (filename) do nothing;

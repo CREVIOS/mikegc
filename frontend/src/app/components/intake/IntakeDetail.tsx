@@ -95,6 +95,10 @@ import {
 } from "./IntakeMessages";
 import { parseIntakeDescription } from "./intakeDescription";
 import {
+  IntakeResolutionDetails,
+  type IntakeResolution,
+} from "./IntakeResolutionDetails";
+import {
   intakeAudience,
   intakeDocumentsUnavailable,
 } from "./intakeConversation";
@@ -644,38 +648,42 @@ export function Detail({
   // change, and a closed request is reopened where a note would be added.
   const closed =
     request?.state === "resolved" || request?.state === "cancelled";
-  // A resolution is saved with its "resolved" change in one transaction, so
-  // they share a time: the resolution reads under that change, not alone.
-  // Its reply to the requester is a message of its own, in Messages; a
-  // resolution sent as the reply itself, from before they were written
-  // apart, reads in Messages instead.
-  const resolutions = new Map<number, IntakeMessage>();
+  // A resolution reads under its "resolved" change: the internal comment,
+  // saved with the change in one transaction so they share a time, and the
+  // reply sent to the requester, which the change's delivery names (none for
+  // documents sent alone). The reply also reads in Messages, as part of the
+  // conversation; documents sent alone appear there as an entry of their own.
+  const resolutions = new Map<number, IntakeResolution>();
   const sentResolutions: IntakeSentResolution[] = [];
   for (const event of events) {
     if (event.kind !== "resolve") continue;
-    const at = (kind: IntakeMessage["kind"]) =>
+    const comment =
       messages.find(
-        (m) => m.kind === kind && m.created_at === event.created_at,
-      );
-    const text = at("resolution");
-    // Sent with no reply message of its own: the resolution as the reply,
-    // or, with no resolution text, documents alone. Either way its delivery
-    // reads in Messages, with Retry when it failed.
-    if (event.delivery && !at("answer"))
-      sentResolutions.push({
-        message: text ?? null,
-        event,
-        delivery: event.delivery,
-      });
-    else if (text) resolutions.set(event.id, text);
+        (m) => m.kind === "resolution" && m.created_at === event.created_at,
+      ) ?? null;
+    const delivery = event.delivery ?? null;
+    const replyId = delivery?.message_id ?? null;
+    if (delivery && !replyId) sentResolutions.push({ event, delivery });
+    resolutions.set(event.id, {
+      comment,
+      reply: delivery
+        ? {
+            message: replyId
+              ? (messages.find((m) => m.id === replyId) ?? null)
+              : null,
+            delivery,
+          }
+        : null,
+    });
   }
   // Activity is the work in the app; the conversation with the requester
   // has a section of its own.
   const requesterMessages = messages.filter(isIntakeRequesterMessage);
   const original = request ? parseIntakeDescription(request.description) : null;
   const shown = new Set([
-    ...[...resolutions.values()].map((m) => m.id),
-    ...sentResolutions.flatMap((r) => (r.message ? [r.message.id] : [])),
+    ...[...resolutions.values()].flatMap((r) =>
+      r.comment ? [r.comment.id] : [],
+    ),
     ...requesterMessages.map((m) => m.id),
   ]);
   // Notes and changes read as one story, oldest first.
@@ -684,7 +692,7 @@ export function Detail({
       key: `e${event.id}`,
       at: event.created_at,
       event,
-      text: resolutions.get(event.id),
+      resolution: resolutions.get(event.id),
     })),
     ...messages
       .filter((message) => !shown.has(message.id))
@@ -1037,11 +1045,22 @@ export function Detail({
                               {formatIntakeDateTime(entry.at)}
                             </time>
                           </p>
+                          {"event" in entry && entry.resolution && (
+                            <IntakeResolutionDetails
+                              resolution={entry.resolution}
+                              documents={documents}
+                              uploading={upload.uploading}
+                              retrying={retrying}
+                              onOpenDocument={(documentId) =>
+                                void viewer.open(documentId)
+                              }
+                              onRetry={retryDelivery}
+                            />
+                          )}
                           {(() => {
-                            // A note's text, or a resolution under its change.
-                            const text =
-                              "message" in entry ? entry.message : entry.text;
-                            if (!text) return null;
+                            // A note's text.
+                            if (!("message" in entry)) return null;
+                            const text = entry.message;
                             return (
                               <>
                                 <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700">
