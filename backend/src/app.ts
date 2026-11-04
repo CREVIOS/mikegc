@@ -91,6 +91,10 @@ const TOOL_RESULT_PATH = "/word-chat/tool-result";
 // its own rate-limit lane and to keep it out of the shared one.
 const BLOB_UPLOAD_PREFIX = "/download/signed/";
 
+// Every open web app tab collects its intake notifications twice a minute; an
+// office of lawyers behind one address would spend the shared budget on it.
+const INTAKE_NOTIFICATIONS_PATH = "/intake/notifications/claim";
+
 // Deliveries from other services (Slack, Postmark), which authenticate with a
 // signature or a secret URL and share no user's budget.
 const WEBHOOK_PREFIX = "/webhooks/";
@@ -98,10 +102,12 @@ const WEBHOOK_PREFIX = "/webhooks/";
 const generalLimiter = makeLimiter({
   windowMs: minutes(envInt("RATE_LIMIT_GENERAL_WINDOW_MINUTES", 15)),
   max: envInt("RATE_LIMIT_GENERAL_MAX", 300),
-  // Upload status polling has its own authenticated per-user limiter. Keep it
-  // and the dedicated Word tool-result lane out of the shared IP budget.
+  // Upload status and intake notification polling have their own
+  // authenticated per-user limiters. Keep them and the dedicated Word
+  // tool-result lane out of the shared IP budget.
   skip: (req) =>
     req.path === TOOL_RESULT_PATH ||
+    (req.method === "POST" && req.path === INTAKE_NOTIFICATIONS_PATH) ||
     req.path === "/upload-sessions" ||
     req.path.startsWith("/upload-sessions/") ||
     req.path.startsWith(WEBHOOK_PREFIX) ||
@@ -172,6 +178,14 @@ const chatCreateLimiter = makeLimiter({
 const intakeSubmitLimiter = makeLimiter({
   windowMs: minutes(1),
   max: 30,
+});
+// The notification claim is out of the shared budget, so this bounds callers
+// it turns away (no or a bad session, each a token check) per address before
+// authentication runs. Only failures count, so polling never reaches it.
+const intakeNotificationsFailureLimiter = makeLimiter({
+  windowMs: minutes(envInt("RATE_LIMIT_INTAKE_NOTIFICATIONS_WINDOW_MINUTES", 15)),
+  max: envInt("RATE_LIMIT_INTAKE_NOTIFICATIONS_FAILED_MAX", 60),
+  skipSuccessfulRequests: true,
 });
 const exportLimiter = makeLimiter({
   windowMs: hours(envInt("RATE_LIMIT_EXPORT_WINDOW_HOURS", 1)),
@@ -302,6 +316,7 @@ app.use(
 
 app.use(generalLimiter);
 app.post("/intake/:orgId/requests", intakeSubmitLimiter);
+app.post(INTAKE_NOTIFICATIONS_PATH, intakeNotificationsFailureLimiter);
 app.use("/intake", express.json({ limit: "128kb" }));
 
 app.post("/auth/login", authLoginIpLimiter);

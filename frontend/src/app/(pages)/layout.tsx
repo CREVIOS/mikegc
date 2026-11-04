@@ -11,6 +11,7 @@ import { PageChromeContext } from "@/app/contexts/PageChromeContext";
 import { AppSidebar } from "@/app/components/shared/AppSidebar";
 import { preloadSidebarIcons } from "@/app/components/shared/AppSidebarSkeuoIcons";
 import { FullScreenLoader } from "@/app/components/shared/FullScreenLoader";
+import { IntakeNotifications } from "@/app/components/intake/IntakeNotifications";
 import { HeaderButtonUI, HeaderButtonsUI } from "@/shared/ui/HeaderButtonsUI";
 import { cn } from "@/app/lib/utils";
 
@@ -123,6 +124,7 @@ export default function MikeLayout({
 
     return (
         <WorkspaceProvider>
+            <IntakeNotifications />
             <ChatHistoryProvider>
                 <PageChromeContext.Provider value={pageChromeValue}>
                     <SidebarContext.Provider value={sidebarValue}>

@@ -109,6 +109,53 @@ describe("intake workspaces and the dashboard", () => {
       ).toBe(400);
   });
 });
+describe("intake notifications", () => {
+  const row = (id: number, extra: Record<string, unknown> = {}) => ({
+    id,
+    workspace: org,
+    workspace_name: "Test legal",
+    request_id: id < 3 ? id.toString() : "3",
+    subject: "Supplier NDA",
+    kind: "update",
+    change: "note",
+    actor_name: "Sam Colleague",
+    automated: false,
+    channel: null,
+    created_at: `2026-11-04T10:00:0${id}Z`,
+    ...extra,
+  });
+  it("hands the signed-in member their notifications from every workspace, one per request", async () => {
+    mocks.rpc.mockResolvedValue({
+      data: [row(1, { kind: "new_request", change: "assign" }), row(3), row(4, { change: "resolve" })],
+      error: null,
+    });
+    const res = await request(app).post("/intake/notifications/claim");
+    expect(res.status).toBe(200);
+    expect(mocks.rpc).toHaveBeenCalledWith("intake_claim_notifications", {
+      p_actor: "signed-in-user",
+    });
+    // No workspace is resolved: the claim covers them all.
+    expect(mocks.personalOrg).not.toHaveBeenCalled();
+    expect(res.body.notifications).toEqual([
+      expect.objectContaining({ request_id: "1", kind: "new_request", change: "assign", more: 0 }),
+      expect.objectContaining({ request_id: "3", kind: "update", change: "resolve", more: 1 }),
+    ]);
+  });
+  it("reports an empty claim as no notifications", async () => {
+    mocks.rpc.mockResolvedValue({ data: null, error: null });
+    const res = await request(app).post("/intake/notifications/claim");
+    expect(res.body).toEqual({ notifications: [] });
+  });
+  it("never sends a database failure to the client", async () => {
+    mocks.rpc.mockResolvedValue({
+      data: null,
+      error: { code: "XX000", message: "relation intake_notifications is broken" },
+    });
+    const res = await request(app).post("/intake/notifications/claim");
+    expect(res.status).toBe(500);
+    expect(JSON.stringify(res.body)).not.toContain("intake_notifications");
+  });
+});
 describe("intake route contracts", () => {
   it("copies readable documents onto a request, refusing bad input before the database", async () => {
     const copy = `${path}/requests/${id}/documents/copy`;

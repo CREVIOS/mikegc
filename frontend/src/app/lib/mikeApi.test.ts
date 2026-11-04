@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AssistantEvent, Chat } from "@/app/components/shared/types";
 import { subscribeTabularReviewChanges } from "./tabularReviewChanges";
 import { getTabularReviewHistoryStatuses } from "./mikeApi";
+import { claimIntakeNotifications } from "./mikeApi";
 
 // Backend 5xx responses are reported to Sentry from the client with the
 // request id; the reporter is mocked so these tests assert the call, and
@@ -3720,6 +3721,14 @@ describe("intake API boundary", () => {
             expect(call.init.method??"GET").toBe(method);
             if(body)expect(JSON.parse(String(call.init.body))).toEqual(body);
         }
+    });
+    it("collects the signed-in member's intake notifications from every workspace", async () => {
+        const claim = { notifications: [] };
+        fetchMock.mockImplementation(async () => jsonResponse(claim));
+        await expect(claimIntakeNotifications()).resolves.toEqual(claim);
+        const call = lastFetchCall();
+        expect(call.url).toBe("/api/intake/notifications/claim");
+        expect(call.init.method).toBe("POST");
     });
     it("reads, changes and connects automated intake under the same scope", async () => {
         const settings = { email: { enabled: false }, recent: [] };

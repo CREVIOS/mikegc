@@ -20,6 +20,7 @@ import type {
     IntakeMember,
     IntakeRequester,
     IntakeMessage,
+    IntakeNotificationClaim,
     IntakeReceipt,
     IntakeRequest,
     IntakeRequestPage,
@@ -4529,6 +4530,16 @@ const jsonBody = (method: string, body: unknown): RequestInit => ({
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
 });
+
+/**
+ * Collect the signed-in member's intake notifications from every workspace.
+ * Each is handed over once, so the caller shows what comes back.
+ */
+export function claimIntakeNotifications() {
+    return apiRequest<IntakeNotificationClaim>("/intake/notifications/claim", {
+        method: "POST",
+    });
+}
 
 /** List the organization members a request can be assigned to. */
 export function getIntakeMembers(orgId: string) {

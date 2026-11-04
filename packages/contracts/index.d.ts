@@ -843,6 +843,38 @@ export interface IntakeMessage {
   /** A question sent to the requester: how its delivery is going. */
   delivery?: IntakeDelivery | null;
 }
+/**
+ * What a notification reports: the history entry's kind, a member's note,
+ * the requester's reply, or MikeGC's preprocessing of the request.
+ */
+export type IntakeNotificationChange =
+  | "submitted" | "assign" | "wait" | "resume" | "resolve" | "cancel" | "reopen"
+  | "stop_asking" | "edited" | "document_added" | "note" | "reply" | "preprocessing";
+/**
+ * News for the member a request is assigned to, shown as a toast: "new_request"
+ * when the request became theirs, "update" for a change someone else, MikeGC or
+ * the requester made. Several changes to one request arrive as one.
+ */
+export interface IntakeNotification {
+  /** The request's workspace: an organization ID, or "personal". */
+  workspace: string;
+  workspace_name: string;
+  request_id: string;
+  subject: string;
+  kind: "new_request" | "update";
+  /** The change the toast describes: what made the request theirs, or the latest. */
+  change: IntakeNotificationChange;
+  /** Who made it: null for MikeGC's changes and a person whose account is gone. */
+  actor_name: string | null;
+  /** Made by MikeGC. */
+  automated: boolean;
+  /** A requester's reply: the channel it came in. */
+  channel: IntakeChannel | null;
+  /** How many other changes there were since the member last collected. */
+  more: number;
+  created_at: string;
+}
+export interface IntakeNotificationClaim { notifications: IntakeNotification[] }
 export interface IntakeEvent {
   id: number; kind: string; from_state: IntakeState | null; to_state: IntakeState | null;
   /** Null for automatic changes, such as unassignment when a member leaves. */

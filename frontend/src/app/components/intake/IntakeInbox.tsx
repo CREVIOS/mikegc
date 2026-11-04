@@ -71,6 +71,7 @@ import {
   isIntakeOverdue,
 } from "./intakeLabels";
 import { IntakeUnassigned } from "./IntakeUnassigned";
+import { onIntakeNotified } from "./intakeNotifications";
 
 const TABS: { id: IntakeTab; label: string }[] = [
   { id: "outstanding", label: "Outstanding" },
@@ -356,6 +357,14 @@ export function Inbox({
     window.addEventListener("focus", focus);
     return () => window.removeEventListener("focus", focus);
   }, [refresh, pagesOnScreen]);
+  // News about this workspace's requests refreshes the list the same way.
+  useEffect(
+    () =>
+      onIntakeNotified(orgId, () => {
+        if (pagesOnScreen <= 1) refresh();
+      }),
+    [orgId, refresh, pagesOnScreen],
+  );
 
   async function loadMore() {
     if (!page || page.key !== queryKey || !page.next || loadingMore) return;
