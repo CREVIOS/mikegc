@@ -28,20 +28,25 @@ Slack").
 
 An organization's owners and admins set this up in the **Intake** section of
 the organization's settings (`/organizations/<id>/settings/intake`, also
-reached from the settings icon in Intake's header), with Email, Slack, Teams
-and **Triage rules** one after another. The models triage and preprocessing run
+reached from the settings icon in Intake's header), with the **Channels** and
+**Triage rules** one after another. The models triage and preprocessing run
 with are chosen in the organization's **Model Preferences** tab
-(`/organizations/<id>/settings/models`), also for owners and admins. Each
-channel is a card that says whether it is set up and what needs attention, with
-one button: **Set up** before the channel is configured, **Manage** after. The
-button opens a dialog with everything for that channel: its switch, its IDs and
-secrets (write-only, never shown again), the URL to give Slack, Teams or
-Microsoft, notices about missing permissions, the email sender name and
-domains, and the setup steps. Everything in the dialog, its switch included,
-is saved with its **Save** button (an email mailbox is connected with
-**Connect**); Cancel, Close or Escape discards what wasn't saved. Triage rules,
-with the **Ask requesters for missing details** switch, save by themselves as
-before.
+(`/organizations/<id>/settings/models`), also for owners and admins. The
+channels are Outlook, Gmail, Slack and Teams, each a tile like a connector's
+with its logo and name. Outlook and Gmail are two ways to connect the one
+intake mailbox, so connecting either replaces the other. A channel that isn't
+set up shows **Set up**; one that is shows its on/off switch, which saves at
+once, and the tile opens its dialog. The dialog has everything for that
+channel: its IDs and secrets (write-only, never shown again), the URL to give
+Slack, Teams or Microsoft, notices about missing permissions, the email sender
+name and domains, and, once those details are saved, its switch. Connecting a
+mailbox, or the save that completes Slack's or Teams's setup, turns the
+channel on. **Help**, at the start of the dialog's
+footer, opens a help screen with what the channel does, its setup steps and
+what each setting means; **Back** returns to the fields as they were.
+Everything in the dialog, its switch included, is saved with its **Save**
+button (a mailbox is connected with **Connect**); Cancel, Close or Escape
+discards what wasn't saved.
 A channel turned on starts once it is set up: email once its mailbox is
 connected, Slack once both its secrets are saved, Teams once its app ID,
 tenant ID and secret are saved and Microsoft accepts them. Who each request goes to, and
@@ -167,8 +172,8 @@ there:
    triage rule, then, once a rule applies, what that rule's playbook or
    workflow needs before preprocessing can run.
 2. **Posts a lawyer's questions**, asked from the request page.
-3. **Replies on resolution** with the resolution text and the documents the
-   lawyer chooses.
+3. **Replies on resolution**, when the lawyer chooses to, with a reply they
+   write and the documents they choose.
 
 The requester's answers come back onto the request and move it forward.
 Everything else a lawyer does (notes, assignments, edits, other status
@@ -179,9 +184,7 @@ applies to them.
 A request is recorded and assigned as soon as it arrives, so a lawyer can
 see it while MikeGC waits for answers. MikeGC asks in at most **two rounds**
 in total, across both stages; a round is one message with up to three
-numbered questions. **Ask requesters for missing details**, a switch under
-Triage rules (on by default), turns MikeGC's own questions off; triage and
-preprocessing then work as they did before.
+numbered questions. Asking is always on.
 
 ### Stage 1: choosing the rule
 
@@ -244,17 +247,20 @@ asks: …"). Teams can't change the sender of one message, so there it reads
 "Emma Chen (Legal) asks: …". In Gmail it comes from "Emma Chen via Legal" at
 the intake address; Outlook sets the same name and also starts the message
 with it, in case Exchange keeps the mailbox's own. "Legal" is the
-organization's sender name, set in the Email section.
+organization's sender name, set in the Outlook or Gmail dialog.
 
 ### Resolution reply
 
-**Resolve request** on a request with a thread opens a dialog with the
-resolution text, a checklist of the request's documents and a **Reply to
-requester** switch (on). Documents whose current version is newer than the
-one that arrived, such as MikeGC's redline after a lawyer accepted its
-changes, are ticked by default. Sending posts the text and the current
-version of each ticked document in the thread. With no text and no documents,
-nothing is sent. By email, documents are attached in the order they were
+**Resolve request** on a request with a thread opens a dialog that first asks
+only whether to reply: **Send reply in Slack** (in Teams, or by email), off
+by default. The comment being written stays the internal resolution and is
+never sent. Switched on, the dialog shows a **Message** box, filled from the
+comment to start with but written apart from it, and a checklist of the
+request's documents. Documents whose current version is newer than the one
+that arrived, such as MikeGC's redline after a lawyer accepted its changes,
+are ticked by default. Sending posts the message, stored as the request's
+`answer` message, and the current version of each ticked document in the
+thread. With no message and no documents, nothing is sent. By email, documents are attached in the order they were
 ticked until the next would pass the size limit (25 MB after encoding for
 Gmail, the mailbox's send limit for Outlook, 35 MB by default); the rest are
 named in the email ("Too large to email: … Ask Legal for a copy.") and on the
@@ -262,8 +268,8 @@ request.
 
 ### Delivery
 
-Each message to the requester shows its delivery under its entry in the
-request's activity: "Sending", "Sent", or "Couldn't send: …" with **Retry**
+Each message to the requester shows its delivery under it in the request's
+Messages section: "Sending", "Sent", or "Couldn't send: …" with **Retry**
 and **Copy text**. Transient failures are retried up to five times; a
 permanent one, such as MikeGC removed from the channel, a revoked token or
 Graph consent withdrawn, says what to fix.
@@ -293,6 +299,32 @@ being listed. Accepted documents become the request's documents, like ones a
 member uploads, and every member can open them: Word and PowerPoint files are
 converted for the viewer the same way, and they are stored under
 `documents/intake-<organization ID>/` because MikeGC is not a user.
+
+The document panel lists each document's versions, to view and download any
+of them. While a request is open, any member who can see it can edit its
+documents (as tracked changes, saved as new versions); once it is resolved or
+cancelled they are read-only again, except to whoever uploaded them. A new
+version of a document MikeGC recorded stays under the organization's
+`intake-<organization ID>` folder.
+
+### Processing a request in the Assistant
+
+**Process in Assistant**, in the request page's header, opens a new Assistant
+chat in the request's workspace with the request as a pill in the composer,
+like an attached document, and a suggested prompt to process it. Nothing is
+sent until the person sends it; they can change the prompt or remove the
+pill. Sending the message with the pill names the request on the chat
+(`chats.intake_request_id`), so every turn reads the request's
+details, description, history and documents afresh, as the person asking
+sees them, and puts the documents in scope without attaching them. The
+request's text is fenced as data, never instructions, because it includes the
+requester's words. While the request is open, the chat can edit its documents
+with tracked changes. If the person loses access to the request, or the
+request is deleted, the chat keeps its messages but reads nothing more of it.
+
+MikeGC's preprocessing note reads in the activity as "MikeGC preprocessed this
+request" (`intake_messages.purpose = 'preprocessing'`); its other notes, such
+as a related-thread notice, stay comments.
 
 ## Setting up email
 
@@ -333,9 +365,8 @@ lists that deliver into it are fine.
 2. Limit the app to the intake mailbox with an Exchange
    [RBAC for Applications](https://learn.microsoft.com/exchange/permissions-exo/application-rbac)
    management scope, so it can't read any other mailbox.
-3. In MikeGC, open **Settings → Intake**, choose **Connect Outlook (Microsoft
-   365)**, and enter the mailbox address, tenant ID, client ID and client
-   secret.
+3. In MikeGC, open **Settings → Intake**, choose **Set up** on Outlook, and
+   enter the mailbox address, tenant ID, client ID and client secret.
 4. MikeGC checks it can open the mailbox, starts reading from now (mail
    already there isn't recorded), subscribes to new-mail notifications at its
    **notification URL** (`/webhooks/intake/graph/<id>`), and sends you a test
@@ -350,22 +381,28 @@ The intake address must be a licensed Workspace user account, such as
 `intake@example.com`: the Gmail API reads only user mailboxes, so a Google
 Group can't be connected, but a group can deliver into the account.
 
-1. The deployment needs a Google Cloud service account's JSON key in
-   `INTAKE_GMAIL_SERVICE_ACCOUNT_KEY`. The Email section shows its client ID.
+1. In Google Cloud, enable the Gmail API in a project, create a service
+   account and download its JSON key. Organizations can skip this when the
+   deployment has its own in `INTAKE_GMAIL_SERVICE_ACCOUNT_KEY`.
 2. In the Google Admin console, under **Security → API controls → Domain-wide
-   delegation**, add that client ID with the scope
-   `https://www.googleapis.com/auth/gmail.modify`.
-3. In MikeGC, choose **Connect Gmail (Google Workspace)** and enter the
-   mailbox address. MikeGC reads the mailbox profile to check access, starts
+   delegation**, add the service account's client ID with the scope
+   `https://www.googleapis.com/auth/gmail.modify`. The Gmail dialog shows the
+   client ID as soon as the key is pasted, or the deployment's when there is
+   no key to paste.
+3. In MikeGC, choose **Set up** on Gmail, enter the mailbox address and paste
+   the JSON key. MikeGC reads the mailbox profile to check access, starts
    from its current history, and sends you a test email.
+
+The pasted key is the organization's own: it is encrypted at rest like the
+other channel secrets, never shown again, and used before the deployment's.
+Reconnecting with the field left empty keeps it.
 
 MikeGC marks recorded mail with the "MikeGC" label.
 
 ### Moving from Postmark
 
-Organizations that recorded email through Postmark see "Connect your intake
-mailbox to keep recording email" in Intake settings; until one is connected,
-no email is recorded. Remove the rule that forwarded the intake address to
+Organizations that recorded email through Postmark record no email until
+they connect their mailbox through Outlook or Gmail. Remove the rule that forwarded the intake address to
 Postmark: the mailbox you forwarded from becomes the connected mailbox. The
 old webhook URL answers `403`, which tells Postmark to stop retrying, and
 mail Postmark delivered before the upgrade is still processed.
@@ -544,8 +581,9 @@ Apply `backend/migrations/20261102_02_intake_automation.sql`,
 `backend/migrations/20261103_03_intake_preprocessing_model.sql`,
 `backend/migrations/20261103_04_intake_replace_rules.sql`,
 `backend/migrations/20261103_05_intake_requester_loop.sql`,
-`backend/migrations/20261103_06_intake_mailbox.sql` and
-`backend/migrations/20261103_07_intake_teams.sql` before starting
+`backend/migrations/20261103_06_intake_mailbox.sql`,
+`backend/migrations/20261103_07_intake_teams.sql` and
+`backend/migrations/20261104_01_intake_gmail_service_account.sql` before starting
 the new build. The second turns any note of what a member handles into a rule
 assigning to them, and stops if an organization has more than 100 notes, more
 than the 100 rules it can hold. The third removes the timezone that requests kept with
@@ -562,11 +600,12 @@ and rounds, the New reply flag, the lawyer's send options on wait and resolve,
 and **Stop asking**. Its command boundary takes new arguments, so an older
 binary can't work requests once it has run; roll application code forward.
 The tenth connects the intake mailbox and retires Postmark: it drops the
-Postmark token columns, turns email off for organizations that used it and
-shows them a notice to connect their mailbox. The eleventh adds Teams.
+Postmark token columns and turns email off for organizations that used it. The eleventh adds Teams,
+and the twelfth an organization's own Gmail service account.
 
 `INTAKE_GMAIL_SERVICE_ACCOUNT_KEY` (a Google service account's JSON key) is
-needed only for Gmail mailboxes. Otherwise no new environment variables are
+optional: it serves Gmail mailboxes whose organization didn't paste its own
+key. Otherwise no new environment variables are
 required: the webhook and notification URLs are built from `API_PUBLIC_URL`,
 the request links in acknowledgements from `FRONTEND_URL`, and secrets are
 encrypted with `MCP_CONNECTORS_ENCRYPTION_SECRET` (or

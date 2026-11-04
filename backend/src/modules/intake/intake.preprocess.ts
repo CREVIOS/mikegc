@@ -250,6 +250,8 @@ async function postNote(db: Db, job: JobPayload, body: string) {
     p_request: job.requestId,
     p_note: job.noteId,
     p_body: clip(body.trim(), NOTE_MAX),
+    // The activity reads it as MikeGC preprocessing the request.
+    p_purpose: "preprocessing",
   });
   if (!posted.ok && posted.kind !== "not_found")
     throw posted.kind === "error" ? posted.error : new Error(posted.detail);
@@ -517,14 +519,13 @@ async function preprocess(
   };
   const { data: settings, error: settingsError } = await db
     .from("intake_automation")
-    .select("configured_by, preprocessing_model, clarify_enabled")
+    .select("configured_by, preprocessing_model")
     .eq("org_id", job.orgId)
     .maybeSingle();
   if (settingsError) throw settingsError;
   const saved = settings as {
     configured_by: string | null;
     preprocessing_model: string | null;
-    clarify_enabled: boolean | null;
   } | null;
   const actorId = saved?.configured_by ?? null;
   if (!actorId || !isOrgAdmin(await getOrgRole(actorId, job.orgId, db)))
@@ -572,14 +573,12 @@ async function preprocess(
   const thread = await loadThreadEntries(db, job.orgId, job.requestId);
 
   // The readiness check: does the playbook or workflow have what it needs?
-  // It asks only while MikeGC may (a thread, asking on, no lawyer yet, a
-  // round left); with the rounds used up it still runs, so the note can say
-  // what is still missing.
+  // It asks only while MikeGC may (a thread, no lawyer yet, a round left);
+  // with the rounds used up it still runs, so the note can say what is
+  // still missing.
   let missing: string[] = [];
   const open = request.state !== "resolved" && request.state !== "cancelled";
-  const link = open && saved?.clarify_enabled !== false
-    ? await loadRequestLink(db, job.orgId, job.requestId)
-    : null;
+  const link = open ? await loadRequestLink(db, job.orgId, job.requestId) : null;
   const mayAsk =
     !!link && !request.clarify_stopped && request.clarify_rounds < MAX_CLARIFY_ROUNDS;
   if (link && (mayAsk || request.clarify_rounds > 0)) {

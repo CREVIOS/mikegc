@@ -92,6 +92,10 @@ const isClosedTab = (tab: IntakeTab): tab is "resolved" | "cancelled" =>
   tab === "resolved" || tab === "cancelled";
 
 /** The statuses an outstanding request can have, with their table dots. */
+const UNREAD_OPTIONS = [
+  { value: "unread" as const, label: "Unread replies" },
+];
+
 const OPEN_STATE_OPTIONS = (
   ["submitted", "in_review", "needs_information"] as IntakeOpenState[]
 ).map((value) => ({
@@ -630,13 +634,6 @@ export function Inbox({
         onChange={changeTab}
         actions={
           <>
-            {/* A reply nobody has opened yet, from any status or tab. */}
-            <TabPillButtonUI
-              active={filters.newReply}
-              onClick={() => update({ newReply: !filters.newReply })}
-            >
-              Has new reply
-            </TabPillButtonUI>
             {scope && (
               <TabPillButtonUI
                 active
@@ -691,7 +688,17 @@ export function Inbox({
                   }
                 />
               )}
-              <span>Request</span>
+              <div className="flex items-center gap-1">
+                <span>Request</span>
+                <TableFilters
+                  label="Filter by replies"
+                  value={filters.newReply ? "unread" : null}
+                  allLabel="All requests"
+                  options={UNREAD_OPTIONS}
+                  align="right"
+                  onChange={(value) => update({ newReply: value === "unread" })}
+                />
+              </div>
             </TableStickyCell>
             <TableHeaderCell className="ml-auto w-44">
               <div className="flex items-center gap-1">
@@ -842,7 +849,8 @@ export function Inbox({
                           : [...ids, request.id],
                       )
                     }
-                    label={
+                  >
+                    <span className="min-w-0 flex-1 truncate text-xs text-gray-800">
                       <Link
                         href={href}
                         className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
@@ -851,8 +859,9 @@ export function Inbox({
                       >
                         {request.subject}
                       </Link>
-                    }
-                  />
+                    </span>
+                    <UnreadReplies count={unreadReplies(request)} />
+                  </TablePrimaryCell>
                   <TableCell className="ml-auto w-44 [overflow-wrap:anywhere]">
                     <IntakePerson
                       name={request.requester_name}
@@ -988,11 +997,7 @@ function IntakeLoadingRows() {
             <SkeletonPerson width="w-24" />
           </TableCell>
           <TableCell className="w-44">
-            {/* The status, and the line a New reply marker takes. */}
-            <div className="space-y-1">
-              <SkeletonLine className="w-16" />
-              {width === "w-36" && <SkeletonLine className="ml-4 w-14" />}
-            </div>
+            <SkeletonLine className="w-16" />
           </TableCell>
           <TableCell className="w-44">
             <SkeletonPerson width="w-24" />
@@ -1010,39 +1015,40 @@ function IntakeLoadingRows() {
   );
 }
 
-/**
- * A row's status with its dot. "(MikeGC asked)" and a New reply marker go
- * on a second line in plain text, so neither cuts the status short.
- */
+/** Unread replies; a request flagged before counts existed shows one. */
+function unreadReplies(request: IntakeRequestSummary) {
+  return request.unread_replies ?? (request.new_reply ? 1 : 0);
+}
+
+/** A blue count of the replies nobody has opened yet. */
+function UnreadReplies({ count }: { count: number }) {
+  if (count < 1) return null;
+  const label = `${count} unread ${count === 1 ? "reply" : "replies"}`;
+  return (
+    <span
+      role="img"
+      aria-label={label}
+      title={label}
+      className="ml-2 mr-2 inline-flex h-3 min-w-3 shrink-0 items-center justify-center rounded-full bg-blue-600 px-[2px] text-[8px] font-medium leading-none text-white"
+    >
+      {count > 99 ? "99+" : count}
+    </span>
+  );
+}
+
+/** A row's status with its dot. */
 export function IntakeQueueStatus({
   request,
 }: {
-  request: Pick<IntakeRequestSummary, "state" | "clarify_stage" | "new_reply">;
+  request: Pick<IntakeRequestSummary, "state">;
 }) {
-  const asked =
-    request.state === "needs_information" && !!request.clarify_stage;
   return (
-    <span className="flex min-w-0 flex-col">
-      <span className="flex items-center gap-2">
-        <span
-          aria-hidden="true"
-          className={`h-2 w-2 shrink-0 rounded-full ${INTAKE_STATE_DOT_CLASS[request.state]}`}
-        />
-        <span className="min-w-0">{INTAKE_STATE_LABELS[request.state]}</span>
-      </span>
-      {(asked || request.new_reply) && (
-        <span className="pl-4 text-[11px] leading-4">
-          {asked && <span className="text-gray-500">(MikeGC asked)</span>}
-          {asked && request.new_reply && (
-            <span aria-hidden="true" className="text-gray-400">
-              {" · "}
-            </span>
-          )}
-          {request.new_reply && (
-            <span className="font-medium text-blue-600">New reply</span>
-          )}
-        </span>
-      )}
+    <span className="flex min-w-0 items-center gap-2">
+      <span
+        aria-hidden="true"
+        className={`h-2 w-2 shrink-0 rounded-full ${INTAKE_STATE_DOT_CLASS[request.state]}`}
+      />
+      <span className="min-w-0">{INTAKE_STATE_LABELS[request.state]}</span>
     </span>
   );
 }

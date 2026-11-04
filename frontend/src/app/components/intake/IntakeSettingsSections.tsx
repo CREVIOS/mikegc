@@ -35,7 +35,6 @@ import type { IntakeAutomationDraft } from "./intakeAutomation";
 import {
   ROW_DESCRIPTION_CLASS,
   ROW_LABEL_CLASS,
-  ToggleRow,
 } from "./IntakeSettingsFields";
 
 /**
@@ -317,21 +316,14 @@ function ModelRow({
   );
 }
 
-/**
- * Triage rules: who each request goes to, on a table page of their own, and
- * whether MikeGC asks requesters for what it is missing.
- */
+/** Triage rules: who each request goes to, on a table page of their own. */
 export function IntakeTriageRulesSection({
   rulesHref,
   modelsHref,
-  draft,
-  onChange,
 }: {
   rulesHref: string;
   /** Model Preferences, where triage's and preprocessing's models are chosen. */
   modelsHref: string;
-  draft?: IntakeAutomationDraft;
-  onChange?: Change;
 }) {
   return (
     <IntakeSettingsSection title="Triage rules">
@@ -366,14 +358,6 @@ export function IntakeTriageRulesSection({
           Edit
         </Link>
       </SettingsRow>
-      {draft && onChange && (
-        <ToggleRow
-          label="Ask requesters for missing details"
-          description="Before Legal starts, MikeGC asks in the request's thread for what it needs to choose a rule, then for what the rule's playbook or workflow needs. It asks at most two rounds of questions, and stops once a lawyer acts on the request."
-          checked={draft.clarifyEnabled}
-          onChange={(clarifyEnabled) => onChange({ clarifyEnabled })}
-        />
-      )}
     </IntakeSettingsSection>
   );
 }

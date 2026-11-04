@@ -7,8 +7,6 @@ import type { Db } from "../../lib/supabase";
  */
 export type AutomationRow = {
   org_id: string;
-  /** Ask requesters for missing details. */
-  clarify_enabled: boolean;
   email_enabled: boolean;
   email_allowed_domains: string[] | null;
   /** The intake mailbox: Microsoft 365 through Graph, or Google Workspace. */
@@ -31,6 +29,12 @@ export type AutomationRow = {
   graph_client_state_hash: string | null;
   graph_delta_link: string | null;
   gmail_history_id: string | null;
+  /** The organization's own Gmail service account; else the deployment's. */
+  gmail_service_account_key_encrypted: string | null;
+  gmail_service_account_key_iv: string | null;
+  gmail_service_account_key_tag: string | null;
+  /** The client ID an admin delegates to; not a credential. */
+  gmail_service_account_id: string | null;
   slack_enabled: boolean;
   slack_webhook_id: string;
   slack_team_id: string | null;
@@ -61,11 +65,13 @@ export type AutomationRow = {
 };
 
 export const AUTOMATION_COLUMNS =
-  "org_id, clarify_enabled, email_enabled, email_allowed_domains, email_provider, email_mailbox, " +
+  "org_id, email_enabled, email_allowed_domains, email_provider, email_mailbox, " +
   "email_from_name, email_webhook_id, email_last_read_at, email_error, email_reconnect_notice, " +
   "graph_tenant_id, graph_client_id, graph_client_secret_encrypted, graph_client_secret_iv, " +
   "graph_client_secret_tag, graph_subscription_id, graph_subscription_expires_at, " +
   "graph_client_state_hash, graph_delta_link, gmail_history_id, " +
+  "gmail_service_account_key_encrypted, gmail_service_account_key_iv, " +
+  "gmail_service_account_key_tag, gmail_service_account_id, " +
   "slack_enabled, slack_webhook_id, slack_team_id, slack_team_name, slack_bot_user_id, " +
   "slack_signing_secret_encrypted, slack_signing_secret_iv, slack_signing_secret_tag, " +
   "slack_bot_token_encrypted, slack_bot_token_iv, slack_bot_token_tag, slack_scopes, " +

@@ -19,6 +19,7 @@ import {
     deleteDocument,
     getDocumentFile,
     getPlaybook,
+    getIntakeRequest,
     type Playbook,
 } from "@/app/lib/mikeApi";
 import { PageChromeContext } from "@/app/contexts/PageChromeContext";
@@ -35,6 +36,7 @@ const { push, renameChat, deleteChat, leaveChat, setCurrentChatId, setNewChatMes
 
 const addDoc = vi.hoisted(() => vi.fn());
 const attachPlaybook = vi.hoisted(() => vi.fn());
+const startIntake = vi.hoisted(() => vi.fn());
 
 const activeChat: Chat = {
     id: "chat-1",
@@ -88,12 +90,32 @@ vi.mock("./ChatInput", () => ({
         onDocumentClick?: (document: Document) => void;
         ref?: Ref<ChatInputHandle>;
     }) => {
-        useImperativeHandle(ref, () => ({ addDoc, addFiles: vi.fn(), addExcerpt: vi.fn(), startWorkflow: vi.fn(), startWorkflowDocumentSelection: vi.fn(), attachPlaybook }));
+        useImperativeHandle(ref, () => ({ addDoc, addFiles: vi.fn(), addExcerpt: vi.fn(), startWorkflow: vi.fn(), startWorkflowDocumentSelection: vi.fn(), attachPlaybook, startIntake }));
         return <button onClick={() => onDocumentClick?.(spreadsheet)}>
             Open Budget.xlsx
         </button>;
     },
 }));
+// The active workspace, when a test sets one; otherwise the real context's
+// default (no provider: nothing to switch between).
+const workspace = vi.hoisted(() => ({
+    current: null as null | {
+        workspaceId: string;
+        organizations: { id: string; name: string }[] | null;
+        setWorkspace: (id: string) => void;
+    },
+}));
+vi.mock("@/app/contexts/WorkspaceContext", async (importOriginal) => {
+    const actual =
+        await importOriginal<typeof import("@/app/contexts/WorkspaceContext")>();
+    return {
+        ...actual,
+        useWorkspace: () =>
+            workspace.current
+                ? { ...actual.useWorkspace(), ...workspace.current }
+                : actual.useWorkspace(),
+    };
+});
 vi.mock("@/app/contexts/AuthContext", () => ({
     useAuth: () => ({ user: { id: "user-1", email: "user@example.com" } }),
 }));
@@ -109,6 +131,7 @@ vi.mock("@/app/lib/mikeApi", async (importOriginal) => ({
     deleteDocument: vi.fn(),
     getDocumentFile: vi.fn(),
     getPlaybook: vi.fn(),
+    getIntakeRequest: vi.fn(),
     listQuickActions: vi.fn().mockResolvedValue([]),
 }));
 vi.mock("../shared/views/SpreadsheetView", () => ({
@@ -1081,6 +1104,84 @@ describe("ChatView opened from a playbook", () => {
         expect(getPlaybook).toHaveBeenCalledTimes(1);
         expect(getPlaybook).toHaveBeenCalledWith("pb-1");
         // Other parameters, such as an open side chat, are kept.
+        expect(window.location.search).toBe("?side=");
+    });
+});
+
+describe("ChatView opened from an intake request", () => {
+    afterEach(() => {
+        window.history.replaceState(null, "", "/");
+        workspace.current = null;
+    });
+
+    it("switches to the request's workspace first, leaving the pill to the page that opens there", async () => {
+        const setWorkspace = vi.fn();
+        workspace.current = {
+            workspaceId: "org-2",
+            organizations: [
+                { id: "org-1", name: "Acme Legal" },
+                { id: "org-2", name: "Other Firm" },
+            ],
+            setWorkspace,
+        };
+        window.history.replaceState(
+            null,
+            "",
+            "/assistant?intake=request-1&intake_org=org-1",
+        );
+        renderView();
+
+        await waitFor(() => expect(setWorkspace).toHaveBeenCalledWith("org-1"));
+        expect(setWorkspace).toHaveBeenCalledTimes(1);
+        // A chat filed in Other Firm couldn't take the request: nothing is
+        // attached here, and the link stays for the page in Acme Legal.
+        expect(getIntakeRequest).not.toHaveBeenCalled();
+        expect(startIntake).not.toHaveBeenCalled();
+        expect(window.location.search).toBe("?intake=request-1&intake_org=org-1");
+    });
+
+    it("attaches nothing for a request in an organization the person isn't in", async () => {
+        const setWorkspace = vi.fn();
+        workspace.current = {
+            workspaceId: "org-2",
+            organizations: [{ id: "org-2", name: "Other Firm" }],
+            setWorkspace,
+        };
+        vi.mocked(getIntakeRequest).mockRejectedValue(new Error("Not found"));
+        window.history.replaceState(
+            null,
+            "",
+            "/assistant?intake=request-1&intake_org=org-1",
+        );
+        renderView();
+
+        await waitFor(() =>
+            expect(getIntakeRequest).toHaveBeenCalledWith("org-1", "request-1"),
+        );
+        expect(setWorkspace).not.toHaveBeenCalled();
+        expect(startIntake).not.toHaveBeenCalled();
+    });
+
+    it("puts the request's pill and a suggested prompt in the composer, sends nothing, and drops it from the URL", async () => {
+        vi.mocked(getIntakeRequest).mockResolvedValue({
+            id: "request-1",
+            subject: "Review mutual NDA",
+        } as Awaited<ReturnType<typeof getIntakeRequest>>);
+        window.history.replaceState(
+            null,
+            "",
+            "/assistant?intake=request-1&intake_org=org-1&side=",
+        );
+        renderView();
+
+        await waitFor(() =>
+            expect(startIntake).toHaveBeenCalledWith(
+                { id: "request-1", title: "Review mutual NDA" },
+                expect.stringContaining("Process this intake request"),
+            ),
+        );
+        expect(getIntakeRequest).toHaveBeenCalledTimes(1);
+        expect(getIntakeRequest).toHaveBeenCalledWith("org-1", "request-1");
         expect(window.location.search).toBe("?side=");
     });
 });

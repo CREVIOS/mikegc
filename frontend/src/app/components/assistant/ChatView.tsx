@@ -61,8 +61,16 @@ import {
 } from "../shared/types";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
 import { usePageChrome } from "@/app/contexts/PageChromeContext";
-import { DocumentWorkspaceScope } from "@/app/contexts/WorkspaceContext";
-import { useItemWorkspace } from "@/app/hooks/useItemWorkspace";
+import {
+    DocumentWorkspaceScope,
+    PERSONAL_WORKSPACE,
+    PERSONAL_WORKSPACE_LABEL,
+    useWorkspace,
+} from "@/app/contexts/WorkspaceContext";
+import {
+    notifyWorkspaceSwitched,
+    useItemWorkspace,
+} from "@/app/hooks/useItemWorkspace";
 import { resolvePanelDocumentVersionResult } from "./panelDocumentVersion";
 import { LIQUID_GLASS_TRANSLUCENT_ACTION_CLASS } from "@/app/components/ui/liquid-surface";
 import {
@@ -86,8 +94,13 @@ import { can, roleFrom } from "@/app/lib/permissions";
 import { AssistantChatHistoryMenu } from "./AssistantChatHistoryMenu";
 import { cn } from "@/app/lib/utils";
 import { notifyError, userFacingApiError } from "@/app/lib/userFacingError";
-import { getPlaybook } from "@/app/lib/mikeApi";
+import { getIntakeRequest, getPlaybook } from "@/app/lib/mikeApi";
 import { LINKED_PLAYBOOK_PARAM } from "@/app/lib/assistantPlaybookLink";
+import {
+    INTAKE_PROCESS_PROMPT,
+    LINKED_INTAKE_ORG_PARAM,
+    LINKED_INTAKE_PARAM,
+} from "@/app/lib/assistantIntakeLink";
 
 interface Props {
     chatId?: string | null;
@@ -997,6 +1010,73 @@ export function AssistantChatColumn({
         );
     }, [paneId, canWrite, chatLoading]);
 
+    // "Process in Assistant" on an intake request opens a new chat with
+    // `?intake=`: its pill and a suggested prompt wait in the composer, and
+    // nothing is sent until the user sends it. Then drop it from the URL.
+    // The new chat is filed in the active workspace and the server takes the
+    // request only in its own, so a link opened elsewhere switches to the
+    // request's workspace first; the page that opens there attaches it.
+    const linkedIntakeHandled = useRef(false);
+    const {
+        workspaceId: activeWorkspaceId,
+        organizations,
+        setWorkspace,
+    } = useWorkspace();
+    useEffect(() => {
+        const input = chatInputRef.current;
+        if (paneId !== "primary" || linkedIntakeHandled.current) return;
+        if (!input || !canWrite) return;
+        const params = new URLSearchParams(window.location.search);
+        const requestId = params.get(LINKED_INTAKE_PARAM);
+        const org = params.get(LINKED_INTAKE_ORG_PARAM);
+        if (!requestId || !org) return;
+        if (activeWorkspaceId !== null && activeWorkspaceId !== org) {
+            const name =
+                org === PERSONAL_WORKSPACE
+                    ? PERSONAL_WORKSPACE_LABEL
+                    : organizations?.find((candidate) => candidate.id === org)
+                          ?.name;
+            // Which organizations are theirs isn't known yet: wait for it.
+            if (name === undefined && organizations === null) return;
+            if (name !== undefined) {
+                linkedIntakeHandled.current = true;
+                setWorkspace(org);
+                notifyWorkspaceSwitched(
+                    name,
+                    "The intake request belongs to this workspace.",
+                );
+                return;
+            }
+            // Not one of theirs: reading the request below is refused, and
+            // says so, so no pill is attached.
+        }
+        linkedIntakeHandled.current = true;
+        params.delete(LINKED_INTAKE_PARAM);
+        params.delete(LINKED_INTAKE_ORG_PARAM);
+        const search = params.toString();
+        window.history.replaceState(
+            null,
+            "",
+            `${window.location.pathname}${search ? `?${search}` : ""}${window.location.hash}`,
+        );
+        getIntakeRequest(org, requestId).then(
+            (request) =>
+                input.startIntake(
+                    { id: request.id, title: request.subject },
+                    INTAKE_PROCESS_PROMPT,
+                ),
+            (error) =>
+                notifyError(error, { action: "attach the intake request" }),
+        );
+    }, [
+        paneId,
+        canWrite,
+        chatLoading,
+        activeWorkspaceId,
+        organizations,
+        setWorkspace,
+    ]);
+
     // The panel keeps what it is handed, so hand it a stable way to reach
     // the latest handler: registering on every new handler would re-render
     // the panel, and with it this column, without end.
@@ -1121,6 +1201,7 @@ export function AssistantChatColumn({
                                                         files={msg.files}
                                                         workflow={msg.workflow}
                                                         playbook={msg.playbook}
+                                                        intake={msg.intake}
                                                         onWorkflowClick={(wf) => {
                                                             setWorkflowModalInitialId(
                                                                 wf.id,

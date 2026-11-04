@@ -248,7 +248,11 @@ export async function commandIntakeRequest(
   // the wrappers' shorter signatures.
   if ((action === "wait" || action === "resolve") && input.send_to_requester) {
     args.p_send = true;
-    if (action === "resolve") args.p_documents = input.documents ?? [];
+    if (action === "resolve") {
+      args.p_documents = input.documents ?? [];
+      // Only the reply is sent; the resolution stays in the app.
+      if (input.reply !== undefined) args.p_reply = input.reply;
+    }
   }
   const result = await intakeRpc<CommandReceipt>(db, COMMAND_RPC[action], args);
   return afterCommand(db, scope, requestId, result);

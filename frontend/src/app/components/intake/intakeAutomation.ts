@@ -74,8 +74,6 @@ export function newIntakeRule(
  * themselves. Secrets start empty, and empty keeps the saved one.
  */
 export type IntakeAutomationDraft = {
-  /** Ask requesters for missing details before Legal starts. */
-  clarifyEnabled: boolean;
   emailEnabled: boolean;
   domains: string[];
   /** A domain typed but not yet added, which is not saved until it is. */
@@ -101,7 +99,6 @@ export function intakeAutomationDraft(
   settings: IntakeAutomationSettings,
 ): IntakeAutomationDraft {
   return {
-    clarifyEnabled: settings.clarify_enabled,
     emailEnabled: settings.email.enabled,
     domains: [...settings.email.allowed_domains],
     domainInput: "",
@@ -221,8 +218,6 @@ export function intakeAutomationChanges(
   draft: IntakeAutomationDraft,
 ): IntakeAutomationUpdate {
   const update: IntakeAutomationUpdate = {};
-  if (draft.clarifyEnabled !== settings.clarify_enabled)
-    update.clarify_enabled = draft.clarifyEnabled;
   if (draft.emailEnabled !== settings.email.enabled)
     update.email_enabled = draft.emailEnabled;
   if (!sameList(draft.domains, settings.email.allowed_domains))
@@ -269,8 +264,6 @@ export function intakeDraftAfterSave(
 ): IntakeAutomationDraft {
   const fresh = intakeAutomationDraft(saved);
   const next = { ...draft };
-  if (draft.clarifyEnabled === sent.clarify_enabled)
-    next.clarifyEnabled = fresh.clarifyEnabled;
   if (draft.emailEnabled === sent.email_enabled)
     next.emailEnabled = fresh.emailEnabled;
   if (
@@ -356,8 +349,6 @@ export function intakeDraftAfterFailure(
   saved: IntakeAutomationSettings,
 ): IntakeAutomationDraft {
   const next = { ...draft };
-  if (draft.clarifyEnabled === sent.clarify_enabled)
-    next.clarifyEnabled = saved.clarify_enabled;
   if (draft.emailEnabled === sent.email_enabled)
     next.emailEnabled = saved.email.enabled;
   if (draft.slackEnabled === sent.slack_enabled)
@@ -391,11 +382,6 @@ export function intakeDraftWithSwitches(
     sentValue !== undefined && current === savedValue ? sentValue : current;
   return {
     ...draft,
-    clarifyEnabled: again(
-      sent.clarify_enabled,
-      draft.clarifyEnabled,
-      saved.clarify_enabled,
-    ),
     emailEnabled: again(
       sent.email_enabled,
       draft.emailEnabled,

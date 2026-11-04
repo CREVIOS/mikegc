@@ -29,6 +29,13 @@ export function isEmailConversation(conversation: IntakeConversation) {
   return conversation.source === "outlook" || conversation.source === "gmail";
 }
 
+/** The switch that sends the resolution to the requester, named for where it goes. */
+export function intakeReplyLabel(conversation: IntakeConversation): string {
+  return isEmailConversation(conversation)
+    ? "Send reply by email"
+    : `Send reply in ${INTAKE_CHANNEL_LABELS[conversation.source]}`;
+}
+
 /**
  * Who a message sent to the requester reaches, as the send controls say it:
  * a Slack or Teams thread is visible to everyone in its channel, and an
@@ -83,8 +90,7 @@ export function intakeLeftOutDocuments(
   let total = 0;
   for (const [index, document] of ticked.entries()) {
     total += document.size_bytes ?? 0;
-    if (total > limit)
-      return ticked.slice(index).map((d) => d.document_id);
+    if (total > limit) return ticked.slice(index).map((d) => d.document_id);
   }
   return [];
 }

@@ -19,7 +19,16 @@ import {
 import type { Db } from "../../lib/supabase";
 import type { IntakeScope } from "./intake.requests";
 import { cleanText } from "./intake.inboundPayload";
-import { GmailApiError, gmailProfile, gmailSendTest, gmailServiceAccount } from "./intake.gmail";
+import {
+  deploymentGmailServiceAccount,
+  GmailApiError,
+  gmailDelegateId,
+  gmailMailbox,
+  gmailProfile,
+  gmailSendTest,
+  gmailServiceAccount,
+  parseGmailServiceAccount,
+} from "./intake.gmail";
 import { graphNotificationUrl, startMailboxPolling } from "./intake.mailbox";
 import { MicrosoftApiError, clearMicrosoftTokens } from "./intake.microsoft";
 import {
@@ -190,9 +199,8 @@ async function present(
       scope.actorId,
       ruleRows.map(preprocessRef),
     );
-    const gmail = gmailServiceAccount();
+    const gmailDeployment = deploymentGmailServiceAccount();
     return ok({
-      clarify_enabled: row.clarify_enabled !== false,
       email: {
         enabled: row.email_enabled,
         provider: row.email_provider,
@@ -205,7 +213,13 @@ async function present(
           secret_set: row.graph_client_secret_encrypted !== null,
         },
         notification_url: graphNotificationUrl(row.email_webhook_id),
-        gmail_client_id: gmail ? gmail.client_id ?? gmail.client_email : null,
+        gmail: {
+          client_id: row.gmail_service_account_key_encrypted
+            ? row.gmail_service_account_id
+            : gmailDeployment && gmailDelegateId(gmailDeployment),
+          key_set: row.gmail_service_account_key_encrypted !== null,
+          deployment_key: gmailDeployment !== null,
+        },
         status: {
           subscription_expires_at: row.graph_subscription_expires_at,
           last_read_at: row.email_last_read_at,
@@ -358,7 +372,6 @@ export async function updateIntakeAutomation(
     if (!sealed) return ENCRYPTION_UNAVAILABLE;
     Object.assign(patch, sealed);
   }
-  if (input.clarify_enabled !== undefined) patch.clarify_enabled = input.clarify_enabled;
   if (input.email_from_name !== undefined) {
     const name = cleanText(input.email_from_name).replace(/[\r\n<>"]/g, " ").trim();
     if (name.length < 1 || name.length > 80)
@@ -520,6 +533,20 @@ export async function updateIntakeAutomation(
         : failure("unavailable", "Couldn't reach Microsoft to check the Teams credentials. Try again.");
     patch.teams_files_access = checked.filesAccess;
   }
+  // A channel turns on with the save that completes its setup, also when an
+  // earlier save stored part of it: the settings page shows a channel's
+  // switch only once it is set up, so it can't be turned on before.
+  const slackWasSet =
+    row.slack_signing_secret_encrypted !== null && row.slack_bot_token_encrypted !== null;
+  const slackIsSet =
+    (row.slack_signing_secret_encrypted !== null || input.slack_signing_secret !== undefined) &&
+    (row.slack_bot_token_encrypted !== null || input.slack_bot_token !== undefined);
+  if (input.slack_enabled === undefined && !slackWasSet && slackIsSet)
+    patch.slack_enabled = true;
+  const teamsWasSet =
+    !!row.teams_app_id && !!row.teams_tenant_id && row.teams_client_secret_encrypted !== null;
+  if (input.teams_enabled === undefined && !teamsWasSet && teamsApp && teamsTenant && teamsSecret)
+    patch.teams_enabled = true;
   // Checked with Slack last, once everything local is known to be valid.
   if (input.slack_bot_token !== undefined) {
     const token = input.slack_bot_token.trim();
@@ -682,13 +709,25 @@ export async function connectIntakeMailbox(
       gmail_history_id: null,
     });
   } else {
-    if (!gmailServiceAccount())
+    // A pasted key, else the one saved, else the deployment's.
+    const pasted = input.service_account_key?.trim();
+    const account = pasted ? parseGmailServiceAccount(pasted) : gmailServiceAccount(row);
+    // Google Cloud's download names the client ID Google Admin delegates to.
+    const delegateId = account && gmailDelegateId(account);
+    if (pasted && !delegateId)
       return failure(
-        "unavailable",
-        "This deployment has no Gmail service account. Set INTAKE_GMAIL_SERVICE_ACCOUNT_KEY first.",
+        "validation",
+        "Paste the service account's JSON key as Google Cloud downloads it.",
       );
+    if (!account)
+      return failure("validation", "Paste the service account's JSON key.");
+    if (pasted) {
+      const sealed = encryptedColumns("gmail_service_account_key", pasted);
+      if (!sealed) return ENCRYPTION_UNAVAILABLE;
+      Object.assign(patch, sealed, { gmail_service_account_id: delegateId });
+    }
     try {
-      const profile = await gmailProfile(mailbox);
+      const profile = await gmailProfile({ address: mailbox, account });
       patch.gmail_history_id = profile.historyId;
     } catch (error) {
       return mailboxFailure(error, "Couldn't reach Gmail to check the mailbox. Try again.");
@@ -771,8 +810,10 @@ async function sendTest(row: AutomationRow, to: string) {
       to,
       fromName,
     );
-  } else if (row.email_provider === "gmail" && row.email_mailbox) {
-    await gmailSendTest(row.email_mailbox, to, fromName);
+  } else if (row.email_provider === "gmail") {
+    const mailbox = gmailMailbox(row);
+    if (!mailbox) throw new Error("not connected");
+    await gmailSendTest(mailbox, to, fromName);
   } else throw new Error("not connected");
 }
 

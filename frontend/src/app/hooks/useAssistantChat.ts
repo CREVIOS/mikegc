@@ -536,6 +536,7 @@ export function useAssistantChat({
         files: currentMessage.files,
         workflow: currentMessage.workflow,
         playbook: currentMessage.playbook,
+        intake: currentMessage.intake,
       }));
 
       const model = message.model;

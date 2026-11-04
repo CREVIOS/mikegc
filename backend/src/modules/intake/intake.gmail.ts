@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import MailComposer from "nodemailer/lib/mail-composer";
 import type { JWT } from "google-auth-library";
 import { ChannelDeliveryError, type ChannelAdapter } from "./intake.channels";
@@ -16,11 +17,14 @@ import {
   type MailHeader,
 } from "./intake.mail";
 import { encodedSize, mailBody, type ReadMail } from "./intake.outlook";
+import { gmailServiceAccountKey } from "./intake.secrets";
+import type { AutomationRow } from "./intake.settingsRow";
 
 /**
  * Gmail through the Gmail API: the organization's intake mailbox, a
- * Workspace user account, read and replied from with the deployment's
- * service account by domain-wide delegation (scope gmail.modify). Replies
+ * Workspace user account, read and replied from with a Google service
+ * account by domain-wide delegation (scope gmail.modify): the organization's
+ * own, whose JSON key it saved, or else the deployment's. Replies
  * are built as MIME with nodemailer's MailComposer, which only builds the
  * message; the Gmail API sends it in its thread.
  */
@@ -50,38 +54,86 @@ export class GmailApiError extends Error {
 const DELEGATION_REFUSED =
   "Google refused MikeGC access to the intake mailbox. Check the service account's domain-wide delegation for the gmail.modify scope.";
 
-type ServiceAccount = { client_email: string; private_key: string; client_id: string | null };
+export type GmailServiceAccount = {
+  client_email: string;
+  private_key: string;
+  /** The account's numeric Unique ID, which Google Admin delegates to. */
+  client_id: string | null;
+};
 
-/** The deployment's service account, from INTAKE_GMAIL_SERVICE_ACCOUNT_KEY. */
-export function gmailServiceAccount(): ServiceAccount | null {
-  const raw = process.env.INTAKE_GMAIL_SERVICE_ACCOUNT_KEY?.trim();
-  if (!raw) return null;
+/** The intake mailbox and the service account that acts as it. */
+export type GmailMailbox = { address: string; account: GmailServiceAccount };
+
+/** A service account's JSON key, as Google Cloud downloads it, or null. */
+export function parseGmailServiceAccount(raw: string | null | undefined): GmailServiceAccount | null {
+  const text = raw?.trim();
+  if (!text) return null;
   try {
-    const key = JSON.parse(raw) as Record<string, unknown>;
-    if (typeof key.client_email !== "string" || typeof key.private_key !== "string") return null;
+    const key = JSON.parse(text) as Record<string, unknown>;
+    if (key.type !== undefined && key.type !== "service_account") return null;
+    if (typeof key.client_email !== "string" || !key.client_email.includes("@")) return null;
+    if (typeof key.private_key !== "string" || !key.private_key.includes("PRIVATE KEY")) return null;
     return {
       client_email: key.client_email,
       private_key: key.private_key,
-      client_id: typeof key.client_id === "string" ? key.client_id : null,
+      client_id:
+        typeof key.client_id === "string" && /^\d{1,64}$/.test(key.client_id) ? key.client_id : null,
     };
   } catch {
     return null;
   }
 }
 
+/** The deployment's service account, from INTAKE_GMAIL_SERVICE_ACCOUNT_KEY. */
+export function deploymentGmailServiceAccount(): GmailServiceAccount | null {
+  return parseGmailServiceAccount(process.env.INTAKE_GMAIL_SERVICE_ACCOUNT_KEY);
+}
+
+/**
+ * What an admin delegates to in the Google Admin console: the numeric
+ * Unique ID, never the account's email, which the console doesn't take.
+ * Null for a key without one.
+ */
+export const gmailDelegateId = (account: GmailServiceAccount) => account.client_id;
+
+/**
+ * The organization's own service account, else the deployment's. A saved key
+ * that can't be read (its encryption key changed) is null, not the
+ * deployment's account acting in its place.
+ */
+export function gmailServiceAccount(row: Partial<AutomationRow>): GmailServiceAccount | null {
+  if (row.gmail_service_account_key_encrypted)
+    return parseGmailServiceAccount(gmailServiceAccountKey(row));
+  return deploymentGmailServiceAccount();
+}
+
+/** The connected Gmail intake mailbox, or null without one or an account. */
+export function gmailMailbox(row: Partial<AutomationRow>): GmailMailbox | null {
+  if (row.email_provider !== "gmail" || !row.email_mailbox) return null;
+  const account = gmailServiceAccount(row);
+  return account ? { address: row.email_mailbox, account } : null;
+}
+
+/** Why a connected Gmail mailbox can't be read: it has no service account. */
+export const noGmailAccount = () =>
+  new GmailApiError(
+    0,
+    "not_configured",
+    true,
+    "Gmail has no service account. Reconnect Gmail with the service account's JSON key.",
+  );
+
 const clients = new Map<string, JWT>();
 
 /** An access token for the mailbox, impersonated by domain-wide delegation. */
-async function gmailToken(mailbox: string): Promise<string> {
-  const account = gmailServiceAccount();
-  if (!account)
-    throw new GmailApiError(
-      0,
-      "not_configured",
-      true,
-      "This deployment has no Gmail service account. Set INTAKE_GMAIL_SERVICE_ACCOUNT_KEY.",
-    );
-  const key = mailbox.toLowerCase();
+async function gmailToken(mailbox: GmailMailbox): Promise<string> {
+  const { account } = mailbox;
+  // A new key for the same account makes a new client.
+  const key = [
+    mailbox.address.toLowerCase(),
+    account.client_email,
+    createHash("sha256").update(account.private_key).digest("base64url").slice(0, 16),
+  ].join("|");
   let client = clients.get(key);
   if (!client) {
     const { JWT } = await import("google-auth-library");
@@ -89,7 +141,7 @@ async function gmailToken(mailbox: string): Promise<string> {
       email: account.client_email,
       key: account.private_key,
       scopes: [GMAIL_SCOPE],
-      subject: mailbox,
+      subject: mailbox.address,
     });
     if (clients.size >= 200) {
       const oldest = clients.keys().next().value;
@@ -108,7 +160,7 @@ async function gmailToken(mailbox: string): Promise<string> {
 }
 
 async function gmailFetch<T>(
-  mailbox: string,
+  mailbox: GmailMailbox,
   path: string,
   init: { method?: string; json?: unknown; long?: boolean } = {},
 ): Promise<T> {
@@ -150,7 +202,7 @@ async function gmailFetch<T>(
 }
 
 /** The mailbox's address and current history ID: checks MikeGC can open it. */
-export async function gmailProfile(mailbox: string): Promise<{ emailAddress: string; historyId: string }> {
+export async function gmailProfile(mailbox: GmailMailbox): Promise<{ emailAddress: string; historyId: string }> {
   const profile = await gmailFetch<{ emailAddress?: string; historyId?: string }>(mailbox, "/profile");
   if (!profile?.emailAddress || !profile.historyId)
     throw new GmailApiError(0, "invalid_response", false, "Gmail sent an answer MikeGC couldn't read.");
@@ -162,7 +214,7 @@ export async function gmailProfile(mailbox: string): Promise<{ emailAddress: str
  * read on from; "expired" when Gmail no longer keeps that history.
  */
 export async function gmailHistory(
-  mailbox: string,
+  mailbox: GmailMailbox,
   startHistoryId: string,
 ): Promise<{ ids: string[]; historyId: string } | "expired"> {
   const ids: string[] = [];
@@ -211,7 +263,7 @@ export async function gmailHistory(
 const LIST_PAGES = 100;
 
 /** Inbox messages received after a time, when the history is too old to list. */
-export async function gmailListSince(mailbox: string, after: Date): Promise<string[]> {
+export async function gmailListSince(mailbox: GmailMailbox, after: Date): Promise<string[]> {
   const q = `in:inbox after:${Math.floor(after.getTime() / 1000)}`;
   const ids: string[] = [];
   let pageToken: string | undefined;
@@ -245,7 +297,7 @@ const decode = (data: string | undefined) =>
   data ? Buffer.from(data, "base64url").toString("utf8") : "";
 
 /** One received email with what recording it needs. */
-export async function gmailReadMessage(mailbox: string, id: string): Promise<ReadMail | null> {
+export async function gmailReadMessage(mailbox: GmailMailbox, id: string): Promise<ReadMail | null> {
   let message: {
     id: string;
     threadId?: string;
@@ -318,9 +370,9 @@ export async function gmailReadMessage(mailbox: string, id: string): Promise<Rea
 const labelIds = new Map<string, string>();
 
 /** Mark a recorded email with the "MikeGC" label, made on first use. */
-export async function gmailMarkRecorded(mailbox: string, id: string) {
+export async function gmailMarkRecorded(mailbox: GmailMailbox, id: string) {
   try {
-    let label = labelIds.get(mailbox.toLowerCase());
+    let label = labelIds.get(mailbox.address.toLowerCase());
     if (!label) {
       const list = await gmailFetch<{ labels?: { id: string; name: string }[] }>(mailbox, "/labels");
       label =
@@ -328,7 +380,7 @@ export async function gmailMarkRecorded(mailbox: string, id: string) {
         (await gmailFetch<{ id: string }>(mailbox, "/labels", {
           json: { name: LABEL, labelListVisibility: "labelShow", messageListVisibility: "show" },
         })).id;
-      labelIds.set(mailbox.toLowerCase(), label);
+      labelIds.set(mailbox.address.toLowerCase(), label);
     }
     await gmailFetch(mailbox, `/messages/${encodeURIComponent(id)}/modify`, {
       json: { addLabelIds: [label] },
@@ -375,7 +427,7 @@ export async function buildMime(args: {
 }
 
 /** The ID of a sent message carrying our Message-ID, or null. */
-async function findSent(mailbox: string, messageId: string, outboundId: string, thread: string) {
+async function findSent(mailbox: GmailMailbox, messageId: string, outboundId: string, thread: string) {
   const found = await gmailFetch<{ messages?: { id: string }[] }>(
     mailbox,
     `/messages?${new URLSearchParams({ q: `rfc822msgid:${messageId}`, maxResults: "1" })}`,
@@ -393,7 +445,7 @@ async function findSent(mailbox: string, messageId: string, outboundId: string, 
 }
 
 /** The Message-ID Gmail kept for a sent message. */
-async function sentMessageId(mailbox: string, id: string): Promise<string | null> {
+async function sentMessageId(mailbox: GmailMailbox, id: string): Promise<string | null> {
   const data = await gmailFetch<{ payload?: GmailPart }>(
     mailbox,
     `/messages/${encodeURIComponent(id)}?format=metadata&metadataHeaders=Message-ID`,
@@ -404,9 +456,9 @@ async function sentMessageId(mailbox: string, id: string): Promise<string | null
 }
 
 /** A test email from the intake mailbox to the admin connecting it. */
-export async function gmailSendTest(mailbox: string, to: string, fromName: string) {
+export async function gmailSendTest(mailbox: GmailMailbox, to: string, fromName: string) {
   const raw = await buildMime({
-    from: { name: fromName, address: mailbox },
+    from: { name: fromName, address: mailbox.address },
     to: [to],
     cc: [],
     subject: "MikeGC is connected to the intake mailbox",
@@ -442,9 +494,10 @@ export const gmailAdapter: ChannelAdapter = {
   source: "gmail",
   async deliver(ctx, link, message, delivered) {
     if (delivered) return { externalId: delivered, documents: message.documents };
-    if (!ctx.settings.email_enabled || ctx.settings.email_provider !== "gmail" || !ctx.settings.email_mailbox)
+    const mailbox = ctx.settings.email_enabled ? gmailMailbox(ctx.settings) : null;
+    if (!mailbox)
       throw new ChannelDeliveryError("The intake mailbox isn't connected, so MikeGC can't email the requester.", true);
-    const mailbox = ctx.settings.email_mailbox;
+    const address = mailbox.address;
     try {
       const thread = mailAddress(link);
       const { data: ids, error } = await ctx.db
@@ -469,10 +522,10 @@ export const gmailAdapter: ChannelAdapter = {
             message.author.kind === "member"
               ? `${message.author.name} via ${ctx.fromName}`.slice(0, 120)
               : ctx.fromName,
-          address: mailbox,
+          address,
         },
-        to: thread.to.filter((a) => a.toLowerCase() !== mailbox.toLowerCase()),
-        cc: thread.cc.filter((a) => a.toLowerCase() !== mailbox.toLowerCase()),
+        to: thread.to.filter((a) => a.toLowerCase() !== address.toLowerCase()),
+        cc: thread.cc.filter((a) => a.toLowerCase() !== address.toLowerCase()),
         subject: replySubject(thread.subject),
         messageId: outboundMessageId(message.id),
         inReplyTo: references[references.length - 1] ?? null,
@@ -504,7 +557,7 @@ export const gmailAdapter: ChannelAdapter = {
     }
   },
   async findDelivered(ctx, link, message) {
-    const mailbox = ctx.settings.email_mailbox;
+    const mailbox = gmailMailbox(ctx.settings);
     if (!mailbox) return null;
     try {
       const thread = mailAddress(link);

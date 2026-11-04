@@ -1314,11 +1314,13 @@ export async function buildDocContext(
   chatId?: string | null,
   messageTable = "chat_messages",
   userEmail?: string | null,
+  /** Documents the chat's container puts in scope, such as its intake request's. */
+  extraDocumentIds: string[] = [],
 ): Promise<{ docIndex: DocIndex; docStore: DocStore }> {
   const docIndex: DocIndex = {};
   const docStore: DocStore = new Map();
 
-  const documentIds = new Set<string>();
+  const documentIds = new Set<string>(extraDocumentIds);
   for (const m of messages) {
     for (const f of m.files ?? []) {
       if (f.document_id) documentIds.add(f.document_id);
@@ -1403,10 +1405,12 @@ export async function buildDocContext(
     // costs nothing (it is a `user_id === caller` comparison in memory).
     //
     // A document filed on its own under an organization has no container
-    // either: it is its uploader's alone, while they are a member. That
-    // verdict turns on the uploader as well as the organization, so the two
-    // together are the key — one answer per organization would hand a
-    // colleague's files to whoever's own file happened to be asked first.
+    // either. The caller's own such files share one verdict (their
+    // membership), so they share a key. Anyone else's file is reached only
+    // through a grant on that one document (a share, or an intake request
+    // it is attached to), so it is asked about individually: keyed by its
+    // uploader, a readable file would open its siblings, and an intake
+    // attachment (no uploader) would open every other detached file.
     const containerKey = (doc: {
       user_id: string | null;
       project_id: string | null;
@@ -1417,8 +1421,8 @@ export async function buildDocContext(
         ? `project:${doc.project_id}`
         : doc.workflow_id
           ? `workflow:${doc.workflow_id}`
-          : doc.org_id
-            ? `org:${doc.org_id}:${doc.user_id ?? ""}`
+          : doc.org_id && doc.user_id && doc.user_id === userId
+            ? `org:${doc.org_id}:${userId}`
             : null;
 
     const verdictByContainer = new Map<string, boolean>();
@@ -1428,8 +1432,8 @@ export async function buildDocContext(
       // The representative carries the container this verdict is about. In
       // a project or a workflow its `user_id` only ever decides the ROLE,
       // never `ok`, so reusing one document's answer for its siblings cannot
-      // widen access; on its own in an organization the uploader is part of
-      // the key.
+      // widen access; on its own in an organization only the caller's own
+      // files share a key.
       const verdict = await ensureDocAccess(doc, userId, userEmail ?? null, db);
       verdictByContainer.set(key, verdict.ok);
     }

@@ -21,7 +21,6 @@ import {
 } from "./intakeAutomation";
 
 const saved: IntakeAutomationSettings = {
-  clarify_enabled: true,
   email: {
     enabled: true,
     provider: "graph",
@@ -30,7 +29,7 @@ const saved: IntakeAutomationSettings = {
     from_name: "Legal",
     graph: { tenant_id: "t1", client_id: "c1", secret_set: true },
     notification_url: "https://api.example.test/webhooks/intake/graph/1",
-    gmail_client_id: null,
+    gmail: { client_id: null, key_set: false, deployment_key: false },
     status: { subscription_expires_at: null, last_read_at: null, error: null },
     needs_reconnect: false,
   },
@@ -499,26 +498,6 @@ describe("intakeAutosaveDraft", () => {
 });
 
 describe("the requester loop's settings", () => {
-  it("sends asking for missing details, and turns it back on failure", () => {
-    const draft = { ...intakeAutomationDraft(saved), clarifyEnabled: false };
-    const sent = intakeAutomationChanges(saved, draft);
-    expect(sent).toEqual({ clarify_enabled: false });
-    expect(intakeDraftAfterFailure(draft, sent, saved).clarifyEnabled).toBe(
-      true,
-    );
-    expect(
-      intakeDraftWithSwitches(
-        intakeDraftAfterFailure(draft, sent, saved),
-        sent,
-        saved,
-      ).clarifyEnabled,
-    ).toBe(false);
-    expect(
-      intakeDraftAfterSave(draft, sent, { ...saved, clarify_enabled: false })
-        .clarifyEnabled,
-    ).toBe(false);
-  });
-
   it("sends the sender name trimmed, and never an empty one", () => {
     const draft = intakeAutomationDraft(saved);
     expect(

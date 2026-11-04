@@ -117,6 +117,7 @@ vi.mock("@/app/contexts/WorkspaceContext", () => ({
   useWorkspace: () => mocks.workspace,
 }));
 vi.mock("@/app/hooks/useItemWorkspace", () => ({ useItemWorkspace: vi.fn() }));
+
 vi.mock("@/app/components/shared/PageHeader", () => ({
   PageHeader: ({
     children,
@@ -1475,6 +1476,22 @@ describe("contract review documents", () => {
 });
 
 describe("request detail", () => {
+  it("opens a new Assistant chat with the request ready to process, sending nothing", async () => {
+    const user = userEvent.setup();
+    render(detail());
+    await noteEditor();
+    await user.click(
+      within(screen.getByRole("banner")).getByRole("button", {
+        name: "Process this request in a new Assistant chat",
+      }),
+    );
+    // The composer there shows the request's pill and a suggested prompt.
+    expect(mocks.push).toHaveBeenCalledWith(
+      "/assistant?intake=request-a&intake_org=org-a",
+    );
+    expect(mocks.command).not.toHaveBeenCalled();
+  });
+
   it("adds a note without a version and clears the draft once saved", async () => {
     render(detail());
     const editor = await noteEditor();
@@ -1857,7 +1874,11 @@ describe("request detail", () => {
         .map(
           (button) => button.getAttribute("aria-label") ?? button.textContent,
         ),
-    ).toEqual(["Copy link", "More actions"]);
+    ).toEqual([
+      "Process this request in a new Assistant chat",
+      "Copy link",
+      "More actions",
+    ]);
     const writeText = vi
       .spyOn(navigator.clipboard, "writeText")
       .mockResolvedValue(undefined);
@@ -2821,29 +2842,30 @@ describe("requester loop", () => {
       ...overrides,
     });
 
-  it("offers an internal note or a message to the requester on a request with a thread", async () => {
+  it("messages the requester from the bottom of Messages, keeping the comment box for notes", async () => {
     mocks.request.mockResolvedValue(threaded());
     const user = userEvent.setup();
     render(detail());
-    const modes = await screen.findByRole("group", {
-      name: "Who sees this comment",
-    });
-    const note = within(modes).getByRole("radio", { name: "Internal note" });
-    expect(note).toBeChecked();
-    await user.click(
-      within(modes).getByRole("radio", { name: "Message requester" }),
-    );
+    // The comment box writes internal notes only.
+    await noteEditor();
+    expect(
+      screen.queryByRole("button", { name: "Message requester" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Message the requester"),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^Messages/ }));
+    // The history scrolls within the section; the box sits under it.
+    const history = screen.getByRole("region", { name: "Message history" });
+    expect(history).toHaveClass("max-h-[28rem]", "overflow-y-auto");
     const box = screen.getByLabelText("Message the requester");
-    // Where it goes, and that only the text is sent.
+    expect(
+      history.compareDocumentPosition(box) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    // It says who will see the message.
     expect(box).toHaveAccessibleDescription(
-      "Posts in the Slack thread in #legal-requests, visible to everyone in the channel. Only the text is sent.",
+      /^Posts in the Slack thread.*visible to everyone in the channel\.$/,
     );
-    expect(
-      screen.queryByRole("button", { name: "Add documents" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Resolve request" }),
-    ).not.toBeInTheDocument();
     fireEvent.change(box, { target: { value: "Which entity signs?" } });
     await user.click(screen.getByRole("button", { name: "Ask requester" }));
     await waitFor(() => expect(mocks.command).toHaveBeenCalledTimes(1));
@@ -2863,11 +2885,14 @@ describe("requester loop", () => {
     );
   });
 
-  it("writes notes only on a request with no thread", async () => {
+  it("offers no way to message the requester on a request with no thread", async () => {
     render(detail());
     await noteEditor();
     expect(
-      screen.queryByRole("group", { name: "Who sees this comment" }),
+      screen.queryByRole("button", { name: /^Messages/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Message the requester"),
     ).not.toBeInTheDocument();
   });
 
@@ -2886,17 +2911,24 @@ describe("requester loop", () => {
     const dialog = await screen.findByRole("dialog", {
       name: "Resolve request",
     });
-    expect(within(dialog).getByLabelText("Resolution")).toHaveValue(
-      "Approved with edits.",
-    );
+    // Replying is never assumed, even with a comment written.
     const reply = within(dialog).getByRole("switch", {
-      name: "Reply to requester",
+      name: "Send reply by email",
     });
-    expect(reply).toHaveAttribute("aria-checked", "true");
+    expect(reply).toHaveAttribute("aria-checked", "false");
+    expect(within(dialog).queryByLabelText("Message")).not.toBeInTheDocument();
+    await user.click(reply);
+    // The comment starts the reply, which is then written apart from it.
+    const message = within(dialog).getByLabelText("Message");
+    expect(message).toHaveValue("Approved with edits.");
+    fireEvent.change(message, {
+      target: { value: "Here are the agreed edits." },
+    });
     expect(reply).toHaveAccessibleDescription(
       "Emails ana@acme.test, cc ben@acme.test.",
     );
-    const box = (name: RegExp) => within(dialog).getByRole("checkbox", { name });
+    const box = (name: RegExp) =>
+      within(dialog).getByRole("checkbox", { name });
     expect(box(/NDA redline/)).toBeChecked();
     expect(box(/Schedule/)).not.toBeChecked();
     expect(box(/SOW redline/)).toBeChecked();
@@ -2922,8 +2954,10 @@ describe("requester loop", () => {
       {
         command_id: expect.any(String),
         expected_version: 1,
+        // The comment stays the internal resolution; the reply is sent.
         body: "Approved with edits.",
         send_to_requester: true,
+        reply: "Here are the agreed edits.",
         documents: ["redline", "original"],
       },
     ]);
@@ -2934,7 +2968,7 @@ describe("requester loop", () => {
     );
   });
 
-  it("resolves without replying when the reply is switched off", async () => {
+  it("asks first whether to reply, showing the message and documents only once it will", async () => {
     mocks.request.mockResolvedValue(threaded());
     const user = userEvent.setup();
     render(detail());
@@ -2943,12 +2977,23 @@ describe("requester loop", () => {
     const dialog = await screen.findByRole("dialog", {
       name: "Resolve request",
     });
-    await user.click(
-      within(dialog).getByRole("switch", { name: "Reply to requester" }),
+    const reply = within(dialog).getByRole("switch", {
+      name: "Send reply in Slack",
+    });
+    expect(reply).toHaveAttribute("aria-checked", "false");
+    // The thread is visible to everyone in its channel, and the switch says so.
+    expect(reply).toHaveAccessibleDescription(
+      /^Posts in the Slack thread.*visible to everyone in the channel\.$/,
     );
+    expect(within(dialog).queryByLabelText("Message")).not.toBeInTheDocument();
     expect(
       within(dialog).queryByText("Documents to send"),
     ).not.toBeInTheDocument();
+    await user.click(reply);
+    expect(within(dialog).getByLabelText("Message")).toHaveValue("");
+    expect(within(dialog).getByText("Documents to send")).toBeInTheDocument();
+    await user.click(reply);
+    expect(within(dialog).queryByLabelText("Message")).not.toBeInTheDocument();
     await user.click(
       within(dialog).getByRole("button", { name: "Resolve request" }),
     );
@@ -2974,6 +3019,9 @@ describe("requester loop", () => {
     const dialog = await screen.findByRole("dialog", {
       name: "Resolve request",
     });
+    await user.click(
+      within(dialog).getByRole("switch", { name: "Send reply in Slack" }),
+    );
     expect(dialog).toHaveTextContent(
       "Reinstall the Slack app to send documents.",
     );
@@ -2987,10 +3035,11 @@ describe("requester loop", () => {
       expected_version: 1,
       body: "Done.",
       send_to_requester: true,
+      reply: "Done.",
     });
   });
 
-  it("shows questions, replies and the resolution reply with how each was sent, and retries one that failed", async () => {
+  it("keeps questions, replies and the resolution reply in a collapsed Messages section, with how each was sent, and retries one that failed", async () => {
     mocks.request.mockResolvedValue(
       threaded({
         state: "resolved",
@@ -3083,21 +3132,43 @@ describe("requester loop", () => {
     render(detail());
     const activity = await screen.findByRole("region", { name: "Activity" });
     await waitFor(() =>
-      expect(activity).toHaveTextContent("MikeGC asked the requester"),
+      expect(activity).toHaveTextContent("stopped MikeGC asking the requester"),
     );
-    expect(activity).toHaveTextContent("Lawyer A asked the requester");
-    expect(activity).toHaveTextContent("Ana Ruiz replied in Slack");
-    expect(activity).toHaveTextContent("Signed NDA.pdf");
-    expect(activity).toHaveTextContent("stopped MikeGC asking the requester");
-    expect(activity).toHaveTextContent("Sent with NDA.docx");
-    expect(activity).toHaveTextContent("Not sent: Big.pdf");
-    expect(activity).toHaveTextContent(
+    // Activity is the work in the app; the conversation reads in Messages.
+    expect(activity).not.toHaveTextContent("asked the requester");
+    expect(activity).not.toHaveTextContent("replied in Slack");
+    expect(activity).not.toHaveTextContent("Approved.");
+    const toggle = screen.getByRole("button", { name: /^Messages/ });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(toggle).toHaveTextContent("Messages41 not sent");
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    const log = screen.getByRole("list", {
+      name: "Messages with the requester",
+    });
+    // Oldest first, ours on the right and the requester's on the left.
+    const bubbles = [...log.children];
+    expect(bubbles.map((b) => b.className.includes("justify-end"))).toEqual([
+      true,
+      true,
+      false,
+      true,
+    ]);
+    expect(bubbles[0]).toHaveTextContent("MikeGC");
+    expect(bubbles[1]).toHaveTextContent("Is Acme a customer?");
+    expect(bubbles[2]).toHaveTextContent("Ana Ruiz · Slack");
+    expect(bubbles[2]).toHaveTextContent("Signed NDA.pdf");
+    expect(bubbles[3]).toHaveTextContent("Resolution");
+    expect(bubbles[3]).toHaveTextContent("Approved.");
+    expect(bubbles[3]).toHaveTextContent("Sent with NDA.docx");
+    expect(bubbles[3]).toHaveTextContent("Not sent: Big.pdf");
+    expect(bubbles[1]).toHaveTextContent(
       "Couldn't send: MikeGC was removed from #legal-requests.",
     );
     // Only the failed one offers Retry and Copy text, naming what they act on.
-    expect(screen.getAllByRole("button", { name: /^Retry sending/ })).toHaveLength(
-      1,
-    );
+    expect(
+      screen.getAllByRole("button", { name: /^Retry sending/ }),
+    ).toHaveLength(1);
     await user.click(
       screen.getByRole("button", { name: "Copy the text of the question" }),
     );
@@ -3111,6 +3182,45 @@ describe("requester loop", () => {
       expect(mocks.retry).toHaveBeenCalledWith("org-a", "request-a", "out-2"),
     );
     await waitFor(() => expect(mocks.request).toHaveBeenCalledTimes(2));
+  });
+
+  it("shows documents a resolution sent alone, with Retry when they couldn't go", async () => {
+    mocks.request.mockResolvedValue(threaded({ state: "resolved" }));
+    mocks.messages.mockResolvedValue([]);
+    mocks.events.mockResolvedValue([
+      event({
+        id: 3,
+        kind: "resolve",
+        to_state: "resolved",
+        created_at: "2026-10-28T10:00:00Z",
+        delivery: {
+          outbound_id: "out-3",
+          kind: "answer",
+          status: "failed",
+          error: "MikeGC was removed from #legal-requests.",
+          sent_at: null,
+          documents: [{ document_id: "d1", filename: "NDA.docx", left_out: false }],
+        },
+      }),
+    ]);
+    const user = userEvent.setup();
+    render(detail());
+    const toggle = await screen.findByRole("button", { name: /^Messages/ });
+    expect(toggle).toHaveTextContent("1 not sent");
+    await user.click(toggle);
+    const log = screen.getByRole("list", { name: "Messages with the requester" });
+    expect(log).toHaveTextContent("Resolution");
+    expect(log).toHaveTextContent("Couldn't send: MikeGC was removed from #legal-requests.");
+    // No text was sent, so there is none to copy.
+    expect(
+      screen.queryByRole("button", { name: /^Copy the text/ }),
+    ).not.toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Retry sending the resolution reply" }),
+    );
+    await waitFor(() =>
+      expect(mocks.retry).toHaveBeenCalledWith("org-a", "request-a", "out-3"),
+    );
   });
 
   it("checks on a message still sending and says when it is sent", async () => {
@@ -3137,11 +3247,15 @@ describe("requester loop", () => {
         ]);
       render(detail());
       const activity = await screen.findByRole("region", { name: "Activity" });
-      await waitFor(() => expect(activity).toHaveTextContent("Sending"));
+      fireEvent.click(await screen.findByRole("button", { name: /^Messages/ }));
+      const log = screen.getByRole("list", {
+        name: "Messages with the requester",
+      });
+      await waitFor(() => expect(log).toHaveTextContent("Sending"));
       await act(async () => {
         vi.advanceTimersByTime(5_100);
       });
-      await waitFor(() => expect(activity).toHaveTextContent("Sent"));
+      await waitFor(() => expect(log).toHaveTextContent("Sent"));
       expect(activity).toHaveTextContent("Message to the requester sent.");
     } finally {
       vi.useRealTimers();
@@ -3202,11 +3316,15 @@ describe("requester loop", () => {
     expect(within(details).getByText("Cc ben@acme.test")).toBeInTheDocument();
   });
 
-  it("clears the New reply flag when a request with one opens", async () => {
+  it("clears the New reply flag once Messages is opened to show the reply", async () => {
     mocks.request.mockResolvedValue(
       threaded({ new_reply: true, last_reply_at: "2026-11-03T10:00:00.000Z" }),
     );
     const { unmount } = render(detail());
+    // Opening the request isn't reading the reply: Messages starts collapsed.
+    const toggle = await screen.findByRole("button", { name: /^Messages/ });
+    expect(mocks.replySeen).not.toHaveBeenCalled();
+    fireEvent.click(toggle);
     // Only the reply on screen is seen; a later one stays new.
     await waitFor(() =>
       expect(mocks.replySeen).toHaveBeenCalledWith(
@@ -3215,6 +3333,7 @@ describe("requester loop", () => {
         "2026-11-03T10:00:00.000Z",
       ),
     );
+    expect(mocks.replySeen).toHaveBeenCalledTimes(1);
     unmount();
     mocks.replySeen.mockClear();
     mocks.request.mockResolvedValue(threaded());
@@ -3243,13 +3362,14 @@ describe("requester loop", () => {
     }
   });
 
-  it("marks a new reply and MikeGC's question in the queue, and filters to new replies", async () => {
+  it("shows only the status, counts unread replies, and filters to them", async () => {
     mocks.list.mockResolvedValue(
       page([
         summary({
           state: "needs_information",
           clarify_stage: "rule",
           new_reply: true,
+          unread_replies: 3,
         }),
       ]),
     );
@@ -3257,29 +3377,17 @@ describe("requester loop", () => {
     render(<Inbox orgId="org-a" accountId="account-a" />);
     await screen.findByRole("link", { name: "Confidential request A" });
     expect(screen.getByText("Waiting on requester")).toBeInTheDocument();
-    expect(screen.getByText("(MikeGC asked)")).toBeInTheDocument();
-    expect(screen.getByText("New reply")).toBeInTheDocument();
-    const filter = screen.getByRole("button", { name: "Has new reply" });
-    expect(filter).toHaveAttribute("aria-pressed", "false");
-    await user.click(filter);
+    expect(screen.queryByText("New reply")).not.toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "3 unread replies" })).toHaveTextContent("3");
+    await user.click(screen.getByRole("button", { name: "Filter by replies" }));
+    await user.click(await screen.findByText("Unread replies"));
     await waitFor(() =>
       expect(mocks.list).toHaveBeenLastCalledWith(
         "org-a",
         expect.objectContaining({ new_reply: true }),
       ),
     );
-    expect(filter).toHaveAttribute("aria-pressed", "true");
     expect(window.location.search).toBe("?reply=new");
-    await user.click(filter);
-    await waitFor(() =>
-      expect(mocks.list.mock.calls.at(-1)?.[1].new_reply).toBeUndefined(),
-    );
   });
 
-  it("keeps a line for the New reply marker in the loading rows", () => {
-    mocks.list.mockReturnValue(new Promise(() => {}));
-    const { container } = render(<Inbox orgId="org-a" accountId="account-a" />);
-    expect(screen.getByRole("status")).toHaveTextContent("Loading requests…");
-    expect(container.querySelectorAll(".ml-4.w-14").length).toBeGreaterThan(0);
-  });
 });

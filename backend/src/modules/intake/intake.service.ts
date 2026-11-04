@@ -21,6 +21,7 @@ export {
   listIntakeDocuments,
 } from "./intake.documents";
 export { copyIntakeDocuments } from "./intake.copy";
+export { intakeChatBrief, intakeRequestWorkspace } from "./intake.assistant";
 export { getIntakeDashboard } from "./intake.dashboard";
 export {
   PERSONAL_INTAKE,

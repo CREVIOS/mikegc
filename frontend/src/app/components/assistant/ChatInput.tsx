@@ -13,6 +13,7 @@ import {
 } from "react";
 import {
     ArrowRight,
+    Inbox,
     Loader2,
     Square,
     Waypoints,
@@ -100,6 +101,11 @@ export interface ChatInputHandle {
     ) => void;
     /** Attaches a playbook to run on the documents, as the picker does. */
     attachPlaybook: (playbook: { id: string; title: string }) => void;
+    /**
+     * Attaches an intake request to process, as a pill, with a suggested
+     * prompt; nothing is sent until the user sends it.
+     */
+    startIntake: (intake: { id: string; title: string }, prompt?: string) => void;
 }
 
 interface Props {
@@ -202,6 +208,10 @@ function ChatInputForChatImpl(
         null,
     );
     const [selectedWorkflow, setSelectedWorkflow] = useState<{
+        id: string;
+        title: string;
+    } | null>(null);
+    const [selectedIntake, setSelectedIntake] = useState<{
         id: string;
         title: string;
     } | null>(null);
@@ -521,6 +531,22 @@ function ChatInputForChatImpl(
             setSelectedPlaybook(playbook);
             requestAnimationFrame(() => textareaRef.current?.focus());
         },
+        startIntake: (intake, prompt) => {
+            setSelectedIntake(intake);
+            if (prompt !== undefined) setValue(prompt);
+            requestAnimationFrame(() => {
+                const textarea = textareaRef.current;
+                if (!textarea) return;
+                textarea.style.height = "auto";
+                textarea.style.height = `${textarea.scrollHeight}px`;
+                textarea.focus();
+                // The cursor ends the suggestion, ready to send or extend.
+                textarea.setSelectionRange(
+                    textarea.value.length,
+                    textarea.value.length,
+                );
+            });
+        },
         startWorkflow: (workflow, prompt) => {
             setSelectedWorkflow(workflow);
             if (prompt !== undefined) setValue(prompt);
@@ -645,6 +671,7 @@ function ChatInputForChatImpl(
         setAttachedDocs([]);
         setSelectedWorkflow(null);
         setSelectedPlaybook(null);
+        setSelectedIntake(null);
         setExcerpts([]);
 
         onSubmit?.({
@@ -653,6 +680,7 @@ function ChatInputForChatImpl(
             files: files.length > 0 ? files : undefined,
             workflow: workflow ?? undefined,
             playbook: selectedPlaybook ?? undefined,
+            intake: selectedIntake ?? undefined,
             model,
             reasoning: reasoningLevel,
         });
@@ -746,6 +774,7 @@ function ChatInputForChatImpl(
                     {/* Attached chips */}
                     {(selectedWorkflow ||
                         selectedPlaybook ||
+                        selectedIntake ||
                         attachedDocs.length > 0 ||
                         excerpts.length > 0) && (
                         <div className="flex flex-wrap gap-1.5 px-2 pt-2">
@@ -788,6 +817,19 @@ function ChatInputForChatImpl(
                                         setPlaybookModalOpen(true);
                                     }}
                                     onRemove={() => setSelectedPlaybook(null)}
+                                />
+                            )}
+                            {selectedIntake && (
+                                <DocumentPill
+                                    filename={selectedIntake.title}
+                                    icon={
+                                        <Inbox
+                                            aria-hidden="true"
+                                            className="h-2.5 w-2.5 shrink-0"
+                                        />
+                                    }
+                                    status="Intake request"
+                                    onRemove={() => setSelectedIntake(null)}
                                 />
                             )}
                             {attachedDocs.map((doc) => (

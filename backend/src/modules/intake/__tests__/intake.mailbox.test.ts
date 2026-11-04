@@ -277,6 +277,13 @@ describe("reading the mailbox", () => {
     memory.rows("intake_automation")[0]!.email_enabled = false;
     await expect(handleIntakeMailboxPoll(memory.db, poll())).resolves.toEqual({ stopped: true });
   });
+  it("says when Gmail has no service account to read with, and keeps coming back", async () => {
+    delete process.env.INTAKE_GMAIL_SERVICE_ACCOUNT_KEY;
+    await expect(handleIntakeMailboxPoll(memory.db, poll())).rejects.toBeInstanceOf(DbJobDeferredError);
+    expect(memory.rows("intake_automation")[0]!.email_error).toBe(
+      "Gmail has no service account. Reconnect Gmail with the service account's JSON key.",
+    );
+  });
   it("reads Outlook from its delta link and comes back in 15 minutes, keeping the subscription", async () => {
     Object.assign(memory.rows("intake_automation")[0]!, {
       email_provider: "graph",
@@ -395,7 +402,7 @@ describe("reading the mailbox", () => {
     beforeEach(() => {
       process.env.INTAKE_GMAIL_SERVICE_ACCOUNT_KEY = JSON.stringify({
         client_email: "mikegc@project.iam.gserviceaccount.com",
-        private_key: "test-key",
+        private_key: "-----BEGIN PRIVATE KEY-----\ntest\n-----END PRIVATE KEY-----\n",
       });
       Object.assign(memory.rows("intake_automation")[0]!, { email_provider: "gmail", gmail_history_id: "100" });
     });

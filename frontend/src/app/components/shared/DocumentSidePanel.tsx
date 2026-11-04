@@ -51,6 +51,11 @@ interface DocumentSidePanelProps {
     doc: Document | null;
     displayUrl?: string | null;
     readOnly?: boolean;
+    /**
+     * List the versions in a read-only panel too, to view and download each;
+     * replacing and deleting them stay with an editable panel.
+     */
+    showVersions?: boolean;
     versionId?: string | null;
     currentVersionId?: string | null;
     versions: DocumentVersion[];
@@ -93,6 +98,7 @@ export function DocumentSidePanel({
     doc,
     displayUrl,
     readOnly = false,
+    showVersions = !readOnly,
     versionId,
     currentVersionId,
     versions,
@@ -173,11 +179,11 @@ export function DocumentSidePanel({
     useEffect(() => {
         if (!doc) return;
         setUploadError(null);
-        if (!readOnly) void onLoadVersions(doc.id);
+        if (showVersions) void onLoadVersions(doc.id);
         // The selected document is the fetch identity; callers commonly pass
         // an inline adapter for onLoadVersions.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [doc?.id, readOnly]);
+    }, [doc?.id, showVersions]);
 
     useEffect(() => {
         setEditingName(false);
@@ -762,7 +768,7 @@ export function DocumentSidePanel({
                         </div>
                     </div>
 
-                    {!readOnly && (
+                    {showVersions && (
                         <>
                             <div className="mb-2 mt-4 shrink-0 text-xs font-medium text-gray-900">
                                 Versions
@@ -889,6 +895,7 @@ export function DocumentSidePanel({
                                                             </span>
                                                         ) : (
                                                             <>
+                                                                {!readOnly && (
                                                                 <button
                                                                     type="button"
                                                                     onClick={(
@@ -915,6 +922,7 @@ export function DocumentSidePanel({
                                                                         <Upload className="h-3 w-3" />
                                                                     )}
                                                                 </button>
+                                                                )}
                                                                 <button
                                                                     type="button"
                                                                     onClick={(
@@ -933,6 +941,7 @@ export function DocumentSidePanel({
                                                                 >
                                                                     <Download className="h-3 w-3" />
                                                                 </button>
+                                                                {!readOnly && (
                                                                 <button
                                                                     type="button"
                                                                     onClick={(
@@ -968,6 +977,7 @@ export function DocumentSidePanel({
                                                                         <Trash2 className="h-3 w-3" />
                                                                     )}
                                                                 </button>
+                                                                )}
                                                             </>
                                                         )}
                                                     </div>
@@ -994,7 +1004,7 @@ export function DocumentSidePanel({
                             "bg-white/25",
                             // No versions list fills the column, so the
                             // actions are pinned to the bottom themselves.
-                            readOnly && "mt-auto",
+                            !showVersions && "mt-auto",
                         )}
                     >
                         {readOnly ? (

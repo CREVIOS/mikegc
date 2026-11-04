@@ -11,7 +11,8 @@ type SecretName =
   | "slack_signing_secret"
   | "slack_bot_token"
   | "graph_client_secret"
-  | "teams_client_secret";
+  | "teams_client_secret"
+  | "gmail_service_account_key";
 
 function secret(row: Partial<AutomationRow>, name: SecretName): string | null {
   const columns = row as Record<string, string | null | undefined>;
@@ -30,6 +31,9 @@ export const graphClientSecret = (row: Partial<AutomationRow>) =>
   secret(row, "graph_client_secret");
 export const teamsClientSecret = (row: Partial<AutomationRow>) =>
   secret(row, "teams_client_secret");
+/** The organization's own Gmail service account's JSON key. */
+export const gmailServiceAccountKey = (row: Partial<AutomationRow>) =>
+  secret(row, "gmail_service_account_key");
 
 /** A secret's three columns, or null when the encryption key isn't configured. */
 export function encryptedColumns(

@@ -26,6 +26,8 @@ export type AccessibleChat = {
     model: string | null;
     reasoning_level: string | null;
     org_id?: string | null;
+    /** The intake request a chat started from one works on. */
+    intake_request_id?: string | null;
 } & Record<string, unknown>;
 
 export async function validateAccessibleProjectId(

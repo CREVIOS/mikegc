@@ -1,10 +1,11 @@
 "use client";
 
-import { useId, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import { Check, Copy, Info } from "lucide-react";
+import { SAVED_KEY_MASK } from "@/app/components/settings/savedKeyMask";
 import { SettingsRow } from "@/app/components/settings/SettingsRow";
 import { SettingsTextInput } from "@/app/components/settings/SettingsTextInput";
-import { notifyError, notifySuccess } from "@/app/lib/userFacingError";
+import { notifyError } from "@/app/lib/userFacingError";
 import { cn } from "@/app/lib/utils";
 import { TextButtonUI } from "@/shared/ui/TextButtonUI";
 import { TextSlabUI } from "@/shared/ui/TextSlabUI";
@@ -82,54 +83,63 @@ export function CopyValue({
   label,
   name,
   value,
+  multiline = false,
   children,
 }: {
   label: string;
   /** What the copy button copies, for its accessible name. */
   name: string;
   value: string;
+  /** Keep the value's line breaks and indents, as for JSON. */
+  multiline?: boolean;
   children?: ReactNode;
 }) {
+  // The button says Copied, with a tick, for a moment after copying.
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 2000);
+    return () => clearTimeout(timer);
+  }, [copied]);
   return (
     <div>
       <div className="mb-2 flex items-center justify-between gap-3">
         <p className={ROW_LABEL_CLASS}>{label}</p>
         <TextButtonUI
           size="xs"
-          // Names what it copies; the visible "Copy" starts the name.
-          aria-label={`Copy ${name}`}
+          // Names what it copies; the visible word starts the name.
+          aria-label={`${copied ? "Copied" : "Copy"} ${name}`}
           onClick={() =>
             // Inside the promise, so a browser without clipboard access
             // reports it like any other failure.
             Promise.resolve()
               .then(() => navigator.clipboard.writeText(value))
               .then(
-                () => notifySuccess(`${label} copied`),
+                () => setCopied(true),
                 (e) => notifyError(e, { action: `copy the ${name}` }),
               )
           }
         >
-          <Copy aria-hidden="true" className="h-3 w-3" />
-          Copy
+          {copied ? (
+            <Check aria-hidden="true" className="h-3 w-3" />
+          ) : (
+            <Copy aria-hidden="true" className="h-3 w-3" />
+          )}
+          {copied ? "Copied" : "Copy"}
         </TextButtonUI>
       </div>
       <TextSlabUI>
-        <code className="block font-mono text-xs text-gray-900 [overflow-wrap:anywhere]">
+        <code
+          className={cn(
+            "block font-mono text-xs text-gray-900 [overflow-wrap:anywhere]",
+            multiline && "whitespace-pre-wrap",
+          )}
+        >
           {value}
         </code>
       </TextSlabUI>
       {children}
     </div>
-  );
-}
-
-/** "Saved" beside a write-only field whose value is kept. */
-export function SavedMark() {
-  return (
-    <span className="inline-flex items-center gap-1 text-xs text-gray-500">
-      <Check aria-hidden="true" className="h-3 w-3 text-emerald-600" />
-      Saved
-    </span>
   );
 }
 
@@ -217,8 +227,10 @@ export function TextField({
 }
 
 /**
- * A write-only secret: never shown, and kept as saved when left empty. Its
- * Saved mark says one is kept.
+ * A write-only secret: never shown, and kept as saved when left empty. As in
+ * the BYOK settings, a saved one shows as a fixed-length mask until the
+ * field is focused, which empties it for a replacement; left empty, the mask
+ * comes back.
  */
 export function SecretField({
   label,
@@ -237,23 +249,24 @@ export function SecretField({
   onEnter?: () => void;
 }) {
   const id = useId();
+  const [editing, setEditing] = useState(false);
+  const masked = saved && !editing && !value;
   return (
     <div>
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <label htmlFor={id} className={ROW_LABEL_CLASS}>
-          {label}
-        </label>
-        {saved && !value && <SavedMark />}
-      </div>
+      <label htmlFor={id} className={cn(ROW_LABEL_CLASS, "mb-2 block")}>
+        {label}
+      </label>
       <SettingsTextInput
         id={id}
         type="password"
         // Not a sign-in: keep the browser from filling a saved password.
         autoComplete="new-password"
         spellCheck={false}
-        value={value}
+        value={masked ? SAVED_KEY_MASK : value}
+        readOnly={masked}
         placeholder={saved ? "Paste a new one to replace it" : placeholder}
-        aria-describedby={saved ? `${id}-hint` : undefined}
+        onFocus={() => setEditing(true)}
+        onBlur={() => setEditing(false)}
         onChange={(event) => onChange(event.target.value)}
         onKeyDown={(event) => {
           if (event.key !== "Enter") return;
@@ -261,11 +274,6 @@ export function SecretField({
           onEnter?.();
         }}
       />
-      {saved && (
-        <p id={`${id}-hint`} className={HINT_CLASS}>
-          Leave empty to keep the saved one.
-        </p>
-      )}
     </div>
   );
 }

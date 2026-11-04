@@ -128,9 +128,15 @@ export const intakeCommands = {
       send_to_requester: z.boolean().default(false),
       /** The request's documents to send with the resolution; the database checks them. */
       documents: z.array(intakeId).max(10).optional(),
+      /** The reply sent to the requester, written apart from the resolution. */
+      reply: text(20000).optional(),
     })
     .strict()
-    .refine((v) => v.send_to_requester || v.documents === undefined),
+    .refine(
+      (v) =>
+        v.send_to_requester ||
+        (v.documents === undefined && v.reply === undefined),
+    ),
   cancel: z.object({ ...versioned, body: text(20000) }).strict(),
   reopen: z.object(versioned).strict(),
   delete: z.object(versioned).strict(),
@@ -144,11 +150,11 @@ export type IntakeCommandInput = {
   assignee_id?: string | null;
   send_to_requester?: boolean;
   documents?: string[];
+  reply?: string;
 };
 /** A change to automated intake; secrets are write-only and bounded. */
 export const intakeAutomationUpdate = z
   .object({
-    clarify_enabled: z.boolean().optional(),
     email_enabled: z.boolean().optional(),
     email_allowed_domains: z.array(z.string().max(255)).max(50).optional(),
     email_from_name: z.string().trim().min(1).max(80).optional(),
@@ -224,6 +230,7 @@ export const intakeMailboxConnection = z.discriminatedUnion("provider", [
     .object({
       provider: z.literal("gmail"),
       mailbox: z.string().trim().min(3).max(320),
+      service_account_key: z.string().max(20_000).optional(),
     })
     .strict(),
 ]);

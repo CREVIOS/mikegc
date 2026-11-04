@@ -1,15 +1,25 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { Hash, Loader2, Mail, MessagesSquare, X } from "lucide-react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from "react";
+import Image from "next/image";
+import { CircleHelp, Loader2, X } from "lucide-react";
 import type {
   IntakeAutomationSettings,
   IntakeAutomationUpdate,
   IntakeMailProvider,
 } from "@mike/contracts";
 import { Modal } from "@/app/components/modals/Modal";
+import { ConnectorCard } from "@/app/components/settings/ConnectorCard";
 import { SettingsHeading } from "@/app/components/settings/SettingsHeading";
 import { SettingsTextInput } from "@/app/components/settings/SettingsTextInput";
+import { SlackLogo } from "@/app/components/settings/SlackLogo";
 import {
   connectIntakeMailbox,
   disconnectIntakeMailbox,
@@ -26,6 +36,8 @@ import { notifySuccess } from "@/shared/lib/errorNotifier";
 import { GlassCardUI } from "@/shared/ui/GlassCardUI";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { TextButtonUI } from "@/shared/ui/TextButtonUI";
+import { ToggleSwitchUI } from "@/shared/ui/ToggleSwitchUI";
+import { slackIntakeManifest } from "./slackManifest";
 import {
   intakeAutomationChanges,
   intakeAutomationDraft,
@@ -36,11 +48,16 @@ import {
 import {
   INTAKE_CHANNEL_GUIDES,
   INTAKE_CHANNEL_NAMES,
+  INTAKE_MAIL_CHANNELS,
   INTAKE_MAIL_PROVIDER_LABELS,
+  intakeChannelMailProvider,
   intakeChannelSummary,
+  intakeGmailKeyOptional,
   intakeMailboxConnection,
   intakeMailboxForm,
   intakeMailboxFormProblem,
+  intakeServiceAccountClientId,
+  type IntakeChannelGuide,
   type IntakeChannelId,
   type IntakeChannelSummary,
   type IntakeMailboxForm,
@@ -48,7 +65,6 @@ import {
 import {
   CopyValue,
   ERROR_CLASS,
-  HINT_CLASS,
   LABEL_CLASS,
   ROW_DESCRIPTION_CLASS,
   ROW_LABEL_CLASS,
@@ -58,11 +74,36 @@ import {
   ToggleRow,
 } from "./IntakeSettingsFields";
 
-const CHANNELS: IntakeChannelId[] = ["email", "slack", "teams"];
+const CHANNELS: IntakeChannelId[] = ["outlook", "gmail", "slack", "teams"];
+
+/** A product logo served from public/icons/integrations. */
+function IntegrationLogo({ file }: { file: string }) {
+  return (
+    <Image
+      src={`/icons/integrations/${file}`}
+      alt=""
+      aria-hidden="true"
+      width={20}
+      height={20}
+      unoptimized
+      className="h-5 w-5 object-contain"
+    />
+  );
+}
+
 const CHANNEL_ICONS: Record<IntakeChannelId, ReactNode> = {
-  email: <Mail className="h-4 w-4" />,
-  slack: <Hash className="h-4 w-4" />,
-  teams: <MessagesSquare className="h-4 w-4" />,
+  outlook: <IntegrationLogo file="outlook.svg" />,
+  gmail: <IntegrationLogo file="gmail.png" />,
+  slack: <SlackLogo />,
+  teams: <IntegrationLogo file="teams.svg" />,
+};
+
+/** The field each tile's switch saves. */
+const ENABLED_FIELD: Record<IntakeChannelId, keyof IntakeAutomationUpdate> = {
+  outlook: "email_enabled",
+  gmail: "email_enabled",
+  slack: "slack_enabled",
+  teams: "teams_enabled",
 };
 
 type Change = (patch: Partial<IntakeAutomationDraft>) => void;
@@ -73,12 +114,12 @@ const FIELD_PROBLEMS: ReadonlySet<UserErrorKind> = new Set([
 ]);
 
 /**
- * The channels MikeGC records requests from, as compact cards: each names
- * the channel, says in a line how it stands and whether anything needs
- * attention, and has one button, Set up or Manage, that opens the channel's
- * modal. Everything else, from the on/off switch to its keys, is in the
- * modal, which saves with its own button; closing it discards what wasn't
- * saved.
+ * The channels MikeGC records requests from, as connector tiles: each names
+ * the channel with its logo. A channel that is set up shows its on/off
+ * switch, which saves at once, and the tile opens its modal; one that isn't
+ * shows Set up. Everything else, from its keys to its sender domains, is in
+ * the modal, which saves with its own button; closing it discards what
+ * wasn't saved.
  */
 export function IntakeChannelsSection({
   orgId,
@@ -92,18 +133,40 @@ export function IntakeChannelsSection({
 }) {
   const heading = useId();
   const [open, setOpen] = useState<IntakeChannelId | null>(null);
+  // The switch whose change is saving; the others wait for it.
+  const [switching, setSwitching] = useState<IntakeChannelId | null>(null);
+
+  function setEnabled(channel: IntakeChannelId, enabled: boolean) {
+    setSwitching(channel);
+    updateIntakeAutomation(orgId, { [ENABLED_FIELD[channel]]: enabled }).then(
+      (next) => {
+        setSwitching(null);
+        onSettings(next);
+      },
+      (cause) => {
+        setSwitching(null);
+        notifyError(cause, {
+          action: `turn ${INTAKE_CHANNEL_NAMES[channel]} ${enabled ? "on" : "off"}`,
+          onRetry: () => setEnabled(channel, enabled),
+        });
+      },
+    );
+  }
+
   return (
     <section aria-labelledby={heading} className="space-y-3">
       <SettingsHeading id={heading}>Channels</SettingsHeading>
-      {/* Cards sit side by side once their container has room for three. */}
+      {/* Laid out like the connector lists: two tiles a row once there's room. */}
       <div className="@container">
-        <div className="grid gap-3 @[44rem]:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 @min-[32rem]:grid-cols-2">
           {CHANNELS.map((channel) => (
             <IntakeChannelCard
               key={channel}
               channel={channel}
               summary={intakeChannelSummary(settings, channel)}
+              busy={switching !== null}
               onOpen={() => setOpen(channel)}
+              onEnabledChange={(enabled) => setEnabled(channel, enabled)}
             />
           ))}
         </div>
@@ -124,66 +187,68 @@ export function IntakeChannelsSection({
   );
 }
 
-/** One channel's card: its name, status, any warning, and Set up or Manage. */
+/**
+ * One channel's tile, styled like a connector's: its logo and name, then its
+ * on/off switch once it is set up (the tile opens its modal) or a Set up
+ * button before.
+ */
 export function IntakeChannelCard({
   channel,
   summary,
+  busy,
   onOpen,
+  onEnabledChange,
 }: {
   channel: IntakeChannelId;
   summary: IntakeChannelSummary;
+  /** A switch is saving: every switch waits. */
+  busy: boolean;
   onOpen: () => void;
+  onEnabledChange: (enabled: boolean) => void;
 }) {
   const name = INTAKE_CHANNEL_NAMES[channel];
-  const heading = useId();
-  const action = summary.configured ? "Manage" : "Set up";
   return (
-    <GlassCardUI>
-      <article
-        aria-labelledby={heading}
-        className="flex h-full min-w-0 flex-col justify-between gap-3 p-4"
-      >
-        <div className="flex min-w-0 items-start gap-3">
-          <span
-            aria-hidden="true"
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-100 text-gray-600"
+    <ConnectorCard
+      name={name}
+      kind="channel"
+      icon={CHANNEL_ICONS[channel]}
+      onOpen={summary.configured ? onOpen : undefined}
+      action={
+        summary.configured ? (
+          <ToggleSwitchUI
+            checked={summary.enabled}
+            disabled={busy}
+            aria-busy={busy}
+            aria-label={`${name} channel`}
+            onCheckedChange={onEnabledChange}
+          />
+        ) : (
+          <PillButtonUI
+            tone="blue"
+            size="sm"
+            // The visible word starts the name, which says which channel.
+            aria-label={`Set up ${name}`}
+            aria-haspopup="dialog"
+            onClick={onOpen}
           >
-            {CHANNEL_ICONS[channel]}
-          </span>
-          <div className="min-w-0 space-y-0.5">
-            <h3 id={heading} className="text-sm font-medium text-gray-900">
-              {name}
-            </h3>
-            <p className="text-xs text-gray-500 [overflow-wrap:anywhere]">
-              {summary.status}
-            </p>
-            {summary.warning && (
-              <p className="text-xs text-amber-700 [overflow-wrap:anywhere]">
-                {summary.warning}
-              </p>
-            )}
-          </div>
-        </div>
-        <PillButtonUI
-          tone={summary.configured ? "white" : "black"}
-          size="sm"
-          className="self-start"
-          // The visible word starts the name, which says which channel.
-          aria-label={`${action} ${name}`}
-          aria-haspopup="dialog"
-          onClick={onOpen}
-        >
-          {action}
-        </PillButtonUI>
-      </article>
-    </GlassCardUI>
+            Set up
+          </PillButtonUI>
+        )
+      }
+    />
   );
 }
 
 /** The fields a channel's modal may change; nothing else is ever sent. */
+const EMAIL_FIELDS: (keyof IntakeAutomationUpdate)[] = [
+  "email_enabled",
+  "email_allowed_domains",
+  "email_from_name",
+];
 const CHANNEL_FIELDS: Record<IntakeChannelId, (keyof IntakeAutomationUpdate)[]> =
   {
-    email: ["email_enabled", "email_allowed_domains", "email_from_name"],
+    outlook: EMAIL_FIELDS,
+    gmail: EMAIL_FIELDS,
     slack: ["slack_enabled", "slack_signing_secret", "slack_bot_token"],
     teams: [
       "teams_enabled",
@@ -196,6 +261,8 @@ const CHANNEL_FIELDS: Record<IntakeChannelId, (keyof IntakeAutomationUpdate)[]> 
 /**
  * What saving a channel's modal sends: its fields that differ from what is
  * saved. A sender domain typed but not yet added goes too, when it is one.
+ * Slack and Teams show their switch only once set up, so the save that
+ * completes one's setup turns it on.
  */
 export function intakeChannelChanges(
   channel: IntakeChannelId,
@@ -212,13 +279,24 @@ export function intakeChannelChanges(
   for (const key of CHANNEL_FIELDS[channel])
     if (all[key] !== undefined)
       Object.assign(changes, { [key]: all[key] });
+  const completes =
+    channel === "slack"
+      ? !settings.slack.configured &&
+        !!changes.slack_signing_secret &&
+        !!changes.slack_bot_token
+      : channel === "teams" &&
+        !settings.teams.configured &&
+        !!(changes.teams_app_id ?? settings.teams.app_id) &&
+        !!(changes.teams_tenant_id ?? settings.teams.tenant_id) &&
+        !!changes.teams_client_secret;
+  if (completes) Object.assign(changes, { [ENABLED_FIELD[channel]]: true });
   return changes;
 }
 
 /**
- * A channel's modal: everything about it, saved by the footer's button. The
- * email modal first connects the intake mailbox; once it is connected it
- * manages it.
+ * A channel's modal: everything about it, saved by the footer's button. An
+ * Outlook or Gmail modal first connects the intake mailbox on that provider;
+ * once it is connected there it manages it.
  */
 function IntakeChannelModal({
   channel,
@@ -235,19 +313,43 @@ function IntakeChannelModal({
 }) {
   const name = INTAKE_CHANNEL_NAMES[channel];
   const guide = INTAKE_CHANNEL_GUIDES[channel];
+  const provider = intakeChannelMailProvider(channel);
   const [draft, setDraft] = useState(() => intakeAutomationDraft(settings));
+  // The help screen replaces the fields until Back; what was typed is kept.
+  const [helping, setHelping] = useState(false);
+  // Slack's manifest, opened from its help screen's setup step.
+  const [showingManifest, setShowingManifest] = useState(false);
+  const helpButton = useRef<HTMLButtonElement>(null);
+  const helpScreen = useRef<HTMLDivElement>(null);
+  const manifestLink = useRef<HTMLButtonElement>(null);
+  const viewed = useRef<{ helping: boolean; manifest: boolean } | null>(null);
+  useEffect(() => {
+    // Focus follows each screen: onto the help screen or the manifest, and
+    // back to what opened it.
+    const before = viewed.current;
+    viewed.current = { helping, manifest: showingManifest };
+    if (!before) return;
+    if (showingManifest || (helping && !before.manifest))
+      helpScreen.current?.focus();
+    else if (helping) manifestLink.current?.focus();
+    else helpButton.current?.focus();
+  }, [helping, showingManifest]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // The email modal's connect form, while it is open.
-  const [form, setForm] = useState<IntakeMailboxForm | null>(null);
+  // A mail modal's connect form, while it is open: from the start until the
+  // mailbox is connected on this provider, and while reconnecting.
+  const [form, setForm] = useState<IntakeMailboxForm | null>(() =>
+    provider && settings.email.provider !== provider
+      ? intakeMailboxForm(provider, settings.email)
+      : null,
+  );
   const change: Change = (patch) => {
     setError(null);
     setDraft((current) => ({ ...current, ...patch }));
   };
   const pending = intakeChannelChanges(channel, settings, draft);
   const dirty = Object.keys(pending).length > 0;
-  const connecting =
-    channel === "email" && (!settings.email.provider || !!form);
+  const connecting = !!form;
 
   // Retry runs this render's save or connect while the modal is open.
   const latest = useRef<{ save: () => void; connect: () => void } | null>(
@@ -337,26 +439,31 @@ function IntakeChannelModal({
   useAssignLatest(latest, { save, connect });
 
   const secretSaved =
-    settings.email.provider === "graph" && settings.email.graph.secret_set;
+    form?.provider === "gmail"
+      ? intakeGmailKeyOptional(settings.email)
+      : settings.email.provider === "graph" && settings.email.graph.secret_set;
   const formProblem = form ? intakeMailboxFormProblem(form, secretSaved) : null;
-  const gmailUnavailable =
-    form?.provider === "gmail" && !settings.email.gmail_client_id;
-  const primaryAction = connecting
-    ? form
+  const spinner = saving ? (
+    <Loader2 className="h-4 w-4 animate-spin" />
+  ) : undefined;
+  const primaryAction = showingManifest
+    ? { label: "Back", onClick: () => setShowingManifest(false) }
+    : helping
+    ? { label: "Back", onClick: () => setHelping(false) }
+    : connecting
       ? {
           label: "Connect",
-          icon: saving ? <Loader2 className="h-4 w-4 animate-spin" /> : undefined,
+          icon: spinner,
           onClick: connect,
-          disabled: saving || !!formProblem || gmailUnavailable,
+          disabled: saving || !!formProblem,
           title: formProblem ?? undefined,
         }
-      : undefined
-    : {
-        label: "Save",
-        icon: saving ? <Loader2 className="h-4 w-4 animate-spin" /> : undefined,
-        onClick: save,
-        disabled: saving || !dirty || !!intakeDomainInputError(draft),
-      };
+      : {
+          label: "Save",
+          icon: spinner,
+          onClick: save,
+          disabled: saving || !dirty || !!intakeDomainInputError(draft),
+        };
 
   return (
     <Modal
@@ -364,79 +471,236 @@ function IntakeChannelModal({
       size="md"
       onClose={() => !saving && onClose()}
       // Where it belongs, then the channel, which names the dialog.
-      breadcrumbs={["Intake", "Channels", name]}
+      breadcrumbs={[
+        "Intake",
+        "Channels",
+        name,
+        ...(helping ? ["Help"] : []),
+        ...(showingManifest ? ["Manifest"] : []),
+      ]}
       footerLeading={
-        error ? (
-          <p
-            role="alert"
-            className="min-w-0 text-xs text-red-600 [overflow-wrap:anywhere]"
-          >
-            {error}
-          </p>
-        ) : undefined
+        // Help at the footer's start; a save's problem beside it.
+        helping && !error ? undefined : (
+          <div className="flex min-w-0 items-center gap-3">
+            {!helping && (
+              <TextButtonUI
+                ref={helpButton}
+                size="xs"
+                className="shrink-0 gap-1"
+                aria-label={`${name} help`}
+                onClick={() => setHelping(true)}
+              >
+                <CircleHelp aria-hidden="true" className="h-3.5 w-3.5" />
+                Help
+              </TextButtonUI>
+            )}
+            {error && (
+              <p
+                role="alert"
+                className="min-w-0 text-xs text-red-600 [overflow-wrap:anywhere]"
+              >
+                {error}
+              </p>
+            )}
+          </div>
+        )
       }
       primaryAction={primaryAction}
       // Closing discards what wasn't saved; the header's Close does the same.
-      cancelAction={{ label: "Cancel", onClick: onClose, disabled: saving }}
+      cancelAction={
+        helping ? false : { label: "Cancel", onClick: onClose, disabled: saving }
+      }
     >
-      <div
-        data-modal-scroll="vertical"
-        className="min-h-0 flex-1 space-y-6 overflow-y-auto pb-5"
-      >
-        <p className={ROW_DESCRIPTION_CLASS}>{guide.description}</p>
-        {channel === "email" ? (
-          <IntakeEmailFields
-            orgId={orgId}
-            settings={settings.email}
-            draft={draft}
-            form={form}
-            busy={saving}
-            onChange={change}
-            onForm={(next) => {
-              setError(null);
-              setForm(next);
-            }}
-            onSave={save}
-            onSettings={(next) => {
-              onSettings(next);
-              setDraft(intakeAutomationDraft(next));
-            }}
-          />
-        ) : channel === "slack" ? (
-          <IntakeSlackFields
-            settings={settings.slack}
-            draft={draft}
-            onChange={change}
-            onSave={save}
-          />
-        ) : (
-          <IntakeTeamsFields
-            settings={settings.teams}
-            draft={draft}
-            onChange={change}
-            onSave={save}
-          />
+      {helping ? (
+        <div
+          ref={helpScreen}
+          tabIndex={-1}
+          data-modal-scroll="vertical"
+          className="min-h-0 flex-1 overflow-y-auto pb-5 focus:outline-none"
+        >
+          {showingManifest ? (
+            <SlackManifest eventsUrl={settings.slack.events_url} />
+          ) : (
+            <ChannelHelp
+              guide={guide}
+              manifestLink={manifestLink}
+              onManifest={
+                channel === "slack" ? () => setShowingManifest(true) : undefined
+              }
+            />
+          )}
+        </div>
+      ) : (
+        <div
+          data-modal-scroll="vertical"
+          className="min-h-0 flex-1 space-y-6 overflow-y-auto pb-5"
+        >
+          {provider ? (
+            <IntakeEmailFields
+              orgId={orgId}
+              provider={provider}
+              settings={settings.email}
+              draft={draft}
+              form={form}
+              busy={saving}
+              onChange={change}
+              onForm={(next) => {
+                setError(null);
+                setForm(next);
+              }}
+              onSave={save}
+              onSettings={(next) => {
+                onSettings(next);
+                setDraft(intakeAutomationDraft(next));
+              }}
+            />
+          ) : channel === "slack" ? (
+            <IntakeSlackFields
+              settings={settings.slack}
+              draft={draft}
+              onChange={change}
+              onSave={save}
+            />
+          ) : (
+            <IntakeTeamsFields
+              settings={settings.teams}
+              draft={draft}
+              onChange={change}
+              onSave={save}
+            />
+          )}
+        </div>
         )}
-        <SetupSteps steps={guide.steps} />
-      </div>
     </Modal>
   );
 }
 
-/** How to set a channel up, in order, at the end of its modal. */
-function SetupSteps({ steps }: { steps: string[] }) {
-  const heading = useId();
+/**
+ * A channel's help screen: what it does, how to set it up in numbered steps,
+ * and what each of its settings means.
+ */
+function ChannelHelp({
+  guide,
+  manifestLink,
+  onManifest,
+}: {
+  guide: IntakeChannelGuide;
+  manifestLink: RefObject<HTMLButtonElement | null>;
+  /** Opens the app manifest a step's "{manifest}" links to. */
+  onManifest?: () => void;
+}) {
+  const stepsHeading = useId();
+  const settingsHeading = useId();
+  const overviewHeading = useId();
   return (
-    <section aria-labelledby={heading} className="space-y-2">
-      <h3 id={heading} className={ROW_LABEL_CLASS}>
-        How to set it up
-      </h3>
-      <ol className="list-decimal space-y-1.5 pl-5 text-sm text-gray-700 marker:text-gray-400">
-        {steps.map((step) => (
-          <li key={step}>{step}</li>
-        ))}
-      </ol>
-    </section>
+    <div className="space-y-6">
+      <section aria-labelledby={overviewHeading} className="space-y-2">
+        <h3 id={overviewHeading} className={ROW_LABEL_CLASS}>
+          What it does
+        </h3>
+        <p className="text-sm text-gray-700">{guide.overview}</p>
+      </section>
+      <section aria-labelledby={stepsHeading} className="space-y-3">
+        <h3 id={stepsHeading} className={ROW_LABEL_CLASS}>
+          How to set it up
+        </h3>
+        <ol className="space-y-3">
+          {guide.steps.map((step, index) => (
+            <li key={step.title} className="flex min-w-0 gap-3">
+              <span
+                aria-hidden="true"
+                className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-gray-100 text-[11px] font-medium text-gray-600"
+              >
+                {index + 1}
+              </span>
+              <div className="min-w-0 space-y-0.5">
+                <p className="text-sm font-medium text-gray-900">{step.title}</p>
+                <p className="text-sm text-gray-600 [overflow-wrap:anywhere]">
+                  {onManifest ? (
+                    <StepText
+                      text={step.text}
+                      linkRef={manifestLink}
+                      onManifest={onManifest}
+                    />
+                  ) : (
+                    step.text.replace("{manifest}", "the manifest in the setup guide")
+                  )}
+                </p>
+              </div>
+            </li>
+          ))}
+        </ol>
+      </section>
+      <section aria-labelledby={settingsHeading} className="space-y-3">
+        <h3 id={settingsHeading} className={ROW_LABEL_CLASS}>
+          What each setting means
+        </h3>
+        <GlassCardUI>
+          <dl className="divide-y divide-gray-100">
+            {guide.settings.map((setting) => (
+              <div key={setting.title} className="space-y-0.5 px-4 py-3">
+                <dt className="text-sm font-medium text-gray-900">
+                  {setting.title}
+                </dt>
+                <dd className="text-sm text-gray-600 [overflow-wrap:anywhere]">
+                  {setting.text}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </GlassCardUI>
+      </section>
+    </div>
+  );
+}
+
+/** A step's text, its "{manifest}" a link that opens the manifest. */
+function StepText({
+  text,
+  linkRef,
+  onManifest,
+}: {
+  text: string;
+  linkRef: RefObject<HTMLButtonElement | null>;
+  onManifest: () => void;
+}) {
+  const [before, after] = text.split("{manifest}");
+  if (after === undefined) return <>{text}</>;
+  return (
+    <>
+      {before}
+      <TextButtonUI
+        ref={linkRef}
+        size="xs"
+        className="inline h-auto px-0 align-baseline text-sm text-blue-600 underline hover:text-blue-700"
+        onClick={onManifest}
+      >
+        the manifest
+      </TextButtonUI>
+      {after}
+    </>
+  );
+}
+
+/**
+ * The Slack app's manifest, with the organization's Events Request URL, to
+ * paste into Slack's "Create an app" from a manifest.
+ */
+function SlackManifest({ eventsUrl }: { eventsUrl: string }) {
+  return (
+    <div className="space-y-4">
+      <p className={ROW_DESCRIPTION_CLASS}>
+        In Slack, choose Create New App, then From a manifest, pick your
+        workspace and paste this. It already has this workspace&apos;s Events
+        Request URL.
+      </p>
+      <CopyValue
+        label="Slack app manifest"
+        name="Slack app manifest"
+        value={slackIntakeManifest(eventsUrl)}
+        multiline
+      />
+    </div>
   );
 }
 
@@ -452,13 +716,15 @@ function formatSettingsTime(iso: string) {
 }
 
 /**
- * Email: connect the intake mailbox (Microsoft 365 through an Entra app, or
- * Google Workspace through the deployment's service account), then manage
- * it: the switch, its address and how reading it is going, a test email,
- * reconnecting or disconnecting, the sender name and the sender domains.
+ * Outlook or Gmail: connect the intake mailbox on `provider` (Microsoft 365
+ * through an Entra app, or Google Workspace through the deployment's service
+ * account), then manage it: the switch, its address and how reading it is
+ * going, a test email, reconnecting or disconnecting, the sender name and
+ * the sender domains.
  */
 function IntakeEmailFields({
   orgId,
+  provider,
   settings,
   draft,
   form,
@@ -469,6 +735,8 @@ function IntakeEmailFields({
   onSettings,
 }: {
   orgId: string;
+  /** The channel's provider; the mailbox may be connected on the other. */
+  provider: IntakeMailProvider;
   settings: IntakeAutomationSettings["email"];
   draft: IntakeAutomationDraft;
   form: IntakeMailboxForm | null;
@@ -479,12 +747,10 @@ function IntakeEmailFields({
   onSave: () => void;
   onSettings: (settings: IntakeAutomationSettings) => void;
 }) {
-  const provider = settings.provider;
+  const connected = settings.provider === provider;
   const [testing, setTesting] = useState(false);
   const [confirmingDisconnect, setConfirmingDisconnect] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
-  const start = (choice: IntakeMailProvider) =>
-    onForm(intakeMailboxForm(choice, settings));
 
   function disconnect() {
     setConfirmingDisconnect(false);
@@ -493,6 +759,8 @@ function IntakeEmailFields({
       (next) => {
         setDisconnecting(false);
         onSettings(next);
+        // The modal stays open on the connect form, to connect again.
+        onForm(intakeMailboxForm(provider, next.email));
       },
       (cause) => {
         setDisconnecting(false);
@@ -505,44 +773,37 @@ function IntakeEmailFields({
     );
   }
 
-  if (!provider || form)
+  if (!connected || form) {
+    // The mailbox is connected on the other provider.
+    const other =
+      settings.provider && settings.provider !== provider
+        ? settings.provider
+        : null;
     return (
       <div className="space-y-4">
-        {settings.needs_reconnect && !provider && (
+        {other && (
           <SettingsNotice>
-            <p className="font-medium">
-              Connect your intake mailbox to keep recording email.
-            </p>
             <p>
-              MikeGC no longer receives mail through Postmark. Connect the
-              mailbox you forwarded from, then remove the forwarding rule.
+              {settings.mailbox ?? "The intake mailbox"} is connected through{" "}
+              {INTAKE_CHANNEL_NAMES[INTAKE_MAIL_CHANNELS[other]]}.
+              MikeGC reads one intake mailbox, so connecting{" "}
+              {INTAKE_CHANNEL_NAMES[INTAKE_MAIL_CHANNELS[provider]]} replaces
+              it.
             </p>
           </SettingsNotice>
         )}
-        {form ? (
+        {form && (
           <MailboxConnectFields
             form={form}
             settings={settings}
             busy={busy}
             onChange={(patch) => onForm({ ...form, ...patch })}
-            onBack={() => onForm(null)}
-            backLabel={provider ? "Keep the current connection" : "Choose another"}
+            onBack={connected ? () => onForm(null) : undefined}
           />
-        ) : (
-          <div className="space-y-2">
-            <p className={ROW_LABEL_CLASS}>Where is the intake mailbox?</p>
-            <div className="flex flex-wrap items-center gap-2">
-              <PillButtonUI tone="white" size="sm" onClick={() => start("graph")}>
-                Connect Outlook (Microsoft 365)
-              </PillButtonUI>
-              <PillButtonUI tone="white" size="sm" onClick={() => start("gmail")}>
-                Connect Gmail (Google Workspace)
-              </PillButtonUI>
-            </div>
-          </div>
         )}
       </div>
     );
+  }
 
   return (
     <div className="space-y-6">
@@ -619,7 +880,7 @@ function IntakeEmailFields({
               size="sm"
               disabled={busy || disconnecting}
               aria-label={`Reconnect ${INTAKE_MAIL_PROVIDER_LABELS[provider]}`}
-              onClick={() => start(provider)}
+              onClick={() => onForm(intakeMailboxForm(provider, settings))}
             >
               Reconnect
             </PillButtonUI>
@@ -640,7 +901,6 @@ function IntakeEmailFields({
         value={draft.fromName}
         placeholder="Legal"
         maxLength={80}
-        hint={`MikeGC's own emails come from this name at ${settings.mailbox ?? "the intake address"}. A lawyer's message reads "Their name via ${draft.fromName.trim() || "Legal"}".`}
         onChange={(fromName) => onChange({ fromName })}
         onEnter={onSave}
       />
@@ -729,7 +989,7 @@ function SenderDomains({
           maxLength={253}
           value={draft.domainInput}
           aria-invalid={!!domainError}
-          aria-describedby={`${id}-hint${domainError ? ` ${id}-error` : ""}`}
+          aria-describedby={domainError ? `${id}-error` : undefined}
           onChange={(event) => onChange({ domainInput: event.target.value })}
           onKeyDown={(event) => {
             // Enter adds the domain rather than saving.
@@ -752,18 +1012,15 @@ function SenderDomains({
           {domainError}
         </p>
       )}
-      <p id={`${id}-hint`} className={HINT_CLASS}>
-        Mail counts only when its sender passes DMARC, SPF or DKIM for one of
-        these domains. Mail from other domains is recorded as ignored.
-      </p>
     </div>
   );
 }
 
 /**
  * The intake mailbox's connection: its address and, for Microsoft 365, the
- * Entra app's IDs and write-only secret; for Google Workspace, the client ID
- * to delegate to.
+ * Entra app's IDs and write-only secret; for Google Workspace, the service
+ * account's write-only JSON key and the client ID to delegate to, read from
+ * the key as it is pasted.
  */
 function MailboxConnectFields({
   form,
@@ -771,38 +1028,31 @@ function MailboxConnectFields({
   busy,
   onChange,
   onBack,
-  backLabel,
 }: {
   form: IntakeMailboxForm;
   settings: IntakeAutomationSettings["email"];
   busy: boolean;
   onChange: (patch: Partial<IntakeMailboxForm>) => void;
-  onBack: () => void;
-  backLabel: string;
+  /** While reconnecting: back to the connection that is kept. */
+  onBack?: () => void;
 }) {
   const secretSaved =
     settings.provider === "graph" && settings.graph.secret_set;
+  const pastedClientId = intakeServiceAccountClientId(form.serviceAccountKey);
+  const delegateTo = pastedClientId || settings.gmail.client_id;
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className={ROW_LABEL_CLASS}>
-          Connect {INTAKE_MAIL_PROVIDER_LABELS[form.provider]}
-        </p>
-        <TextButtonUI size="xs" disabled={busy} onClick={onBack}>
-          {backLabel}
+      {onBack && (
+        <TextButtonUI size="xs" className="px-0" disabled={busy} onClick={onBack}>
+          Keep the current connection
         </TextButtonUI>
-      </div>
+      )}
       <TextField
         label="Intake address"
         type="email"
         value={form.mailbox}
         placeholder="intake@company.com"
         maxLength={320}
-        hint={
-          form.provider === "graph"
-            ? "A shared mailbox works best: it needs no licence and no one signs in to it."
-            : "A licensed Workspace user account. A Google Group can deliver into it, but can't be connected itself."
-        }
         onChange={(mailbox) => onChange({ mailbox })}
       />
       {form.provider === "graph" ? (
@@ -829,26 +1079,32 @@ function MailboxConnectFields({
             onChange={(clientSecret) => onChange({ clientSecret })}
           />
         </>
-      ) : !settings.gmail_client_id ? (
-        <SettingsNotice>
-          <p>
-            This deployment has no Google service account, so Gmail can&apos;t
-            be connected. Its administrator sets INTAKE_GMAIL_SERVICE_ACCOUNT_KEY
-            to the service account&apos;s JSON key.
-          </p>
-        </SettingsNotice>
       ) : (
-        <CopyValue
-          label="Service account client ID"
-          name="service account client ID"
-          value={settings.gmail_client_id}
-        >
-          <p className={HINT_CLASS}>
-            In the Google Admin console, add this client ID under Security, API
-            controls, Domain-wide delegation, with the scope
-            https://www.googleapis.com/auth/gmail.modify.
-          </p>
-        </CopyValue>
+        <>
+          <SecretField
+            label="Service account JSON key"
+            saved={settings.gmail.key_set}
+            value={form.serviceAccountKey}
+            placeholder={
+              settings.gmail.deployment_key
+                ? "Optional: empty uses this deployment's service account"
+                : "Paste the JSON key file's contents"
+            }
+            onChange={(serviceAccountKey) => onChange({ serviceAccountKey })}
+          />
+          {pastedClientId === false && (
+            <p role="alert" className={ERROR_CLASS}>
+              This isn&apos;t a service account&apos;s JSON key.
+            </p>
+          )}
+          {delegateTo && (
+            <CopyValue
+              label="Service account client ID"
+              name="service account client ID"
+              value={delegateTo}
+            />
+          )}
+        </>
       )}
     </div>
   );
@@ -857,7 +1113,7 @@ function MailboxConnectFields({
 /**
  * Slack: the switch, the events URL to paste into the app, its write-only
  * Signing Secret and Bot User OAuth Token, the workspace they belong to, and
- * what to fix when the app lacks a scope or its message events.
+ * what to fix when the app lacks a scope.
  */
 function IntakeSlackFields({
   settings,
@@ -872,17 +1128,15 @@ function IntakeSlackFields({
 }) {
   return (
     <div className="space-y-6">
-      <ToggleRow
-        bare
-        label="Record requests from Slack"
-        description={
-          draft.slackEnabled && !settings.configured
-            ? "Save the Signing Secret and Bot User OAuth Token to finish turning Slack on."
-            : undefined
-        }
-        checked={draft.slackEnabled}
-        onChange={(slackEnabled) => onChange({ slackEnabled })}
-      />
+      {/* Once its keys are saved: saving them first turns Slack on. */}
+      {settings.configured && (
+        <ToggleRow
+          bare
+          label="Record requests from Slack"
+          checked={draft.slackEnabled}
+          onChange={(slackEnabled) => onChange({ slackEnabled })}
+        />
+      )}
       <CopyValue
         label="Events Request URL"
         name="Events Request URL"
@@ -959,17 +1213,15 @@ function IntakeTeamsFields({
 }) {
   return (
     <div className="space-y-6">
-      <ToggleRow
-        bare
-        label="Record requests from Teams"
-        description={
-          draft.teamsEnabled && !settings.configured
-            ? "Save the app ID, tenant ID and client secret to finish turning Teams on."
-            : undefined
-        }
-        checked={draft.teamsEnabled}
-        onChange={(teamsEnabled) => onChange({ teamsEnabled })}
-      />
+      {/* Once its keys are saved: saving them first turns Teams on. */}
+      {settings.configured && (
+        <ToggleRow
+          bare
+          label="Record requests from Teams"
+          checked={draft.teamsEnabled}
+          onChange={(teamsEnabled) => onChange({ teamsEnabled })}
+        />
+      )}
       <CopyValue
         label="Teams events URL"
         name="Teams events URL"
@@ -1009,18 +1261,13 @@ function IntakeTeamsFields({
                 ? "Available"
                 : "Not set up"}
           </p>
-          <p className="text-xs text-gray-500">
-            {settings.files_access
-              ? "MikeGC reads files shared in threads and posts documents to the channel's files."
-              : "MikeGC posts text only and names the documents. Grant the app Microsoft Graph access to files to send them."}
-          </p>
         </div>
       )}
     </div>
   );
 }
 
-/** The cards while the page loads: the heading, then three cards' shapes. */
+/** The tiles while the page loads: the heading, then four tiles' shapes. */
 export function IntakeChannelsSkeleton() {
   return (
     <div className="space-y-3">
@@ -1028,18 +1275,17 @@ export function IntakeChannelsSkeleton() {
         <div className="h-3 w-20 animate-pulse rounded bg-gray-100 motion-reduce:animate-none" />
       </div>
       <div className="@container">
-        <div className="grid gap-3 @[44rem]:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 @min-[32rem]:grid-cols-2">
           {CHANNELS.map((channel) => (
             <GlassCardUI key={channel}>
-              <div className="flex flex-col gap-3 p-4">
-                <div className="flex items-start gap-3">
-                  <div className="h-8 w-8 shrink-0 animate-pulse rounded-full bg-gray-100 motion-reduce:animate-none" />
-                  <div className="min-w-0 flex-1 space-y-1.5 pt-0.5">
-                    <div className="h-3 w-16 animate-pulse rounded bg-gray-100 motion-reduce:animate-none" />
-                    <div className="h-3 w-32 max-w-full animate-pulse rounded bg-gray-100 motion-reduce:animate-none" />
-                  </div>
+              <div className="flex items-center gap-3 px-4 py-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center">
+                  <div className="h-5 w-5 animate-pulse rounded bg-gray-100 motion-reduce:animate-none" />
                 </div>
-                <div className="h-7 w-20 animate-pulse rounded-full bg-gray-100 motion-reduce:animate-none" />
+                <div className="min-w-0 flex-1">
+                  <div className="h-3 w-16 animate-pulse rounded bg-gray-100 motion-reduce:animate-none" />
+                </div>
+                <div className="h-5 w-9 shrink-0 animate-pulse rounded-full bg-gray-100 motion-reduce:animate-none" />
               </div>
             </GlassCardUI>
           ))}

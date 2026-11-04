@@ -70,7 +70,11 @@ describe("what MikeGC recorded", () => {
     // MikeGC is not an account: the entry has no actor ID, only its name.
     expect(
       describeIntakeEvent(
-        event({ actor_id: null, actor_name: "MikeGC", assignee_name: "Lawyer B" }),
+        event({
+          actor_id: null,
+          actor_name: "MikeGC",
+          assignee_name: "Lawyer B",
+        }),
       ),
     ).toEqual({
       actor: "MikeGC",
@@ -98,10 +102,17 @@ describe("describeIntakeMessage", () => {
     expect(describeIntakeMessage(message({ kind: "question" })).action).toBe(
       "asked the requester",
     );
-    // Legacy answers still read as comments.
     expect(describeIntakeMessage(message({ kind: "answer" })).action).toBe(
-      "commented",
+      "replied to the requester",
     );
+  });
+
+  it("names MikeGC's preprocessing, and leaves its other notes as comments", () => {
+    const mikegc = { automated: true, author_id: null, author_name: "MikeGC" };
+    expect(
+      describeIntakeMessage(message({ ...mikegc, purpose: "preprocessing" })),
+    ).toEqual({ actor: "MikeGC", action: "preprocessed this request" });
+    expect(describeIntakeMessage(message(mikegc)).action).toBe("commented");
   });
 
   it("names a requester's reply and the channel it came in", () => {
