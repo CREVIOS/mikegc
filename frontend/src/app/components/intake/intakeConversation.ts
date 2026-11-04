@@ -37,18 +37,28 @@ export function intakeReplyLabel(conversation: IntakeConversation): string {
 }
 
 /**
- * Who an email reply reaches: the thread's recipients, which the switch
- * alone doesn't say. A Slack or Teams reply needs no more than its label.
+ * Who a message sent to the requester reaches, as the send controls say it:
+ * a Slack or Teams thread is visible to everyone in its channel, and an
+ * email goes to the thread's recipients.
  */
-export function intakeAudience(
-  conversation: IntakeConversation,
-): string | null {
-  if (!isEmailConversation(conversation)) return null;
-  const to = conversation.to.length
-    ? conversation.to.join(", ")
-    : "the requester";
-  const cc = conversation.cc.length ? `, cc ${conversation.cc.join(", ")}` : "";
-  return `Emails ${to}${cc}.`;
+export function intakeAudience(conversation: IntakeConversation): string {
+  if (isEmailConversation(conversation)) {
+    const to = conversation.to.length
+      ? conversation.to.join(", ")
+      : "the requester";
+    const cc = conversation.cc.length
+      ? `, cc ${conversation.cc.join(", ")}`
+      : "";
+    return `Emails ${to}${cc}.`;
+  }
+  const channel = conversation.channel_name?.replace(/^#/, "");
+  if (conversation.source === "teams")
+    return channel
+      ? `Posts in the Teams channel ${channel}${conversation.team_name ? ` in ${conversation.team_name}` : ""}, visible to everyone in the channel.`
+      : "Posts in the Teams thread, visible to everyone in the channel.";
+  return channel
+    ? `Posts in the Slack thread in #${channel}, visible to everyone in the channel.`
+    : "Posts in the Slack thread, visible to everyone in the channel.";
 }
 
 /** Why a channel can take only text, or null when documents can be sent. */

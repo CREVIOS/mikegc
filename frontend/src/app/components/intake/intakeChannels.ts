@@ -271,8 +271,9 @@ export function intakeMailboxForm(
 }
 
 /**
- * A pasted service account key's client ID, the one to delegate to: null
- * when nothing is pasted, false when what is pasted isn't such a key.
+ * A pasted service account key's client ID, the numeric one Google Admin
+ * delegates to: null when nothing is pasted, false when what is pasted isn't
+ * such a key as Google Cloud downloads it (with that ID).
  */
 export function intakeServiceAccountClientId(raw: string): string | null | false {
   const text = raw.trim();
@@ -284,9 +285,9 @@ export function intakeServiceAccountClientId(raw: string): string | null | false
       return false;
     if (typeof key.private_key !== "string" || !key.private_key.includes("PRIVATE KEY"))
       return false;
-    return typeof key.client_id === "string" && key.client_id
+    return typeof key.client_id === "string" && /^\d{1,64}$/.test(key.client_id)
       ? key.client_id
-      : key.client_email;
+      : false;
   } catch {
     return false;
   }

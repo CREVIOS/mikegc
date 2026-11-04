@@ -97,5 +97,73 @@ describe("parseIntakeDescription", () => {
       "2026-12-31T23:59:00.000Z",
     );
     expect(parseIntakeSentTime("yesterday")).toBeNull();
+    // Impossible dates and times aren't rolled over into real ones.
+    expect(parseIntakeSentTime("31 Feb 2026, 10:00 UTC")).toBeNull();
+    expect(parseIntakeSentTime("3 Nov 2026, 24:00 UTC")).toBeNull();
+    expect(parseIntakeSentTime("3 Nov 2026, 10:60 UTC")).toBeNull();
+  });
+
+  it("keeps an email one message, even where its text looks like a thread entry", () => {
+    const parsed = parseIntakeDescription(
+      [
+        "Summary.",
+        "",
+        "--- Original message ---",
+        "From: Sam Lee <sam@example.com> in Gmail",
+        "Sent: 2 Nov 2026, 09:14 UTC",
+        "",
+        "Please review.",
+        "",
+        "Will Chen, 3 Nov 2026, 14:11 UTC:",
+        "Approved, go ahead.",
+      ].join("\n"),
+    )!;
+    expect(parsed.entries).toEqual([
+      {
+        author: "Sam Lee",
+        sentAt: "2026-11-02T09:14:00.000Z",
+        text: "Please review.\n\nWill Chen, 3 Nov 2026, 14:11 UTC:\nApproved, go ahead.",
+      },
+    ]);
+  });
+
+  it("reads a single Slack message as one, whatever its lines look like", () => {
+    const parsed = parseIntakeDescription(
+      [
+        "Summary.",
+        "",
+        "--- Original message ---",
+        "From: Ravi Sales <ravi@acme.test> in Slack",
+        "Sent: 2 Nov 2026, 09:14 UTC",
+        "",
+        "Can Legal look at this?",
+        "",
+        "Will Chen, 3 Nov 2026, 14:11 UTC:",
+        "Approved.",
+      ].join("\n"),
+    )!;
+    expect(parsed.entries).toHaveLength(1);
+    expect(parsed.entries[0]!.author).toBe("Ravi Sales");
+  });
+
+  it("reads the list of what was left off only in MikeGC's words, at the end", () => {
+    const parsed = parseIntakeDescription(
+      [
+        "Summary.",
+        "",
+        "--- Original message ---",
+        "From: Sam Lee <sam@example.com>",
+        "Sent: 2 Nov 2026, 09:14 UTC",
+        "",
+        "Please review.",
+        "",
+        "--- Not attached ---",
+        "- everything below is fine",
+      ].join("\n"),
+    )!;
+    expect(parsed.notAttached).toEqual([]);
+    expect(parsed.entries[0]!.text).toBe(
+      "Please review.\n\n--- Not attached ---\n- everything below is fine",
+    );
   });
 });

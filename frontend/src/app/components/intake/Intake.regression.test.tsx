@@ -2862,6 +2862,10 @@ describe("requester loop", () => {
     expect(
       history.compareDocumentPosition(box) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+    // It says who will see the message.
+    expect(box).toHaveAccessibleDescription(
+      /^Posts in the Slack thread.*visible to everyone in the channel\.$/,
+    );
     fireEvent.change(box, { target: { value: "Which entity signs?" } });
     await user.click(screen.getByRole("button", { name: "Ask requester" }));
     await waitFor(() => expect(mocks.command).toHaveBeenCalledTimes(1));
@@ -2977,7 +2981,10 @@ describe("requester loop", () => {
       name: "Send reply in Slack",
     });
     expect(reply).toHaveAttribute("aria-checked", "false");
-    expect(reply).not.toHaveAccessibleDescription();
+    // The thread is visible to everyone in its channel, and the switch says so.
+    expect(reply).toHaveAccessibleDescription(
+      /^Posts in the Slack thread.*visible to everyone in the channel\.$/,
+    );
     expect(within(dialog).queryByLabelText("Message")).not.toBeInTheDocument();
     expect(
       within(dialog).queryByText("Documents to send"),
@@ -3177,6 +3184,45 @@ describe("requester loop", () => {
     await waitFor(() => expect(mocks.request).toHaveBeenCalledTimes(2));
   });
 
+  it("shows documents a resolution sent alone, with Retry when they couldn't go", async () => {
+    mocks.request.mockResolvedValue(threaded({ state: "resolved" }));
+    mocks.messages.mockResolvedValue([]);
+    mocks.events.mockResolvedValue([
+      event({
+        id: 3,
+        kind: "resolve",
+        to_state: "resolved",
+        created_at: "2026-10-28T10:00:00Z",
+        delivery: {
+          outbound_id: "out-3",
+          kind: "answer",
+          status: "failed",
+          error: "MikeGC was removed from #legal-requests.",
+          sent_at: null,
+          documents: [{ document_id: "d1", filename: "NDA.docx", left_out: false }],
+        },
+      }),
+    ]);
+    const user = userEvent.setup();
+    render(detail());
+    const toggle = await screen.findByRole("button", { name: /^Messages/ });
+    expect(toggle).toHaveTextContent("1 not sent");
+    await user.click(toggle);
+    const log = screen.getByRole("list", { name: "Messages with the requester" });
+    expect(log).toHaveTextContent("Resolution");
+    expect(log).toHaveTextContent("Couldn't send: MikeGC was removed from #legal-requests.");
+    // No text was sent, so there is none to copy.
+    expect(
+      screen.queryByRole("button", { name: /^Copy the text/ }),
+    ).not.toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Retry sending the resolution reply" }),
+    );
+    await waitFor(() =>
+      expect(mocks.retry).toHaveBeenCalledWith("org-a", "request-a", "out-3"),
+    );
+  });
+
   it("checks on a message still sending and says when it is sent", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
@@ -3270,11 +3316,15 @@ describe("requester loop", () => {
     expect(within(details).getByText("Cc ben@acme.test")).toBeInTheDocument();
   });
 
-  it("clears the New reply flag when a request with one opens", async () => {
+  it("clears the New reply flag once Messages is opened to show the reply", async () => {
     mocks.request.mockResolvedValue(
       threaded({ new_reply: true, last_reply_at: "2026-11-03T10:00:00.000Z" }),
     );
     const { unmount } = render(detail());
+    // Opening the request isn't reading the reply: Messages starts collapsed.
+    const toggle = await screen.findByRole("button", { name: /^Messages/ });
+    expect(mocks.replySeen).not.toHaveBeenCalled();
+    fireEvent.click(toggle);
     // Only the reply on screen is seen; a later one stays new.
     await waitFor(() =>
       expect(mocks.replySeen).toHaveBeenCalledWith(
@@ -3283,6 +3333,7 @@ describe("requester loop", () => {
         "2026-11-03T10:00:00.000Z",
       ),
     );
+    expect(mocks.replySeen).toHaveBeenCalledTimes(1);
     unmount();
     mocks.replySeen.mockClear();
     mocks.request.mockResolvedValue(threaded());

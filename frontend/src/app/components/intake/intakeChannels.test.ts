@@ -166,9 +166,9 @@ describe("the Gmail service account key", () => {
   it("reads the client ID to delegate to from a pasted key", () => {
     expect(intakeServiceAccountClientId("")).toBeNull();
     expect(intakeServiceAccountClientId(key())).toBe("1234");
-    expect(intakeServiceAccountClientId(key({ client_id: undefined }))).toBe(
-      "intake@project.iam.gserviceaccount.com",
-    );
+    // Google Admin takes the numeric client ID, never the account's email.
+    expect(intakeServiceAccountClientId(key({ client_id: undefined }))).toBe(false);
+    expect(intakeServiceAccountClientId(key({ client_id: "abc" }))).toBe(false);
     expect(intakeServiceAccountClientId("{not json")).toBe(false);
     expect(intakeServiceAccountClientId(key({ type: "authorized_user" }))).toBe(false);
     expect(intakeServiceAccountClientId(key({ private_key: "x" }))).toBe(false);

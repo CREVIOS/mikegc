@@ -1183,6 +1183,15 @@ function IntakeSlackFields({
           </p>
         </SettingsNotice>
       )}
+      {settings.configured && !settings.message_events_seen && (
+        <SettingsNotice>
+          <p>
+            MikeGC hasn&apos;t received a thread message yet. Subscribe the app
+            to the message.channels and message.groups bot events so
+            requesters&apos; answers reach their request.
+          </p>
+        </SettingsNotice>
+      )}
     </div>
   );
 }

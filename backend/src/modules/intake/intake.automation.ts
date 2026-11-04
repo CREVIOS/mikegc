@@ -533,6 +533,20 @@ export async function updateIntakeAutomation(
         : failure("unavailable", "Couldn't reach Microsoft to check the Teams credentials. Try again.");
     patch.teams_files_access = checked.filesAccess;
   }
+  // A channel turns on with the save that completes its setup, also when an
+  // earlier save stored part of it: the settings page shows a channel's
+  // switch only once it is set up, so it can't be turned on before.
+  const slackWasSet =
+    row.slack_signing_secret_encrypted !== null && row.slack_bot_token_encrypted !== null;
+  const slackIsSet =
+    (row.slack_signing_secret_encrypted !== null || input.slack_signing_secret !== undefined) &&
+    (row.slack_bot_token_encrypted !== null || input.slack_bot_token !== undefined);
+  if (input.slack_enabled === undefined && !slackWasSet && slackIsSet)
+    patch.slack_enabled = true;
+  const teamsWasSet =
+    !!row.teams_app_id && !!row.teams_tenant_id && row.teams_client_secret_encrypted !== null;
+  if (input.teams_enabled === undefined && !teamsWasSet && teamsApp && teamsTenant && teamsSecret)
+    patch.teams_enabled = true;
   // Checked with Slack last, once everything local is known to be valid.
   if (input.slack_bot_token !== undefined) {
     const token = input.slack_bot_token.trim();
@@ -698,7 +712,9 @@ export async function connectIntakeMailbox(
     // A pasted key, else the one saved, else the deployment's.
     const pasted = input.service_account_key?.trim();
     const account = pasted ? parseGmailServiceAccount(pasted) : gmailServiceAccount(row);
-    if (pasted && !account)
+    // Google Cloud's download names the client ID Google Admin delegates to.
+    const delegateId = account && gmailDelegateId(account);
+    if (pasted && !delegateId)
       return failure(
         "validation",
         "Paste the service account's JSON key as Google Cloud downloads it.",
@@ -708,7 +724,7 @@ export async function connectIntakeMailbox(
     if (pasted) {
       const sealed = encryptedColumns("gmail_service_account_key", pasted);
       if (!sealed) return ENCRYPTION_UNAVAILABLE;
-      Object.assign(patch, sealed, { gmail_service_account_id: gmailDelegateId(account).slice(0, 320) });
+      Object.assign(patch, sealed, { gmail_service_account_id: delegateId });
     }
     try {
       const profile = await gmailProfile({ address: mailbox, account });

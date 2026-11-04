@@ -39,9 +39,23 @@ describe("intakeReplyLabel", () => {
 });
 
 describe("intakeAudience", () => {
-  it("says nothing more for a Slack or Teams thread", () => {
-    expect(intakeAudience(conversation())).toBeNull();
-    expect(intakeAudience(conversation({ source: "teams" }))).toBeNull();
+  it("says a Slack or Teams thread is visible to everyone in its channel", () => {
+    expect(intakeAudience(conversation())).toBe(
+      "Posts in the Slack thread in #legal-requests, visible to everyone in the channel.",
+    );
+    expect(intakeAudience(conversation({ channel_name: null }))).toBe(
+      "Posts in the Slack thread, visible to everyone in the channel.",
+    );
+    expect(
+      intakeAudience(
+        conversation({ source: "teams", channel_name: "Legal", team_name: "Acme" }),
+      ),
+    ).toBe(
+      "Posts in the Teams channel Legal in Acme, visible to everyone in the channel.",
+    );
+    expect(
+      intakeAudience(conversation({ source: "teams", channel_name: null })),
+    ).toBe("Posts in the Teams thread, visible to everyone in the channel.");
   });
 
   it("names an email's recipients", () => {

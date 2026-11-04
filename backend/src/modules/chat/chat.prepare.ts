@@ -41,7 +41,7 @@ import { replaysReasoning } from "../../lib/llm/registry";
 import { beginMemoryConversationTurn, releaseMemoryConversationTurn, type MemoryConversationTurn } from "../../lib/memory/schedule";
 import { getAccessibleChat, validateAccessibleProjectId } from "./chat.access";
 import { intakeChatBrief } from "../intake/intake.service";
-import { resolvePilledIntake } from "./chat.intake";
+import { linkChatToIntake, resolvePilledIntake } from "./chat.intake";
 
 // ---------------------------------------------------------------------------
 // Pre-stream preparation for POST /chat (streaming)
@@ -309,6 +309,21 @@ export async function prepareChatStream(
         return { ok: false, internal: true, error };
     }
 
+    // An intake request's pill on the newest message links the chat to that
+    // request. Checked before anything is written, the chat's model included.
+    const pilled = await resolvePilledIntake(db, {
+        userId,
+        pilled:
+            [...messages].reverse().find((m) => m.role === "user")?.intake
+                ?.id ?? null,
+        linked: intakeRequestId,
+        projectId: resolvedProjectId,
+        chatOrgId: contentOrgId,
+        chatId,
+    });
+    if (!pilled.ok) return pilled;
+    const linkIntake = pilled.link;
+
     const selection = await resolveUserChatSelection(db, {
         userId,
         chatModel,
@@ -335,27 +350,9 @@ export async function prepareChatStream(
         if (error) return { ok: false, internal: true, error };
     }
 
-    // An intake request's pill on the newest message links the chat to that
-    // request. Checked before anything is written.
-    const pilled = await resolvePilledIntake(db, {
-        userId,
-        pilled:
-            [...messages].reverse().find((m) => m.role === "user")?.intake
-                ?.id ?? null,
-        linked: intakeRequestId,
-        projectId: resolvedProjectId,
-        chatOrgId: contentOrgId,
-    });
-    if (!pilled.ok) return pilled;
-    const linkIntake = pilled.link;
-
     if (chatId && linkIntake) {
-        const { error } = await db
-            .from("chats")
-            .update({ intake_request_id: linkIntake })
-            .eq("id", chatId)
-            .is("intake_request_id", null);
-        if (error) return { ok: false, internal: true, error };
+        const linked = await linkChatToIntake(db, chatId, linkIntake);
+        if (!linked.ok) return linked;
         intakeRequestId = linkIntake;
     }
 

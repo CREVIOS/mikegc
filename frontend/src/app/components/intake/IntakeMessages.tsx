@@ -5,6 +5,7 @@ import { ChevronRight } from "lucide-react";
 import type {
   IntakeDelivery,
   IntakeDocument,
+  IntakeEvent,
   IntakeMember,
   IntakeMessage,
 } from "@mike/contracts";
@@ -36,11 +37,15 @@ export const isIntakeRequesterMessage = (message: IntakeMessage) =>
   REQUESTER_KINDS.has(message.kind);
 
 /**
- * A resolution sent to the requester as its own text, from before a reply
- * was written apart from it, with how it went.
+ * A resolution's delivery to the requester with no reply message of its
+ * own, with how it went: the resolution sent as its own text, from before a
+ * reply was written apart from it, or documents sent alone.
  */
 export interface IntakeSentResolution {
-  message: IntakeMessage;
+  /** The resolution sent as the text; null when only documents went. */
+  message: IntakeMessage | null;
+  /** The change it was sent with, saying who resolved and when. */
+  event: IntakeEvent;
   delivery: IntakeDelivery;
 }
 
@@ -65,6 +70,8 @@ interface Entry {
 
 /** A message to the requester being written, posted in the request's thread. */
 export interface IntakeMessageComposer {
+  /** Who the message reaches, such as everyone in a Slack channel. */
+  audience: string;
   value: string;
   locked: boolean;
   onChange: (value: string) => void;
@@ -119,6 +126,7 @@ export function IntakeMessages({
   const heading = useId();
   const panel = useId();
   const composerId = useId();
+  const audienceId = useId();
   const history = useRef<HTMLDivElement>(null);
   const photo = (id: string | null) =>
     members.find((m) => m.user_id === id)?.profile_photo;
@@ -150,15 +158,16 @@ export function IntakeMessages({
         message.kind === "answer" ? "resolution" : "question",
       ),
     })),
-    ...resolutions.map(({ message, delivery }) => ({
-      key: message.id,
-      at: message.created_at,
+    ...resolutions.map(({ message, event, delivery }) => ({
+      key: message?.id ?? `e${event.id}`,
+      at: message?.created_at ?? event.created_at,
       incoming: false,
-      author: message.author_name,
-      mikegc: !!message.automated,
+      author: message?.author_name ?? event.actor_name ?? "Former member",
+      mikegc: !!message?.automated,
       label: "Resolution",
-      body: message.body,
-      messageId: message.id,
+      body: message?.body ?? "",
+      photo: photo(message?.author_id ?? event.actor_id),
+      messageId: message?.id,
       delivery,
       deliveryName: intakeOutgoingName("resolution"),
     })),
@@ -265,14 +274,21 @@ export function IntakeMessages({
               <div className="border-t border-gray-100 pt-4">
                 <label
                   htmlFor={composerId}
-                  className={cn("mb-2 block", NOTE_TITLE_CLASS)}
+                  className={cn("block", NOTE_TITLE_CLASS)}
                 >
                   Message the requester
                 </label>
+                <p
+                  id={audienceId}
+                  className="mb-2 text-xs text-gray-500 [overflow-wrap:anywhere]"
+                >
+                  {composer.audience}
+                </p>
                 {/* The send button sits inside the box, under the text. */}
                 <div className="rounded-lg bg-gray-100 transition-shadow focus-within:ring-2 focus-within:ring-gray-300/45">
                   <textarea
                     id={composerId}
+                    aria-describedby={audienceId}
                     rows={2}
                     maxLength={20000}
                     placeholder="What do you need from the requester?"
@@ -348,17 +364,20 @@ function IntakeMessageBubble({
           {entry.label && ` · ${entry.label}`} ·{" "}
           <time dateTime={entry.at}>{formatIntakeDateTime(entry.at)}</time>
         </p>
-        <p
-          className={cn(
-            "whitespace-pre-wrap rounded-xl px-3.5 py-2.5 text-sm leading-relaxed [overflow-wrap:anywhere]",
-            // MikeGC's own messages in Mike azure; everyone else's grey.
-            entry.mikegc
-              ? "bg-blue-600 text-white"
-              : "bg-gray-100 text-gray-900",
-          )}
-        >
-          {entry.body}
-        </p>
+        {/* Documents sent alone have no text: their delivery lists them. */}
+        {entry.body && (
+          <p
+            className={cn(
+              "whitespace-pre-wrap rounded-xl px-3.5 py-2.5 text-sm leading-relaxed [overflow-wrap:anywhere]",
+              // MikeGC's own messages in Mike azure; everyone else's grey.
+              entry.mikegc
+                ? "bg-blue-600 text-white"
+                : "bg-gray-100 text-gray-900",
+            )}
+          >
+            {entry.body}
+          </p>
+        )}
         <IntakeNoteDocuments
           documents={documents}
           uploading={uploading}

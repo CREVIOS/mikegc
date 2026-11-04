@@ -94,7 +94,10 @@ import {
   type IntakeSentResolution,
 } from "./IntakeMessages";
 import { parseIntakeDescription } from "./intakeDescription";
-import { intakeDocumentsUnavailable } from "./intakeConversation";
+import {
+  intakeAudience,
+  intakeDocumentsUnavailable,
+} from "./intakeConversation";
 import {
   IntakeDescription,
   IntakeDetailsPanel,
@@ -312,11 +315,6 @@ export function Detail({
         ...e.flatMap((event) => (event.delivery ? [event.delivery] : [])),
       ]);
       if (said) setAnnouncement(said);
-      // Opening the request clears its New reply flag in the queue.
-      if (r.new_reply)
-        void markIntakeReplySeen(orgId, requestId, r.last_reply_at).catch(() => {
-          // Only the queue's marker stays; the request itself is on screen.
-        });
     } catch (e) {
       if (generation === epoch.current) {
         setRequest(null);
@@ -331,6 +329,19 @@ export function Detail({
   const invalidate = useCallback(() => {
     epoch.current++;
   }, []);
+  // Replies are read in Messages, which starts collapsed: showing it clears
+  // the request's New reply flag in the queue, up to the reply on screen, so
+  // one arriving later stays new.
+  const seenReply = useRef<string | null>(null);
+  const newReplyAt = request?.new_reply ? request.last_reply_at : null;
+  useEffect(() => {
+    if (!messagesOpen || !newReplyAt || seenReply.current === newReplyAt)
+      return;
+    seenReply.current = newReplyAt;
+    void markIntakeReplySeen(orgId, requestId, newReplyAt).catch(() => {
+      // Only the queue's marker stays; the reply itself is on screen.
+    });
+  }, [messagesOpen, newReplyAt, orgId, requestId]);
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- refresh sets state only after its first request resolves
     void refresh();
@@ -638,10 +649,16 @@ export function Detail({
         (m) => m.kind === kind && m.created_at === event.created_at,
       );
     const text = at("resolution");
-    if (!text) continue;
+    // Sent with no reply message of its own: the resolution as the reply,
+    // or, with no resolution text, documents alone. Either way its delivery
+    // reads in Messages, with Retry when it failed.
     if (event.delivery && !at("answer"))
-      sentResolutions.push({ message: text, delivery: event.delivery });
-    else resolutions.set(event.id, text);
+      sentResolutions.push({
+        message: text ?? null,
+        event,
+        delivery: event.delivery,
+      });
+    else if (text) resolutions.set(event.id, text);
   }
   // Activity is the work in the app; the conversation with the requester
   // has a section of its own.
@@ -649,7 +666,7 @@ export function Detail({
   const original = request ? parseIntakeDescription(request.description) : null;
   const shown = new Set([
     ...[...resolutions.values()].map((m) => m.id),
-    ...sentResolutions.map((r) => r.message.id),
+    ...sentResolutions.flatMap((r) => (r.message ? [r.message.id] : [])),
     ...requesterMessages.map((m) => m.id),
   ]);
   // Notes and changes read as one story, oldest first.
@@ -944,6 +961,7 @@ export function Detail({
                 composer={
                   canMessage && !closed
                     ? {
+                        audience: intakeAudience(conversation!),
                         value: requesterMessage,
                         locked: operation.locked,
                         onChange: setRequesterMessage,

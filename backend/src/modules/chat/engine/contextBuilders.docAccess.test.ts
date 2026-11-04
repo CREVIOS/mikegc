@@ -270,8 +270,42 @@ describe("buildDocContext access scoping", () => {
           .map((entry) => entry.document_id)
           .sort(),
       ).toEqual(["mine", "mine-too"]);
-      // One verdict per uploader, still not one per document.
+      // The caller's own files share one verdict; the colleague's is asked
+      // about on its own.
       expect(ensureDocAccess).toHaveBeenCalledTimes(2);
     }
+  });
+
+  it("asks about each of someone else's files in an organization on its own", async () => {
+    // Another person's file is reached only through a grant on that one
+    // document: a share, or the intake request it is attached to. Keyed by
+    // uploader, the readable one opened its siblings — a colleague's
+    // unshared file, or (no uploader) any other detached file.
+    const readable = new Set(["shared", "intake-attachment"]);
+    ensureDocAccess.mockImplementation(async (doc: unknown) => ({
+      ok: readable.has((doc as { id: string }).id),
+    }));
+    const db = makeDb([
+      { id: "shared", user_id: "u2", project_id: null, org_id: "org-1", status: "ready" },
+      { id: "unshared", user_id: "u2", project_id: null, org_id: "org-1", status: "ready" },
+      { id: "intake-attachment", user_id: null, project_id: null, org_id: "org-1", status: "ready" },
+      { id: "detached", user_id: null, project_id: null, org_id: "org-1", status: "ready" },
+    ]);
+
+    const { docIndex } = await buildDocContext(
+      message(["shared", "unshared", "intake-attachment", "detached"]),
+      "u1",
+      db,
+      null,
+      "chat_messages",
+      "u1@test.local",
+    );
+
+    expect(
+      Object.values(docIndex)
+        .map((entry) => entry.document_id)
+        .sort(),
+    ).toEqual(["intake-attachment", "shared"]);
+    expect(ensureDocAccess).toHaveBeenCalledTimes(4);
   });
 });

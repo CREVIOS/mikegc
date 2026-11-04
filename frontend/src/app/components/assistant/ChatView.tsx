@@ -61,8 +61,16 @@ import {
 } from "../shared/types";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
 import { usePageChrome } from "@/app/contexts/PageChromeContext";
-import { DocumentWorkspaceScope } from "@/app/contexts/WorkspaceContext";
-import { useItemWorkspace } from "@/app/hooks/useItemWorkspace";
+import {
+    DocumentWorkspaceScope,
+    PERSONAL_WORKSPACE,
+    PERSONAL_WORKSPACE_LABEL,
+    useWorkspace,
+} from "@/app/contexts/WorkspaceContext";
+import {
+    notifyWorkspaceSwitched,
+    useItemWorkspace,
+} from "@/app/hooks/useItemWorkspace";
 import { resolvePanelDocumentVersionResult } from "./panelDocumentVersion";
 import { LIQUID_GLASS_TRANSLUCENT_ACTION_CLASS } from "@/app/components/ui/liquid-surface";
 import {
@@ -1005,7 +1013,15 @@ export function AssistantChatColumn({
     // "Process in Assistant" on an intake request opens a new chat with
     // `?intake=`: its pill and a suggested prompt wait in the composer, and
     // nothing is sent until the user sends it. Then drop it from the URL.
+    // The new chat is filed in the active workspace and the server takes the
+    // request only in its own, so a link opened elsewhere switches to the
+    // request's workspace first; the page that opens there attaches it.
     const linkedIntakeHandled = useRef(false);
+    const {
+        workspaceId: activeWorkspaceId,
+        organizations,
+        setWorkspace,
+    } = useWorkspace();
     useEffect(() => {
         const input = chatInputRef.current;
         if (paneId !== "primary" || linkedIntakeHandled.current) return;
@@ -1014,6 +1030,26 @@ export function AssistantChatColumn({
         const requestId = params.get(LINKED_INTAKE_PARAM);
         const org = params.get(LINKED_INTAKE_ORG_PARAM);
         if (!requestId || !org) return;
+        if (activeWorkspaceId !== null && activeWorkspaceId !== org) {
+            const name =
+                org === PERSONAL_WORKSPACE
+                    ? PERSONAL_WORKSPACE_LABEL
+                    : organizations?.find((candidate) => candidate.id === org)
+                          ?.name;
+            // Which organizations are theirs isn't known yet: wait for it.
+            if (name === undefined && organizations === null) return;
+            if (name !== undefined) {
+                linkedIntakeHandled.current = true;
+                setWorkspace(org);
+                notifyWorkspaceSwitched(
+                    name,
+                    "The intake request belongs to this workspace.",
+                );
+                return;
+            }
+            // Not one of theirs: reading the request below is refused, and
+            // says so, so no pill is attached.
+        }
         linkedIntakeHandled.current = true;
         params.delete(LINKED_INTAKE_PARAM);
         params.delete(LINKED_INTAKE_ORG_PARAM);
@@ -1032,7 +1068,14 @@ export function AssistantChatColumn({
             (error) =>
                 notifyError(error, { action: "attach the intake request" }),
         );
-    }, [paneId, canWrite, chatLoading]);
+    }, [
+        paneId,
+        canWrite,
+        chatLoading,
+        activeWorkspaceId,
+        organizations,
+        setWorkspace,
+    ]);
 
     // The panel keeps what it is handed, so hand it a stable way to reach
     // the latest handler: registering on every new handler would re-render

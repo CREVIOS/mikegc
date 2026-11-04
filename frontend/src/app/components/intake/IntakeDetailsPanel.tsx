@@ -915,6 +915,9 @@ export function IntakeSubjectInput({
   );
 }
 
+/** The longest description the server saves. */
+const DESCRIPTION_MAX = 20000;
+
 /**
  * The request's description, with Edit to change it in place. The editor
  * stays open with its text until the saved description matches it. The
@@ -936,6 +939,11 @@ export function IntakeDescription({
   const [saved, setSaved] = useState(value);
   const original = parseIntakeDescription(value);
   const text = original ? original.summary : value;
+  // The message saved under the summary counts toward the description's
+  // 20,000 characters, so the summary gets what it leaves.
+  const summaryMax = original
+    ? Math.max(0, DESCRIPTION_MAX - original.original.length - 2)
+    : DESCRIPTION_MAX;
   if (saved !== value) {
     setSaved(value);
     if (draft !== null && draft.trim() === text) setDraft(null);
@@ -965,7 +973,7 @@ export function IntakeDescription({
           <textarea
             aria-labelledby="intake-request"
             rows={5}
-            maxLength={20000}
+            maxLength={summaryMax}
             autoFocus
             value={draft}
             className={cn(

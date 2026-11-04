@@ -61,6 +61,14 @@ const MONTHS = [
 ];
 const TIME = String.raw`(\d{1,2}) ([A-Za-z]{3,4}) (\d{4}), (\d{2}):(\d{2}) UTC`;
 const ENTRY_HEAD = new RegExp(String.raw`^(.+), (${TIME}):$`);
+/** Channels whose original message can be a thread of entries; an email is one message. */
+const THREAD_CHANNELS = ["Slack", "Teams"];
+/**
+ * A line of MikeGC's list of attachments it left off, in the words of
+ * `SKIPPED_REASON` in the backend's intake.triage.ts.
+ */
+const NOT_ATTACHED_LINE =
+  /^- .+: (not a PDF, Word, Excel or PowerPoint file|larger than [\d.]+ MB|more than \d+ attachments|could not be read)$/;
 
 /** "3 Nov 2026, 14:11 UTC" as an ISO time. */
 export function parseIntakeSentTime(text: string): string | null {
@@ -70,7 +78,17 @@ export function parseIntakeSentTime(text: string): string | null {
   const m = MONTHS.indexOf(month!.slice(0, 3).toLowerCase());
   if (m < 0) return null;
   const date = new Date(Date.UTC(+year!, m, +day!, +hour!, +minute!));
-  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+  // Date.UTC rolls an impossible date over ("31 Feb" is 3 March): refuse it.
+  if (
+    Number.isNaN(date.getTime()) ||
+    date.getUTCFullYear() !== +year! ||
+    date.getUTCMonth() !== m ||
+    date.getUTCDate() !== +day! ||
+    date.getUTCHours() !== +hour! ||
+    date.getUTCMinutes() !== +minute!
+  )
+    return null;
+  return date.toISOString();
 }
 
 /** "Name <email>" as its name. */
@@ -104,25 +122,37 @@ export function parseIntakeDescription(
       from = from.slice(0, -` in ${name}`.length);
     }
 
+  // MikeGC's list ends the description, in its own words; the same marker
+  // in the requester's text is part of their message.
   let notAttached: string[] = [];
   const tail = rest.lastIndexOf(NOT_ATTACHED);
   if (tail >= 0) {
-    notAttached = rest
+    const listed = rest
       .slice(tail + NOT_ATTACHED.length)
-      .split("\n")
-      .map((l) => l.replace(/^- /, "").trim())
-      .filter(Boolean);
-    rest = rest.slice(0, tail);
+      .trimEnd()
+      .split("\n");
+    if (listed.every((l) => NOT_ATTACHED_LINE.test(l))) {
+      notAttached = listed.map((l) => l.slice(2));
+      rest = rest.slice(0, tail);
+    }
   }
   const shortened = rest.endsWith(SHORTENED);
   if (shortened) rest = rest.slice(0, -SHORTENED.length);
 
-  // A thread: entries that each start with "Author, time:" after a blank line.
+  // A Slack or Teams thread: entries that each start with "Author, time:"
+  // after a blank line, the first on the first line. Anything else, an email
+  // above all, is one message, so a line in it shaped like an entry's start
+  // can't speak for someone else.
   const entries: IntakeOriginalEntry[] = [];
   let current: IntakeOriginalEntry | null = null;
   const lines = rest.split("\n");
+  const thread =
+    channel !== null &&
+    THREAD_CHANNELS.includes(channel) &&
+    ENTRY_HEAD.test(lines[0] ?? "");
   lines.forEach((line, i) => {
-    const head = (i === 0 || lines[i - 1] === "") && ENTRY_HEAD.exec(line);
+    const head =
+      thread && (i === 0 || lines[i - 1] === "") && ENTRY_HEAD.exec(line);
     if (head) {
       current = {
         author: head[1]!,

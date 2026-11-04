@@ -57,6 +57,7 @@ const DELEGATION_REFUSED =
 export type GmailServiceAccount = {
   client_email: string;
   private_key: string;
+  /** The account's numeric Unique ID, which Google Admin delegates to. */
   client_id: string | null;
 };
 
@@ -75,7 +76,8 @@ export function parseGmailServiceAccount(raw: string | null | undefined): GmailS
     return {
       client_email: key.client_email,
       private_key: key.private_key,
-      client_id: typeof key.client_id === "string" && key.client_id ? key.client_id : null,
+      client_id:
+        typeof key.client_id === "string" && /^\d{1,64}$/.test(key.client_id) ? key.client_id : null,
     };
   } catch {
     return null;
@@ -87,13 +89,22 @@ export function deploymentGmailServiceAccount(): GmailServiceAccount | null {
   return parseGmailServiceAccount(process.env.INTAKE_GMAIL_SERVICE_ACCOUNT_KEY);
 }
 
-/** What an admin delegates to in the Google Admin console. */
-export const gmailDelegateId = (account: GmailServiceAccount) =>
-  account.client_id ?? account.client_email;
+/**
+ * What an admin delegates to in the Google Admin console: the numeric
+ * Unique ID, never the account's email, which the console doesn't take.
+ * Null for a key without one.
+ */
+export const gmailDelegateId = (account: GmailServiceAccount) => account.client_id;
 
-/** The organization's own service account, else the deployment's. */
+/**
+ * The organization's own service account, else the deployment's. A saved key
+ * that can't be read (its encryption key changed) is null, not the
+ * deployment's account acting in its place.
+ */
 export function gmailServiceAccount(row: Partial<AutomationRow>): GmailServiceAccount | null {
-  return parseGmailServiceAccount(gmailServiceAccountKey(row)) ?? deploymentGmailServiceAccount();
+  if (row.gmail_service_account_key_encrypted)
+    return parseGmailServiceAccount(gmailServiceAccountKey(row));
+  return deploymentGmailServiceAccount();
 }
 
 /** The connected Gmail intake mailbox, or null without one or an account. */

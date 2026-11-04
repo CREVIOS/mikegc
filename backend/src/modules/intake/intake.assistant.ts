@@ -28,6 +28,9 @@ import { intakeRpc } from "./intake.shared";
 const BRIEF_MAX = 40000;
 /** The most history entries the brief lists, newest kept. */
 const HISTORY_MAX = 80;
+/** The history's page size: the most `intake_read_history` returns at once. */
+const HISTORY_PAGE = 100;
+const SHORTENED = "\n[Shortened to fit.]";
 
 const STATE_LABELS: Record<IntakeRequest["state"], string> = {
   submitted: "New",
@@ -89,7 +92,7 @@ export async function intakeChatBrief(
   const scope: IntakeScope = { orgId: workspace.data.orgId, actorId };
   const [request, messages, documents] = await Promise.all([
     getIntakeRequest(db, scope, requestId),
-    listIntakeMessages(db, scope, requestId, { offset: 0, limit: 100 }),
+    newestIntakeMessages(db, scope, requestId),
     listIntakeDocuments(db, scope, requestId),
   ]);
   if (!request.ok) return request;
@@ -104,7 +107,39 @@ export async function intakeChatBrief(
   });
 }
 
-/** The brief as plain text: details, request, history, documents. */
+/**
+ * The request's newest HISTORY_MAX messages, oldest first. The history reads
+ * oldest first a page at a time, so every page is read and the newest kept.
+ */
+async function newestIntakeMessages(
+  db: Db,
+  scope: IntakeScope,
+  requestId: string,
+): Promise<ServiceResult<IntakeMessage[]>> {
+  let newest: IntakeMessage[] = [];
+  for (let offset = 0; ; offset += HISTORY_PAGE) {
+    const page = await listIntakeMessages(db, scope, requestId, {
+      offset,
+      limit: HISTORY_PAGE,
+    });
+    if (!page.ok) return page;
+    newest = [...newest, ...page.data].slice(-HISTORY_MAX);
+    if (page.data.length < HISTORY_PAGE) return ok(newest);
+  }
+}
+
+function clip(text: string, max: number): string {
+  return text.length <= max
+    ? text
+    : `${text.slice(0, Math.max(0, max - SHORTENED.length))}${SHORTENED}`;
+}
+
+/**
+ * The brief as plain text: details, request, history, documents. A brief
+ * over BRIEF_MAX keeps its details, its documents and its newest history:
+ * the description gives up what the history needs, down to half of the
+ * room, and the oldest entries go first.
+ */
 export function composeIntakeBrief(
   request: IntakeRequest,
   messages: IntakeMessage[],
@@ -147,20 +182,42 @@ export function composeIntakeBrief(
     (d) =>
       `- ${d.filename}${d.revised ? " (revised since it arrived)" : ""}${d.status === "ready" ? "" : " (still processing)"}`,
   );
-  const brief = [
-    "REQUEST DETAILS",
-    ...details,
-    "",
-    "REQUEST",
+  const assemble = (description: string, kept: string[], left: number) =>
+    [
+      "REQUEST DETAILS",
+      ...details,
+      "",
+      "REQUEST",
+      description,
+      "",
+      "HISTORY (oldest first)",
+      ...(left > 0
+        ? [`[${left} earlier ${left === 1 ? "entry" : "entries"} left out to fit.]`]
+        : []),
+      kept.length ? kept.join("\n\n") : "None yet.",
+      "",
+      "DOCUMENTS",
+      files.length ? files.join("\n") : "None.",
+    ].join("\n");
+  const whole = assemble(request.description, history, 0);
+  if (whole.length <= BRIEF_MAX) return whole;
+
+  // What the description and the history share, less a margin for the note
+  // on entries left out.
+  const room = Math.max(0, BRIEF_MAX - assemble("", [], 0).length - 100);
+  const historyLength = history.reduce((n, entry) => n + entry.length + 2, 0);
+  const description = clip(
     request.description,
-    "",
-    "HISTORY (oldest first)",
-    history.length ? history.join("\n\n") : "None yet.",
-    "",
-    "DOCUMENTS",
-    files.length ? files.join("\n") : "None.",
-  ].join("\n");
-  return brief.length > BRIEF_MAX
-    ? `${brief.slice(0, BRIEF_MAX)}\n[Shortened to fit.]`
-    : brief;
+    Math.max(Math.floor(room / 2), room - historyLength),
+  );
+  let historyRoom = room - description.length;
+  const kept: string[] = [];
+  for (let i = history.length - 1; i >= 0; i--) {
+    // The newest entry always stays, shortened if it must be.
+    const entry = kept.length ? history[i] : clip(history[i], historyRoom - 2);
+    if (kept.length && entry.length + 2 > historyRoom) break;
+    kept.unshift(entry);
+    historyRoom -= entry.length + 2;
+  }
+  return clip(assemble(description, kept, history.length - kept.length), BRIEF_MAX);
 }

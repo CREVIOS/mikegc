@@ -641,6 +641,42 @@ describe("recording a Slack thread", () => {
     expect(memory.rows("intake_requests")[0]).toMatchObject({ assignee_id: sam });
     expect(memory.rows("intake_messages")).toEqual([]);
   });
+  it("keeps the rule's reviewer for mail from another request's thread, where it can't ask", async () => {
+    // The thread stays the other request's, so this one is never linked to
+    // it: questions planned for it could never be sent.
+    const asking = JSON.stringify({ subject: "NDA", rule: 1, questions: ["Is the contract over $250k?"], attachments: [] });
+    setup({
+      payload: {
+        kind: "mail",
+        provider: "gmail",
+        mailbox: "intake@firm.test",
+        provider_id: "gm-3",
+        message_id: "<other@partner.test>",
+        thread: "t-1",
+        from: { name: "Pat", email: "pat@partner.test" },
+        to: ["intake@firm.test"],
+        cc: [],
+        subject: "Re: NDA",
+        date: "2026-11-02T09:14:00.000Z",
+        text: "Please look at our NDA too.",
+        attachments: [],
+        skipped: [],
+        related_request_id: "request-0",
+      },
+    });
+    memory.rows("intake_channel_links").push({
+      id: "link-0",
+      org_id: org,
+      request_id: "request-0",
+      source: "gmail",
+      thread_key: "gmail:t-1",
+      address: {},
+    });
+    mocks.completeText.mockResolvedValue(asking);
+    await expect(handleIntakeInbound(memory.db, job())).resolves.toMatchObject({ asked: false });
+    expect(memory.rows("intake_requests")[0]).toMatchObject({ assignee_id: sam });
+    expect(memory.rows("intake_messages").filter((m) => m.kind === "question")).toEqual([]);
+  });
   it("leaves the acknowledgement to preprocessing's readiness check, which may ask too", async () => {
     setup({ payload: slackPayload(), source: "slack" });
     Object.assign(memory.rows("intake_assignment_rules")[0]!, { preprocess: true });

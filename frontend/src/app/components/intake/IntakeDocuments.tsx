@@ -119,6 +119,9 @@ export function useIntakeDocumentViewer() {
   } | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [versionId, setVersionId] = useState<string | null>(null);
+  // Only the latest versions request answers: one for a document opened
+  // before it never replaces the open document's history.
+  const versionRequest = useRef(0);
 
   async function open(documentId: string) {
     try {
@@ -130,21 +133,24 @@ export function useIntakeDocumentViewer() {
   }
 
   async function loadVersions(documentId: string) {
+    const request = ++versionRequest.current;
     setHistoryLoading(true);
     try {
       const res = await listDocumentVersions(documentId);
+      if (request !== versionRequest.current) return;
       setHistory({
         documentId,
         currentVersionId: res.current_version_id,
         versions: res.versions,
       });
     } catch (error) {
+      if (request !== versionRequest.current) return;
       notifyError(error, {
         action: "load the version history",
         onRetry: () => void loadVersions(documentId),
       });
     } finally {
-      setHistoryLoading(false);
+      if (request === versionRequest.current) setHistoryLoading(false);
     }
   }
 

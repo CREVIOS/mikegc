@@ -57,6 +57,26 @@ describe("IntakeDescription with an original message", () => {
     );
   });
 
+  it("limits the summary to the room the message under it leaves", async () => {
+    const user = userEvent.setup();
+    const description = `${DESCRIPTION}\n${"x".repeat(15000)}`;
+    const original = description.slice(description.indexOf("--- Original message ---"));
+    render(
+      <IntakeDescription
+        value={description}
+        editable
+        locked={false}
+        onSave={vi.fn()}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Edit request" }));
+    // The summary and the message, two newlines apart, fit 20,000 characters.
+    expect(screen.getByRole("textbox", { name: "Request" })).toHaveAttribute(
+      "maxLength",
+      String(20000 - original.length - 2),
+    );
+  });
+
   it("shows a description without one as written", () => {
     render(
       <IntakeDescription

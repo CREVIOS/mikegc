@@ -520,8 +520,12 @@ async function processInbound(db: Db, row: InboundRow): Promise<Record<string, u
   const save = () => saveInboundPayload(db, row.id, payload);
   const settings = await loadAutomationRow(db, row.org_id);
   const channel = channelOf(payload);
-  // MikeGC asks only where it can be answered: in a thread.
-  const canAsk = !!channel;
+  // MikeGC asks only where it can be answered: in a thread of the request's
+  // own. Mail in another request's thread is recorded apart, and the thread
+  // stays that request's, so questions planned for it could never be sent
+  // while the rule's reviewer waited on them.
+  const canAsk =
+    !!channel && !(payload.kind === "mail" && payload.related_request_id);
 
   if (!payload.plan) {
     const message = await inboundMessage(settings, payload);

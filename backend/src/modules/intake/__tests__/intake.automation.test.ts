@@ -333,6 +333,18 @@ describe("saving Slack's credentials", () => {
     expect(url).toBe("https://slack.com/api/auth.test");
     expect((init.headers as Record<string, string>).Authorization).toBe("Bearer xoxb-123-abc");
   });
+  it("turns Slack on with the save that completes its setup, also across saves", async () => {
+    // The page shows Slack's switch only once it is set up, so the save that
+    // stores the last secret turns it on, whichever came first.
+    await updateIntakeAutomation(memory.db, scope(admin), { slack_signing_secret: "signing-secret-1" });
+    expect(row().slack_enabled).toBe(false);
+    const result = await updateIntakeAutomation(memory.db, scope(admin), { slack_bot_token: "xoxb-123-abc" });
+    expect(result).toMatchObject({ ok: true, data: { slack: { enabled: true, configured: true } } });
+    // Once set up, a later save leaves the switch to the person.
+    await updateIntakeAutomation(memory.db, scope(admin), { slack_enabled: false });
+    await updateIntakeAutomation(memory.db, scope(admin), { slack_bot_token: "xoxb-456-def" });
+    expect(row().slack_enabled).toBe(false);
+  });
   it("rejects a token Slack refuses, saving nothing", async () => {
     vi.mocked(fetch).mockResolvedValue(Response.json({ ok: false, error: "invalid_auth" }));
     const result = await updateIntakeAutomation(memory.db, scope(owner), {
@@ -578,6 +590,16 @@ describe("the intake mailbox", () => {
         service_account_key: '{"client_email": "x"}',
       }),
     ).toMatchObject({ ok: false, kind: "validation", detail: expect.stringMatching(/JSON key/) });
+    // Nor is a key without the numeric client ID Google Admin delegates to:
+    // the account's email would be shown in its place, and the console
+    // doesn't take it.
+    expect(
+      await connectIntakeMailbox(memory.db, scope(owner), {
+        provider: "gmail",
+        mailbox: "intake@firm.test",
+        service_account_key: JSON.stringify({ ...key, client_id: undefined }),
+      }),
+    ).toMatchObject({ ok: false, kind: "validation", detail: expect.stringMatching(/JSON key/) });
     expect(mocks.gmailProfile).not.toHaveBeenCalled();
 
     mocks.gmailProfile.mockResolvedValue({ emailAddress: "intake@firm.test", historyId: "42" });
@@ -615,6 +637,15 @@ describe("the intake mailbox", () => {
       await connectIntakeMailbox(memory.db, scope(owner), { provider: "gmail", mailbox: "intake@firm.test" }),
     ).toMatchObject({ ok: true, data: { email: { gmail: { client_id: "987654321", key_set: true } } } });
     expect(mocks.gmailProfile).toHaveBeenLastCalledWith(own);
+
+    // A saved key that can no longer be read isn't stood in for by the
+    // deployment's account: the organization chose its own.
+    row().gmail_service_account_key_tag = Buffer.from("not the tag").toString("base64");
+    mocks.gmailProfile.mockClear();
+    expect(
+      await connectIntakeMailbox(memory.db, scope(owner), { provider: "gmail", mailbox: "intake@firm.test" }),
+    ).toMatchObject({ ok: false, kind: "validation", detail: "Paste the service account's JSON key." });
+    expect(mocks.gmailProfile).not.toHaveBeenCalled();
   });
   it("tells an organization that used Postmark to connect its mailbox", async () => {
     memory.tables.intake_automation = [{ ...row(), org_id: org }];
@@ -658,6 +689,19 @@ describe("Teams", () => {
       `https://login.microsoftonline.com/${teams.teams_tenant_id}/oauth2/v2.0/token`,
     );
     expect(JSON.stringify(memory.tables)).not.toContain("teams-secret");
+  });
+  it("turns Teams on with the save that completes its setup, after the secret was saved first", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ access_token: msToken([]), expires_in: 3600 })),
+    );
+    await updateIntakeAutomation(memory.db, scope(owner), { teams_client_secret: teams.teams_client_secret });
+    expect(row().teams_enabled).toBe(false);
+    const result = await updateIntakeAutomation(memory.db, scope(owner), {
+      teams_app_id: teams.teams_app_id,
+      teams_tenant_id: teams.teams_tenant_id,
+    });
+    expect(result).toMatchObject({ ok: true, data: { teams: { enabled: true, configured: true } } });
   });
   it("refuses credentials Microsoft refuses, and won't turn Teams on without them", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ error: "invalid_client" }, { status: 401 })));

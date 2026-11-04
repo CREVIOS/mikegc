@@ -374,6 +374,19 @@ describe("IntakeSettings", () => {
     expect(manage).toHaveFocus();
   });
 
+  it("says when Slack hasn't sent a thread message, so replies may not be arriving", async () => {
+    server = settings({
+      slack: { ...settings().slack, message_events_seen: false },
+    });
+    const user = userEvent.setup();
+    render(<IntakeSettings orgId="org-a" />);
+    await loaded();
+    const dialog = await openModal(user, "Manage Slack", "Slack");
+    expect(dialog).toHaveTextContent(
+      "MikeGC hasn't received a thread message yet. Subscribe the app to the message.channels and message.groups bot events",
+    );
+  });
+
   it("keeps a channel's help on a screen of its own, opened from the footer, keeping what was typed", async () => {
     const user = userEvent.setup();
     render(<IntakeSettings orgId="org-a" />);
