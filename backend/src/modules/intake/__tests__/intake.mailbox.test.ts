@@ -13,6 +13,14 @@ vi.mock("../../../lib/storage", async (importOriginal) => ({
   deleteFileBestEffort: vi.fn(),
 }));
 vi.mock("../../../lib/dbq/enqueue", () => ({ enqueueDbJob: mocks.enqueueDbJob }));
+// Gmail's domain-wide delegation token, without signing anything.
+vi.mock("google-auth-library", () => ({
+  JWT: class {
+    async getAccessToken() {
+      return { token: "gmail-token" };
+    }
+  },
+}));
 vi.mock("../../user/user.service", () => ({ getEffectiveApiKeys: vi.fn(), envApiKeys: vi.fn(() => ({})) }));
 import type { DbJob } from "../../../lib/dbq/types";
 import { DbJobDeferredError } from "../../../lib/dbq/types";
@@ -271,6 +279,119 @@ describe("reading the mailbox", () => {
     expect(next).toBeGreaterThanOrEqual(before + 15 * 60_000);
     expect(settings().graph_delta_link).toBe("https://graph.microsoft.com/v1.0/delta?token=2");
     expect(settings().email_last_read_at).toBeTruthy();
+  });
+  it("starts Outlook's read again from just before the last one when Graph drops the delta link", async () => {
+    const lastRead = "2026-11-03T10:00:00.000Z";
+    Object.assign(memory.rows("intake_automation")[0]!, {
+      email_provider: "graph",
+      graph_subscription_id: "sub-1",
+      graph_subscription_expires_at: new Date(Date.now() + 2 * 86_400_000).toISOString(),
+      graph_delta_link: "https://graph.microsoft.com/v1.0/delta?token=old",
+      email_last_read_at: lastRead,
+    });
+    const urls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL) => {
+        const target = String(url);
+        urls.push(target);
+        if (target.startsWith("https://login.microsoftonline.com/"))
+          return Response.json({ access_token: "h.e30.s", expires_in: 3600 });
+        if (target.endsWith("token=old"))
+          return Response.json({ error: { code: "syncStateNotFound" } }, { status: 410 });
+        if (target.includes("/messages/delta"))
+          return Response.json({ value: [], "@odata.deltaLink": "https://graph.microsoft.com/v1.0/delta?token=fresh" });
+        return Response.json({}, { status: 404 });
+      }),
+    );
+    await expect(handleIntakeMailboxPoll(memory.db, poll())).rejects.toBeInstanceOf(DbJobDeferredError);
+    const restart = urls.find((u) => u.includes("/messages/delta"))!;
+    expect(decodeURIComponent(restart)).toContain("receivedDateTime ge 2026-11-03T09:59:00.000Z");
+    expect(settings()).toMatchObject({
+      graph_delta_link: "https://graph.microsoft.com/v1.0/delta?token=fresh",
+      email_error: null,
+    });
+  });
+  it("keeps one subscription's ID and secret together when it makes a new one", async () => {
+    Object.assign(memory.rows("intake_automation")[0]!, {
+      email_provider: "graph",
+      graph_delta_link: "https://graph.microsoft.com/v1.0/delta?token=1",
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL) => {
+        const target = String(url);
+        if (target.startsWith("https://login.microsoftonline.com/"))
+          return Response.json({ access_token: "h.e30.s", expires_in: 3600 });
+        if (target === "https://graph.microsoft.com/v1.0/subscriptions")
+          return Response.json({ id: "sub-new", expirationDateTime: "2026-11-06T00:00:00Z" });
+        if (target.includes("delta"))
+          return Response.json({ value: [], "@odata.deltaLink": "https://graph.microsoft.com/v1.0/delta?token=2" });
+        return Response.json({}, { status: 404 });
+      }),
+    );
+    const writes: Record<string, unknown>[] = [];
+    memory.intercept = ({ table, op, values }) => {
+      if (table === "intake_automation" && op === "update") writes.push(values as Record<string, unknown>);
+      return null;
+    };
+    await expect(handleIntakeMailboxPoll(memory.db, poll())).rejects.toBeInstanceOf(DbJobDeferredError);
+    memory.intercept = undefined;
+    const saved = writes.filter((w) => "graph_subscription_id" in w || "graph_client_state_hash" in w);
+    expect(saved).toHaveLength(1);
+    expect(saved[0]).toMatchObject({ graph_subscription_id: "sub-new", graph_client_state_hash: expect.any(String) });
+  });
+  describe("reading Gmail", () => {
+    const gmail = "https://gmail.googleapis.com/gmail/v1/users/me";
+    beforeEach(() => {
+      process.env.INTAKE_GMAIL_SERVICE_ACCOUNT_KEY = JSON.stringify({
+        client_email: "mikegc@project.iam.gserviceaccount.com",
+        private_key: "test-key",
+      });
+      Object.assign(memory.rows("intake_automation")[0]!, { email_provider: "gmail", gmail_history_id: "100" });
+    });
+    it("starts the next read after the last record when the history is too long for one", async () => {
+      let page = 0;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string | URL) => {
+          const target = String(url);
+          if (target.startsWith(`${gmail}/history`)) {
+            page += 1;
+            // Every page has more after it; the mailbox itself is far ahead.
+            return Response.json({ history: [{ id: String(100 + page * 500) }], historyId: "999999", nextPageToken: `p${page}` });
+          }
+          return Response.json({}, { status: 404 });
+        }),
+      );
+      await expect(handleIntakeMailboxPoll(memory.db, poll())).rejects.toBeInstanceOf(DbJobDeferredError);
+      expect(page).toBe(20);
+      expect(settings().gmail_history_id).toBe(String(100 + 20 * 500));
+    });
+    it("reads every page of the Inbox when the history has expired, after taking the history ID", async () => {
+      const calls: string[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string | URL) => {
+          const target = String(url);
+          calls.push(target.replace(gmail, ""));
+          if (target.startsWith(`${gmail}/history`)) return Response.json({ error: { code: 404 } }, { status: 404 });
+          if (target === `${gmail}/profile`) return Response.json({ emailAddress: "intake@firm.test", historyId: "5000" });
+          if (target.startsWith(`${gmail}/messages?`))
+            return Response.json(
+              target.includes("pageToken=two")
+                ? { messages: [{ id: "m3" }] }
+                : { messages: [{ id: "m1" }, { id: "m2" }], nextPageToken: "two" },
+            );
+          return Response.json({}, { status: 404 });
+        }),
+      );
+      await expect(handleIntakeMailboxPoll(memory.db, poll())).rejects.toBeInstanceOf(DbJobDeferredError);
+      const reads = calls.filter((c) => /^\/messages\/m\d/.test(c));
+      expect(reads.map((c) => c.split("?")[0])).toEqual(["/messages/m1", "/messages/m2", "/messages/m3"]);
+      expect(calls.indexOf("/profile")).toBeLessThan(calls.findIndex((c) => c.startsWith("/messages?")));
+      expect(settings().gmail_history_id).toBe("5000");
+    });
   });
   it("shows an admin why the mailbox can't be read, and keeps coming back", async () => {
     Object.assign(memory.rows("intake_automation")[0]!, { email_provider: "graph", graph_delta_link: "https://graph.microsoft.com/v1.0/d" });

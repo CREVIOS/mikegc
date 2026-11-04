@@ -167,7 +167,7 @@ export async function gmailHistory(
 ): Promise<{ ids: string[]; historyId: string } | "expired"> {
   const ids: string[] = [];
   let pageToken: string | undefined;
-  let historyId = startHistoryId;
+  let lastRecord: string | null = null;
   for (let page = 0; page < 20; page++) {
     const query = new URLSearchParams({
       startHistoryId,
@@ -177,7 +177,10 @@ export async function gmailHistory(
       ...(pageToken ? { pageToken } : {}),
     });
     let data: {
-      history?: { messagesAdded?: { message?: { id?: string; labelIds?: string[] } }[] }[];
+      history?: {
+        id?: string;
+        messagesAdded?: { message?: { id?: string; labelIds?: string[] } }[];
+      }[];
       historyId?: string;
       nextPageToken?: string;
     };
@@ -187,25 +190,45 @@ export async function gmailHistory(
       if (error instanceof GmailApiError && error.status === 404) return "expired";
       throw error;
     }
-    for (const h of data.history ?? [])
+    for (const h of data.history ?? []) {
+      if (h.id) lastRecord = String(h.id);
       for (const added of h.messagesAdded ?? [])
         if (added.message?.id && (added.message.labelIds ?? ["INBOX"]).includes("INBOX"))
           ids.push(added.message.id);
-    if (data.historyId) historyId = String(data.historyId);
+    }
     pageToken = data.nextPageToken;
-    if (!pageToken) break;
+    // Read to the end: the mailbox's own history ID is where the next read starts.
+    if (!pageToken) return { ids: [...new Set(ids)], historyId: String(data.historyId ?? lastRecord ?? startHistoryId) };
   }
-  return { ids: [...new Set(ids)], historyId };
+  // More than one read holds: the next one starts after the last record read,
+  // so nothing past it is skipped.
+  return { ids: [...new Set(ids)], historyId: lastRecord ?? startHistoryId };
 }
+
+/** At most this many pages of 500 messages in one fallback read. */
+const LIST_PAGES = 100;
 
 /** Inbox messages received after a time, when the history is too old to list. */
 export async function gmailListSince(mailbox: string, after: Date): Promise<string[]> {
   const q = `in:inbox after:${Math.floor(after.getTime() / 1000)}`;
-  const data = await gmailFetch<{ messages?: { id: string }[] }>(
-    mailbox,
-    `/messages?${new URLSearchParams({ q, maxResults: "200" })}`,
+  const ids: string[] = [];
+  let pageToken: string | undefined;
+  for (let page = 0; page < LIST_PAGES; page++) {
+    const data = await gmailFetch<{ messages?: { id: string }[]; nextPageToken?: string }>(
+      mailbox,
+      `/messages?${new URLSearchParams({ q, maxResults: "500", ...(pageToken ? { pageToken } : {}) })}`,
+    );
+    for (const m of data?.messages ?? []) ids.push(m.id);
+    pageToken = data?.nextPageToken;
+    if (!pageToken) return [...new Set(ids)];
+  }
+  // Not read to the end: fail rather than move the cursor past mail unread.
+  throw new GmailApiError(
+    0,
+    "list_incomplete",
+    false,
+    "MikeGC couldn't finish reading the mailbox. It will try again.",
   );
-  return (data?.messages ?? []).map((m) => m.id);
 }
 
 type GmailPart = {

@@ -543,11 +543,15 @@ export async function updateIntakeAutomation(
     const saved = await replaceRules(db, scope.orgId, rules);
     if (!saved.ok) return saved;
   }
-  const { error } = await db
-    .from("intake_automation")
-    .update(patch)
-    .eq("org_id", scope.orgId);
+  const write = db.from("intake_automation").update(patch).eq("org_id", scope.orgId);
+  // Turning email on holds only while a mailbox is still connected, even if
+  // a disconnect lands between the read above and this write.
+  const { data: written, error } = await (patch.email_enabled === true
+    ? write.not("email_provider", "is", null).select("org_id")
+    : write.select("org_id"));
   if (error) return internalFailure(error);
+  if (patch.email_enabled === true && !(written ?? []).length)
+    return failure("validation", "Connect the intake mailbox before turning email on.");
   const updated = await ensureRow(db, scope);
   if (!updated.ok) return updated;
   return present(db, scope, updated.data);
@@ -687,7 +691,19 @@ export async function connectIntakeMailbox(
     } catch (error) {
       return mailboxFailure(error, "Couldn't reach Gmail to check the mailbox. Try again.");
     }
-    Object.assign(patch, { graph_delta_link: null, graph_subscription_id: null, graph_subscription_expires_at: null });
+    // An Outlook mailbox it replaces stops sending notifications, as on disconnect.
+    const old = graphClientSecret(row);
+    if (row.graph_subscription_id && row.graph_tenant_id && row.graph_client_id && old && row.email_mailbox)
+      await graphUnsubscribe(
+        { tenantId: row.graph_tenant_id, clientId: row.graph_client_id, clientSecret: old, mailbox: row.email_mailbox },
+        row.graph_subscription_id,
+      );
+    Object.assign(patch, {
+      graph_delta_link: null,
+      graph_subscription_id: null,
+      graph_subscription_expires_at: null,
+      graph_client_state_hash: null,
+    });
   }
   const { error } = await db.from("intake_automation").update(patch).eq("org_id", scope.orgId);
   if (error) return internalFailure(error);

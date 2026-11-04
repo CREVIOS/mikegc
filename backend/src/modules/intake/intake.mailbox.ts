@@ -266,6 +266,20 @@ async function saveMailbox(db: Db, orgId: string, patch: Record<string, unknown>
   if (error) throw error;
 }
 
+/** Where a read starts again: a minute before the last one, or a day ago. */
+const readSince = (settings: AutomationRow) =>
+  new Date(
+    (settings.email_last_read_at ? Date.parse(settings.email_last_read_at) : Date.now() - 86_400_000) - 60_000,
+  );
+
+/** Graph's answer when a stored delta link is too old to continue from. */
+function deltaExpired(error: unknown): boolean {
+  return (
+    error instanceof MicrosoftApiError &&
+    (error.status === 410 || /^(syncStateNotFound|syncStateInvalid|resyncRequired)$/i.test(error.code))
+  );
+}
+
 /** Read what arrived in an Outlook mailbox since the stored delta link. */
 async function pollGraph(db: Db, settings: AutomationRow, renew: boolean) {
   const credentials = graphCredentials(settings);
@@ -277,6 +291,7 @@ async function pollGraph(db: Db, settings: AutomationRow, renew: boolean) {
     try {
       let expiresAt: string | null = null;
       let id = settings.graph_subscription_id;
+      const patch: Record<string, unknown> = {};
       if (id) expiresAt = await graphRenew(credentials, id).catch(() => null);
       if (!expiresAt) {
         const clientState = randomBytes(32).toString("base64url");
@@ -286,9 +301,11 @@ async function pollGraph(db: Db, settings: AutomationRow, renew: boolean) {
         });
         id = created.id;
         expiresAt = created.expiresAt;
-        await saveMailbox(db, settings.org_id, { graph_client_state_hash: hashState(clientState) });
+        patch.graph_client_state_hash = hashState(clientState);
       }
+      // One write, so the stored ID and secret always name the same subscription.
       await saveMailbox(db, settings.org_id, {
+        ...patch,
         graph_subscription_id: id,
         graph_subscription_expires_at: expiresAt,
       });
@@ -298,7 +315,16 @@ async function pollGraph(db: Db, settings: AutomationRow, renew: boolean) {
     }
   }
   const from = settings.graph_delta_link;
-  const { ids, deltaLink } = await graphDelta(credentials, from);
+  let read: { ids: string[]; deltaLink: string };
+  try {
+    read = await graphDelta(credentials, from);
+  } catch (error) {
+    if (!from || !deltaExpired(error)) throw error;
+    // Graph no longer knows the stored link: start again from just before the
+    // last read, so mail that arrived in between is read too (and recorded once).
+    read = await graphDelta(credentials, null, readSince(settings));
+  }
+  const { ids, deltaLink } = read;
   for (const id of ids) {
     const mail = await graphReadMessage(credentials, id);
     if (mail) await recordMail(db, settings, mail);
@@ -326,10 +352,10 @@ async function pollGmail(db: Db, settings: AutomationRow) {
   let ids: string[];
   let next: string;
   if (history === "expired") {
-    // Too old to list: read the Inbox since the last message recorded.
-    const since = settings.email_last_read_at ? new Date(settings.email_last_read_at) : new Date(Date.now() - 86_400_000);
-    ids = await gmailListSince(mailbox, new Date(since.getTime() - 60_000));
+    // Too old to list: read the Inbox since the last read. The history ID is
+    // taken first, so mail arriving during the listing is in the next read.
     next = (await gmailProfile(mailbox)).historyId;
+    ids = await gmailListSince(mailbox, readSince(settings));
   } else {
     ids = history.ids;
     next = history.historyId;

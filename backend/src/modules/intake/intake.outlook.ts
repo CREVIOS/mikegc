@@ -209,12 +209,13 @@ export async function graphReadMessage(
 export async function graphDelta(
   credentials: GraphCredentials,
   from: string | null,
+  /** Where a new read starts; by default now, so earlier mail isn't recorded. */
+  since: Date = new Date(),
 ): Promise<{ ids: string[]; deltaLink: string }> {
   const t = await token(credentials);
-  // The first read starts now, so mail already in the mailbox isn't recorded.
   let next: string | null =
     from ??
-    `${mailboxUrl(credentials.mailbox)}/mailFolders('Inbox')/messages/delta?$select=id&$filter=${encodeURIComponent(`receivedDateTime ge ${new Date().toISOString()}`)}`;
+    `${mailboxUrl(credentials.mailbox)}/mailFolders('Inbox')/messages/delta?$select=id&$filter=${encodeURIComponent(`receivedDateTime ge ${since.toISOString()}`)}`;
   const ids: string[] = [];
   for (let page = 0; page < 50 && next; page++) {
     const data: {

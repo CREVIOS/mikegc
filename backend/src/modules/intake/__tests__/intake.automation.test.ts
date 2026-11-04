@@ -50,6 +50,7 @@ vi.mock("../../../middleware/auth", () => ({
     next();
   },
 }));
+import { encryptString } from "../../../lib/mcp/client";
 import { clearMicrosoftTokens } from "../intake.microsoft";
 import {
   connectIntakeMailbox,
@@ -488,6 +489,59 @@ describe("the intake mailbox", () => {
     expect(
       await updateIntakeAutomation(memory.db, scope(owner), { email_enabled: true }),
     ).toMatchObject({ ok: false, kind: "validation" });
+  });
+  it("ends the Outlook subscription when the mailbox moves to Google Workspace", async () => {
+    await getIntakeAutomation(memory.db, scope(owner));
+    const secret = encryptString("graph-secret");
+    Object.assign(row(), {
+      email_provider: "graph",
+      email_mailbox: "intake@firm.test",
+      graph_tenant_id: "tenant-1",
+      graph_client_id: "client-1",
+      graph_client_secret_encrypted: secret.encrypted,
+      graph_client_secret_iv: secret.iv,
+      graph_client_secret_tag: secret.tag,
+      graph_subscription_id: "sub-1",
+      graph_client_state_hash: "hash",
+      graph_delta_link: "https://graph.microsoft.com/v1.0/delta?token=1",
+    });
+    process.env.INTAKE_GMAIL_SERVICE_ACCOUNT_KEY = JSON.stringify({
+      client_email: "mikegc@project.iam.gserviceaccount.com",
+      private_key: "-----BEGIN PRIVATE KEY-----",
+    });
+    mocks.gmailProfile.mockResolvedValue({ emailAddress: "intake@firm.test", historyId: "9001" });
+    const calls: { url: string; method: string }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL, init?: RequestInit) => {
+        calls.push({ url: String(url), method: init?.method ?? "GET" });
+        return String(url).startsWith("https://login.microsoftonline.com/")
+          ? Response.json({ access_token: "h.e30.s", expires_in: 3600 })
+          : new Response(null, { status: 204 });
+      }),
+    );
+    const result = await connectIntakeMailbox(memory.db, scope(owner), { provider: "gmail", mailbox: "intake@firm.test" });
+    expect(result).toMatchObject({ ok: true, data: { email: { provider: "gmail" } } });
+    expect(calls).toContainEqual({ url: "https://graph.microsoft.com/v1.0/subscriptions/sub-1", method: "DELETE" });
+    expect(row()).toMatchObject({
+      graph_subscription_id: null,
+      graph_client_state_hash: null,
+      graph_delta_link: null,
+      gmail_history_id: "9001",
+    });
+  });
+  it("won't turn email on over a disconnect that lands during the save", async () => {
+    await getIntakeAutomation(memory.db, scope(owner));
+    Object.assign(row(), { email_provider: "gmail", email_mailbox: "intake@firm.test", email_enabled: false });
+    // The disconnect commits after the save read the row, before it writes.
+    memory.intercept = ({ table, op }) => {
+      if (table === "intake_automation" && op === "update") row().email_provider = null;
+      return null;
+    };
+    const result = await updateIntakeAutomation(memory.db, scope(owner), { email_enabled: true });
+    memory.intercept = undefined;
+    expect(result).toMatchObject({ ok: false, kind: "validation", detail: "Connect the intake mailbox before turning email on." });
+    expect(row().email_enabled).toBe(false);
   });
   it("tells an organization that used Postmark to connect its mailbox", async () => {
     memory.tables.intake_automation = [{ ...row(), org_id: org }];
