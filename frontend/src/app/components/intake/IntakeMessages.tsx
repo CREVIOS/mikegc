@@ -37,13 +37,10 @@ export const isIntakeRequesterMessage = (message: IntakeMessage) =>
   REQUESTER_KINDS.has(message.kind);
 
 /**
- * A resolution's delivery to the requester with no reply message of its
- * own, with how it went: the resolution sent as its own text, from before a
- * reply was written apart from it, or documents sent alone.
+ * Documents a resolution sent to the requester with no reply text, with how
+ * the sending went. A reply with text is a message of its own.
  */
 export interface IntakeSentResolution {
-  /** The resolution sent as the text; null when only documents went. */
-  message: IntakeMessage | null;
   /** The change it was sent with, saying who resolved and when. */
   event: IntakeEvent;
   delivery: IntakeDelivery;
@@ -158,16 +155,15 @@ export function IntakeMessages({
         message.kind === "answer" ? "resolution" : "question",
       ),
     })),
-    ...resolutions.map(({ message, event, delivery }) => ({
-      key: message?.id ?? `e${event.id}`,
-      at: message?.created_at ?? event.created_at,
+    ...resolutions.map(({ event, delivery }) => ({
+      key: `e${event.id}`,
+      at: event.created_at,
       incoming: false,
-      author: message?.author_name ?? event.actor_name ?? "Former member",
-      mikegc: !!message?.automated,
+      author: event.actor_name ?? "Former member",
+      mikegc: false,
       label: "Resolution",
-      body: message?.body ?? "",
-      photo: photo(message?.author_id ?? event.actor_id),
-      messageId: message?.id,
+      body: "",
+      photo: photo(event.actor_id),
       delivery,
       deliveryName: intakeOutgoingName("resolution"),
     })),

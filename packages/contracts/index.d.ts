@@ -808,6 +808,11 @@ export interface IntakeDelivery {
   /** Why it couldn't be sent, in words a member can act on. */
   error: string | null;
   sent_at: string | null;
+  /**
+   * The message whose text it sends: a question, or a resolution's reply.
+   * Null for an acknowledgement and for documents a resolution sends alone.
+   */
+  message_id: string | null;
   /** The documents it carries; left_out when they couldn't be sent. */
   documents: { document_id: string; filename: string; left_out: boolean }[];
 }

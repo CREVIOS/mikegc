@@ -82,6 +82,7 @@ describe("IntakeMessages", () => {
               status: "sent",
               error: null,
               sent_at: "2026-11-04T10:00:05Z",
+              message_id: "answer-a",
               documents: [],
             },
           },

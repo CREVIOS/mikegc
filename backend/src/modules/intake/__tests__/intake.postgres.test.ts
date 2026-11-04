@@ -151,6 +151,8 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
     sql(migration("20261104_05_intake_unread_reply_count.sql"));
     sql(migration("20261104_06_intake_always_clarify.sql"));
     sql(migration("20261104_06_intake_always_clarify.sql"));
+    sql(migration("20261104_07_intake_delivery_message.sql"));
+    sql(migration("20261104_07_intake_delivery_message.sql"));
   }, 90000);
   afterAll(() => {
     execFileSync("docker", [
@@ -1505,16 +1507,19 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
         expect.objectContaining({
           kind: "answer",
           body: "Here is the signed NDA.",
-          delivery: expect.objectContaining({ kind: "answer", status: "pending" }),
+          delivery: expect.objectContaining({ kind: "answer", status: "pending", message_id: reply_message }),
         }),
       ]),
     );
+    // The resolve event's delivery names the reply it sent, so the page can
+    // show the internal resolution and the reply side by side.
     const events = json(`select public.intake_read_history(${q(10)},${q(2)},${q(21)},true);`);
     expect(events[events.length - 1]).toMatchObject({
       kind: "resolve",
       delivery: {
         kind: "answer",
         status: "pending",
+        message_id: reply_message,
         documents: [{ document_id: uid(60), filename: "Supplier NDA.docx", left_out: false }],
       },
     });
@@ -1542,6 +1547,19 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
     sql(`insert into public.chats(id,user_id,org_id,intake_request_id) values(${q(90)},${q(2)},${q(10)},${q(21)})`);
     sql(`delete from public.intake_requests where id=${q(21)}`);
     expect(sql(`select coalesce(intake_request_id::text,'-') from public.chats where id=${q(90)}`)).toBe("-");
+  });
+  it("names no message for documents a resolution sends alone", () => {
+    thread(21, 70, q(3));
+    orgDocument(60);
+    json(
+      `select public.intake_resolve_request(${q(10)},${q(3)},${q(130)},${q(21)},1,'Internal only.',true,array[${q(60)}]::uuid[]);`,
+    );
+    expect(outbox()).toEqual([expect.objectContaining({ kind: "answer", message_id: null })]);
+    const events = json(`select public.intake_read_history(${q(10)},${q(2)},${q(21)},true);`);
+    expect(events[events.length - 1]).toMatchObject({
+      kind: "resolve",
+      delivery: { kind: "answer", message_id: null, documents: [expect.objectContaining({ document_id: uid(60) })] },
+    });
   });
   it("sends nothing for a resolution with no reply and no documents, even with a resolution", () => {
     thread(21, 70, q(3));
