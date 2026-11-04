@@ -127,6 +127,7 @@ describe("intakeDeliveryStatus", () => {
     status: "pending",
     error: null,
     sent_at: null,
+    message_id: null,
     documents: [],
     ...overrides,
   });

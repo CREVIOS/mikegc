@@ -3057,8 +3057,18 @@ describe("requester loop", () => {
       status: "sent" as const,
       error: null,
       sent_at: "2026-10-27T10:00:05Z",
+      message_id: null,
       documents: [],
       ...overrides,
+    });
+    const resolutionDelivery = delivery({
+      outbound_id: "out-3",
+      kind: "answer",
+      message_id: "answer-a",
+      documents: [
+        { document_id: "d1", filename: "NDA.docx", left_out: false },
+        { document_id: "d2", filename: "Big.pdf", left_out: true },
+      ],
     });
     mocks.messages.mockResolvedValue([
       message({
@@ -3101,6 +3111,13 @@ describe("requester loop", () => {
         body: "Approved.",
         created_at: "2026-10-28T10:00:00Z",
       }),
+      message({
+        id: "answer-a",
+        kind: "answer",
+        body: "Here is the signed NDA.",
+        created_at: "2026-10-28T10:00:00Z",
+        delivery: resolutionDelivery,
+      }),
     ]);
     mocks.events.mockResolvedValue([
       event({ id: 2, kind: "stop_asking", created_at: "2026-10-27T11:30:00Z" }),
@@ -3109,14 +3126,7 @@ describe("requester loop", () => {
         kind: "resolve",
         to_state: "resolved",
         created_at: "2026-10-28T10:00:00Z",
-        delivery: delivery({
-          outbound_id: "out-3",
-          kind: "answer",
-          documents: [
-            { document_id: "d1", filename: "NDA.docx", left_out: false },
-            { document_id: "d2", filename: "Big.pdf", left_out: true },
-          ],
-        }),
+        delivery: resolutionDelivery,
       }),
     ]);
     mocks.documents.mockResolvedValue([
@@ -3137,7 +3147,12 @@ describe("requester loop", () => {
     // Activity is the work in the app; the conversation reads in Messages.
     expect(activity).not.toHaveTextContent("asked the requester");
     expect(activity).not.toHaveTextContent("replied in Slack");
-    expect(activity).not.toHaveTextContent("Approved.");
+    // The resolution reads under its change: what stayed in the app and
+    // what went to the requester, apart.
+    expect(activity).toHaveTextContent("Internal commentApproved.");
+    expect(activity).toHaveTextContent(
+      "Reply to the requesterHere is the signed NDA.Sent with NDA.docx",
+    );
     const toggle = screen.getByRole("button", { name: /^Messages/ });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(toggle).toHaveTextContent("Messages41 not sent");
@@ -3159,7 +3174,9 @@ describe("requester loop", () => {
     expect(bubbles[2]).toHaveTextContent("Ana Ruiz · Slack");
     expect(bubbles[2]).toHaveTextContent("Signed NDA.pdf");
     expect(bubbles[3]).toHaveTextContent("Resolution");
-    expect(bubbles[3]).toHaveTextContent("Approved.");
+    // The reply, never the internal comment.
+    expect(bubbles[3]).toHaveTextContent("Here is the signed NDA.");
+    expect(bubbles[3]).not.toHaveTextContent("Approved.");
     expect(bubbles[3]).toHaveTextContent("Sent with NDA.docx");
     expect(bubbles[3]).toHaveTextContent("Not sent: Big.pdf");
     expect(bubbles[1]).toHaveTextContent(
@@ -3184,9 +3201,16 @@ describe("requester loop", () => {
     await waitFor(() => expect(mocks.request).toHaveBeenCalledTimes(2));
   });
 
-  it("shows documents a resolution sent alone, with Retry when they couldn't go", async () => {
+  it("keeps a resolution's internal comment out of Messages when only documents were sent", async () => {
     mocks.request.mockResolvedValue(threaded({ state: "resolved" }));
-    mocks.messages.mockResolvedValue([]);
+    mocks.messages.mockResolvedValue([
+      message({
+        id: "resolution-a",
+        kind: "resolution",
+        body: "Internal only: the supplier pushed back on the cap.",
+        created_at: "2026-10-28T10:00:00Z",
+      }),
+    ]);
     mocks.events.mockResolvedValue([
       event({
         id: 3,
@@ -3198,6 +3222,7 @@ describe("requester loop", () => {
           kind: "answer",
           status: "failed",
           error: "MikeGC was removed from #legal-requests.",
+          message_id: null,
           sent_at: null,
           documents: [{ document_id: "d1", filename: "NDA.docx", left_out: false }],
         },
@@ -3205,22 +3230,56 @@ describe("requester loop", () => {
     ]);
     const user = userEvent.setup();
     render(detail());
-    const toggle = await screen.findByRole("button", { name: /^Messages/ });
+    // Activity has both: the comment that stayed in the app, and the reply,
+    // documents alone, with how it went.
+    const activity = await screen.findByRole("region", { name: "Activity" });
+    await waitFor(() =>
+      expect(activity).toHaveTextContent(
+        "Internal commentInternal only: the supplier pushed back on the cap.",
+      ),
+    );
+    expect(activity).toHaveTextContent(
+      "Reply to the requesterDocuments only.Couldn't send: MikeGC was removed from #legal-requests.",
+    );
+    const toggle = screen.getByRole("button", { name: /^Messages/ });
     expect(toggle).toHaveTextContent("1 not sent");
     await user.click(toggle);
     const log = screen.getByRole("list", { name: "Messages with the requester" });
     expect(log).toHaveTextContent("Resolution");
     expect(log).toHaveTextContent("Couldn't send: MikeGC was removed from #legal-requests.");
+    // The requester never saw the comment.
+    expect(log).not.toHaveTextContent("Internal only");
     // No text was sent, so there is none to copy.
     expect(
       screen.queryByRole("button", { name: /^Copy the text/ }),
     ).not.toBeInTheDocument();
     await user.click(
-      screen.getByRole("button", { name: "Retry sending the resolution reply" }),
+      within(log).getByRole("button", { name: "Retry sending the resolution reply" }),
     );
     await waitFor(() =>
       expect(mocks.retry).toHaveBeenCalledWith("org-a", "request-a", "out-3"),
     );
+  });
+
+  it("shows a resolution with nothing sent as its internal comment alone", async () => {
+    mocks.request.mockResolvedValue(threaded({ state: "resolved" }));
+    mocks.messages.mockResolvedValue([
+      message({
+        id: "resolution-a",
+        kind: "resolution",
+        body: "Closed after a call.",
+        created_at: "2026-10-28T10:00:00Z",
+      }),
+    ]);
+    mocks.events.mockResolvedValue([
+      event({ id: 3, kind: "resolve", to_state: "resolved", created_at: "2026-10-28T10:00:00Z" }),
+    ]);
+    render(detail());
+    const activity = await screen.findByRole("region", { name: "Activity" });
+    await waitFor(() =>
+      expect(activity).toHaveTextContent("Internal commentClosed after a call."),
+    );
+    expect(activity).not.toHaveTextContent("Reply to the requester");
   });
 
   it("checks on a message still sending and says when it is sent", async () => {
@@ -3236,6 +3295,7 @@ describe("requester loop", () => {
           status: "pending",
           error: null,
           sent_at: null,
+          message_id: "question-a",
           documents: [],
         },
       });
