@@ -7,6 +7,7 @@ import {
   needsMfaVerification,
 } from "@/app/components/popups/MfaVerificationPopup";
 import { SettingsTextInput } from "@/app/components/settings/SettingsTextInput";
+import { SAVED_KEY_MASK } from "@/app/components/settings/savedKeyMask";
 import { FieldLabel, FormTextInput } from "@/app/components/ui/form-field";
 import { SettingsRow } from "./SettingsRow";
 import { SettingsDescription, SettingsLabel } from "./SettingsText";
@@ -19,9 +20,6 @@ import {
 } from "@/app/lib/userFacingError";
 import { useLatestRef } from "@/app/hooks/useLatestRef";
 import { settingsGlassIconButtonClassName } from "@/app/(pages)/settings/settingsStyles";
-
-// The backend never returns saved keys, so the mask is a fixed-length stand-in.
-const SAVED_KEY_MASK = "x".repeat(24);
 
 /**
  * A non-secret value a key is only usable with (an AWS region, an Azure

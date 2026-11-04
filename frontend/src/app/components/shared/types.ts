@@ -398,6 +398,11 @@ export interface Message {
   workflow?: { id: string; title: string };
   /** The playbook the user picked to run, shown as a pill. */
   playbook?: { id: string; title: string };
+  /**
+   * The intake request the user is processing, shown as a pill. Sending it
+   * links the chat to the request, which every turn then reads.
+   */
+  intake?: { id: string; title: string };
   model?: string;
   reasoning?: "none" | "low" | "medium" | "high" | "xhigh" | "max";
   citations?: Citation[];

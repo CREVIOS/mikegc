@@ -7,8 +7,9 @@ vi.mock("@/app/contexts/WorkspaceContext", () => ({
 
 import { intakeAutomationDraft } from "./intakeAutomation";
 import {
+  intakeServiceAccountClientId,
+  intakeChannelMailProvider,
   intakeChannelSummary,
-  intakeDraftWithChannels,
   intakeMailboxConnection,
   intakeMailboxForm,
   intakeMailboxFormProblem,
@@ -16,7 +17,6 @@ import {
 import { intakeChannelChanges } from "./IntakeChannelSettings";
 
 const saved = (): IntakeAutomationSettings => ({
-  clarify_enabled: true,
   email: {
     enabled: true,
     provider: "gmail",
@@ -25,7 +25,7 @@ const saved = (): IntakeAutomationSettings => ({
     from_name: "Legal",
     graph: { tenant_id: null, client_id: null, secret_set: false },
     notification_url: "https://api.example.test/webhooks/intake/graph/1",
-    gmail_client_id: "1122",
+    gmail: { client_id: "1122", key_set: true, deployment_key: false },
     status: { subscription_expires_at: null, last_read_at: null, error: null },
     needs_reconnect: false,
   },
@@ -59,54 +59,44 @@ const saved = (): IntakeAutomationSettings => ({
 });
 
 describe("intakeChannelSummary", () => {
-  it("says how each channel stands in one line, and what needs attention", () => {
+  it("says whether each channel is set up, and whether it is on", () => {
     const settings = saved();
-    expect(intakeChannelSummary(settings, "email")).toEqual({
+    expect(intakeChannelSummary(settings, "gmail")).toEqual({
       configured: true,
-      status: "On · intake@firm.test · Gmail",
-      warning: null,
+      enabled: true,
     });
     expect(intakeChannelSummary(settings, "slack")).toEqual({
       configured: true,
-      status: "Off · T1",
-      warning: "No thread messages yet: check the app's message events.",
+      enabled: false,
     });
     expect(intakeChannelSummary(settings, "teams")).toEqual({
       configured: true,
-      status: "On · Documents can be sent",
-      warning: null,
+      enabled: true,
     });
   });
 
-  it("reads Not set up before a channel is, with Postmark's reconnect warning", () => {
+  it("sets up only the mail channel whose provider has the mailbox", () => {
     const settings = saved();
-    settings.email = {
-      ...settings.email,
-      provider: null,
-      mailbox: null,
-      needs_reconnect: true,
-    };
-    settings.slack = { ...settings.slack, configured: false };
-    settings.teams = { ...settings.teams, configured: false };
-    expect(intakeChannelSummary(settings, "email")).toEqual({
+    // Gmail has it, so Outlook is not set up, and never reads as on.
+    expect(intakeChannelSummary(settings, "outlook")).toEqual({
       configured: false,
-      status: "Not set up",
-      warning: "Connect your intake mailbox to keep recording email.",
+      enabled: false,
     });
-    for (const channel of ["slack", "teams"] as const)
+    settings.email = { ...settings.email, provider: null, mailbox: null };
+    settings.slack = { ...settings.slack, enabled: true, configured: false };
+    settings.teams = { ...settings.teams, configured: false };
+    for (const channel of ["outlook", "gmail", "slack", "teams"] as const)
       expect(intakeChannelSummary(settings, channel)).toEqual({
         configured: false,
-        status: "Not set up",
-        warning: null,
+        enabled: false,
       });
   });
 
-  it("puts a missing Slack scope before missing message events", () => {
-    const settings = saved();
-    settings.slack = { ...settings.slack, missing_scopes: ["files:write"] };
-    expect(intakeChannelSummary(settings, "slack").warning).toBe(
-      "Reinstall the Slack app to send documents.",
-    );
+  it("maps each mail channel to its provider, and the chat channels to none", () => {
+    expect(intakeChannelMailProvider("outlook")).toBe("graph");
+    expect(intakeChannelMailProvider("gmail")).toBe("gmail");
+    expect(intakeChannelMailProvider("slack")).toBeNull();
+    expect(intakeChannelMailProvider("teams")).toBeNull();
   });
 });
 
@@ -124,6 +114,7 @@ describe("the mailbox connect form", () => {
       tenantId: "t",
       clientId: "c",
       clientSecret: "",
+      serviceAccountKey: "",
     });
     expect(intakeMailboxForm("gmail", email).mailbox).toBe("");
   });
@@ -135,6 +126,7 @@ describe("the mailbox connect form", () => {
       tenantId: " t ",
       clientId: "c",
       clientSecret: "",
+      serviceAccountKey: "",
     };
     expect(intakeMailboxFormProblem({ ...form, mailbox: "intake" }, true)).toMatch(
       /intake address/,
@@ -153,7 +145,99 @@ describe("the mailbox connect form", () => {
   });
 });
 
+describe("the Gmail service account key", () => {
+  const key = (fields: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      type: "service_account",
+      client_email: "intake@project.iam.gserviceaccount.com",
+      private_key: "-----BEGIN PRIVATE KEY-----\\nabc\\n-----END PRIVATE KEY-----\\n",
+      client_id: "1234",
+      ...fields,
+    });
+  const form = {
+    provider: "gmail" as const,
+    mailbox: "intake@firm.test",
+    tenantId: "",
+    clientId: "",
+    clientSecret: "",
+    serviceAccountKey: "",
+  };
+
+  it("reads the client ID to delegate to from a pasted key", () => {
+    expect(intakeServiceAccountClientId("")).toBeNull();
+    expect(intakeServiceAccountClientId(key())).toBe("1234");
+    expect(intakeServiceAccountClientId(key({ client_id: undefined }))).toBe(
+      "intake@project.iam.gserviceaccount.com",
+    );
+    expect(intakeServiceAccountClientId("{not json")).toBe(false);
+    expect(intakeServiceAccountClientId(key({ type: "authorized_user" }))).toBe(false);
+    expect(intakeServiceAccountClientId(key({ private_key: "x" }))).toBe(false);
+  });
+
+  it("needs a key unless one is saved or the deployment has one, and sends it trimmed", () => {
+    expect(intakeMailboxFormProblem(form, false)).toBe(
+      "Paste the service account's JSON key.",
+    );
+    expect(intakeMailboxFormProblem(form, true)).toBeNull();
+    expect(
+      intakeMailboxFormProblem({ ...form, serviceAccountKey: "{}" }, true),
+    ).toMatch(/as Google Cloud downloads it/);
+    const pasted = { ...form, serviceAccountKey: ` ${key()} ` };
+    expect(intakeMailboxFormProblem(pasted, false)).toBeNull();
+    expect(intakeMailboxConnection(pasted)).toEqual({
+      provider: "gmail",
+      mailbox: "intake@firm.test",
+      service_account_key: key(),
+    });
+    expect(intakeMailboxConnection(form)).toEqual({
+      provider: "gmail",
+      mailbox: "intake@firm.test",
+    });
+  });
+});
+
 describe("intakeChannelChanges", () => {
+  it("turns Slack or Teams on with the save that completes its setup", () => {
+    const settings = saved();
+    settings.slack = { ...settings.slack, configured: false };
+    settings.teams = {
+      ...settings.teams,
+      enabled: false,
+      configured: false,
+      app_id: null,
+      tenant_id: null,
+    };
+    const draft = intakeAutomationDraft(settings);
+    // One secret of two saves on its own, and leaves Slack off.
+    expect(
+      intakeChannelChanges("slack", settings, { ...draft, signingSecret: "s" }),
+    ).toEqual({ slack_signing_secret: "s" });
+    expect(
+      intakeChannelChanges("slack", settings, {
+        ...draft,
+        signingSecret: "s",
+        botToken: "xoxb-1",
+      }),
+    ).toEqual({
+      slack_signing_secret: "s",
+      slack_bot_token: "xoxb-1",
+      slack_enabled: true,
+    });
+    expect(
+      intakeChannelChanges("teams", settings, {
+        ...draft,
+        teamsAppId: "app",
+        teamsTenantId: "tenant",
+        teamsSecret: "secret",
+      }),
+    ).toEqual({
+      teams_app_id: "app",
+      teams_tenant_id: "tenant",
+      teams_client_secret: "secret",
+      teams_enabled: true,
+    });
+  });
+
   it("sends only the channel's own changed fields, with a typed domain", () => {
     const settings = saved();
     const draft = {
@@ -161,37 +245,16 @@ describe("intakeChannelChanges", () => {
       emailEnabled: false,
       domainInput: "Partner.example.org",
       slackEnabled: true,
-      clarifyEnabled: false,
     };
-    expect(intakeChannelChanges("email", settings, draft)).toEqual({
-      email_enabled: false,
-      email_allowed_domains: ["firm.test", "partner.example.org"],
-    });
+    // Outlook and Gmail share the one mailbox's fields.
+    for (const channel of ["outlook", "gmail"] as const)
+      expect(intakeChannelChanges(channel, settings, draft)).toEqual({
+        email_enabled: false,
+        email_allowed_domains: ["firm.test", "partner.example.org"],
+      });
     expect(intakeChannelChanges("slack", settings, draft)).toEqual({
       slack_enabled: true,
     });
     expect(intakeChannelChanges("teams", settings, draft)).toEqual({});
-  });
-});
-
-describe("intakeDraftWithChannels", () => {
-  it("takes every channel field as saved, and leaves the rest of the draft", () => {
-    const settings = saved();
-    const draft = {
-      ...intakeAutomationDraft(settings),
-      emailEnabled: false,
-      domains: ["old.test"],
-      signingSecret: "typed",
-      teamsAppId: "old",
-      clarifyEnabled: false,
-    };
-    expect(intakeDraftWithChannels(draft, settings)).toMatchObject({
-      emailEnabled: true,
-      domains: ["firm.test"],
-      signingSecret: "",
-      teamsAppId: "app",
-      // Not a channel's: kept as edited.
-      clarifyEnabled: false,
-    });
   });
 });

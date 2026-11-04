@@ -1,4 +1,4 @@
-# Google product logos
+# Integration product logos
 
 Unmodified 96×96 transparent PNG assets from Google's product branding CDN:
 
@@ -6,6 +6,12 @@ Unmodified 96×96 transparent PNG assets from Google's product branding CDN:
 - `gmail.png`: https://www.gstatic.com/images/branding/product/2x/gmail_2020q4_48dp.png
 - `google-calendar.png`: https://www.gstatic.com/images/branding/product/2x/calendar_2020q4_48dp.png
 
-Used to identify their respective optional integrations. Served locally so
-viewing Settings does not send a request to Google. Google product marks
-remain the property of Google; they are not Mike artwork.
+Unmodified 48×48 SVG assets from Microsoft's Fluent UI brand icon CDN:
+
+- `outlook.svg`: https://res.cdn.office.net/files/fabric-cdn-prod_20230815.002/assets/brand-icons/product/svg/outlook_48x1.svg
+- `teams.svg`: https://res.cdn.office.net/files/fabric-cdn-prod_20230815.002/assets/brand-icons/product/svg/teams_48x1.svg
+
+Used to identify their respective optional integrations and intake channels.
+Served locally so viewing Settings does not send a request to Google or
+Microsoft. Google and Microsoft product marks remain the property of their
+owners; they are not Mike artwork.

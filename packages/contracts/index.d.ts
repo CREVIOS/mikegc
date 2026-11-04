@@ -738,6 +738,8 @@ export interface IntakeRequestSummary extends Omit<IntakeDetails, "description">
   clarify_stage: IntakeClarifyStage | null;
   /** The requester replied after the request was last opened. */
   new_reply: boolean;
+  /** Requester replies nobody has opened yet. */
+  unread_replies?: number;
   capabilities: { assign: boolean; cancel: boolean; delete: boolean };
 }
 export interface IntakeRequestPage { requests: IntakeRequestSummary[]; next_cursor: string | null }
@@ -827,6 +829,8 @@ export interface IntakeMessage {
   body: string;
   /** Posted by MikeGC, such as its preprocessing answer; it has no author. */
   automated?: boolean;
+  /** What a note of MikeGC's is: "preprocessing" for its preprocessing of the request. */
+  purpose?: "preprocessing" | null;
   /** Null once the author's account is erased, and for a requester's reply. */
   author_id: string | null; author_name: string; created_at: string;
   /** A requester's reply: who wrote it, in which channel. */
@@ -846,8 +850,6 @@ export interface IntakeEvent {
  * are write-only: the response says whether they are set, never what they are.
  */
 export interface IntakeAutomationSettings {
-  /** Ask requesters for missing details, in up to two rounds of questions. */
-  clarify_enabled: boolean;
   email: {
     enabled: boolean;
     /** The intake mailbox MikeGC reads and replies from, once connected. */
@@ -862,8 +864,15 @@ export interface IntakeAutomationSettings {
     graph: { tenant_id: string | null; client_id: string | null; secret_set: boolean };
     /** Where Microsoft Graph sends new-mail notifications. */
     notification_url: string;
-    /** Google Workspace: the service account's client ID admins add under domain-wide delegation; null when the deployment has no key. */
-    gmail_client_id: string | null;
+    /** Google Workspace: the service account Gmail reads and sends with. */
+    gmail: {
+      /** The client ID admins add under domain-wide delegation: the organization's own account's, else the deployment's; null with neither. */
+      client_id: string | null;
+      /** The organization saved its own service account's JSON key (write-only). */
+      key_set: boolean;
+      /** The deployment has a service account to fall back on. */
+      deployment_key: boolean;
+    };
     /** The connection's state, for the settings page. */
     status: {
       /** When the Graph subscription runs out; it is renewed before then. */
@@ -932,7 +941,6 @@ export interface IntakeInboundSummary {
 }
 /** A change to automated intake. Omitted fields keep their saved value. */
 export interface IntakeAutomationUpdate {
-  clarify_enabled?: boolean;
   email_enabled?: boolean;
   email_allowed_domains?: string[];
   email_from_name?: string;
@@ -990,7 +998,12 @@ export type IntakeMailboxConnection =
       /** Write-only; may be left out to keep the saved one. */
       client_secret?: string;
     }
-  | { provider: "gmail"; mailbox: string };
+  | {
+      provider: "gmail";
+      mailbox: string;
+      /** The service account's JSON key. Write-only; may be left out to keep the saved one, or to use the deployment's. */
+      service_account_key?: string;
+    };
 /** A document attached to a request, readable by every organization member. */
 export interface IntakeDocument {
   document_id: string; filename: string; file_type: string | null; size_bytes: number | null;
@@ -1042,4 +1055,6 @@ export interface IntakeCommand {
   send_to_requester?: boolean;
   /** Resolve with send_to_requester: up to 10 of the request's documents to send. */
   documents?: string[];
+  /** Resolve with send_to_requester: the reply sent, apart from the resolution, which stays in the app. */
+  reply?: string;
 }

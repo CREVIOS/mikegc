@@ -64,7 +64,7 @@ export async function applyTrackedEditsToDocument(params: {
 
   const { data: doc } = await db
     .from("documents")
-    .select("id, user_id, project_id, org_id, workflow_id")
+    .select("id, user_id, project_id, org_id, workflow_id, library_kind")
     .eq("id", documentId)
     .single();
   if (!doc) return { ok: false, error: "Document not found." };
@@ -97,7 +97,12 @@ export async function applyTrackedEditsToDocument(params: {
 
   return writeTrackedEdits({
     documentId,
-    storageOwner: userId,
+    // An intake document MikeGC recorded belongs to the organization, and
+    // its versions stay where the organization's intake files are kept.
+    storageOwner:
+      doc.library_kind === "intake_attachment" && !doc.user_id && doc.org_id
+        ? `intake-${doc.org_id}`
+        : userId,
     author: async () => {
       const { data: authorProfile } = await db
         .from("user_profiles")

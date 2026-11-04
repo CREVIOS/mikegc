@@ -633,14 +633,8 @@ describe("recording a Slack thread", () => {
         "Before Legal starts, MikeGC needs:\n1. Is Acme a customer or a supplier?",
     );
   });
-  it("doesn't ask with asking switched off, or by email through Postmark", async () => {
+  it("doesn't ask by email through Postmark, where no thread can be answered", async () => {
     const asking = JSON.stringify({ subject: "NDA", rule: 1, questions: ["Is the contract over $250k?"], attachments: [] });
-    setup({ payload: slackPayload(), source: "slack" });
-    memory.rows("intake_automation")[0]!.clarify_enabled = false;
-    mocks.completeText.mockResolvedValue(asking);
-    await handleIntakeInbound(memory.db, job());
-    expect(memory.rows("intake_requests")[0]).toMatchObject({ assignee_id: sam, state: "in_review" });
-    expect(memory.rows("intake_messages")).toEqual([]);
     setup({ payload: emailPayload() });
     mocks.completeText.mockResolvedValue(asking);
     await handleIntakeInbound(memory.db, job());

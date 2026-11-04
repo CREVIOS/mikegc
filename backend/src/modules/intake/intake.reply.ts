@@ -365,15 +365,8 @@ async function processReply(db: Db, row: ReplyRow): Promise<Record<string, unkno
   if (payload.kind === "teams_reply")
     await updateLinkAddress(db, link, { service_url: payload.service_url });
   // An answer to MikeGC's question reruns the stage that asked.
-  if (reply.clarify_stage === "rule") {
-    if (settings.clarify_enabled === false)
-      await settleClarify(db, {
-        orgId: row.org_id,
-        requestId: reply.request_id,
-        stage: "rule",
-      });
-    else await rerunRule(db, settings, link, reply);
-  } else if (reply.clarify_stage === "readiness")
+  if (reply.clarify_stage === "rule") await rerunRule(db, settings, link, reply);
+  else if (reply.clarify_stage === "readiness")
     await queueNextIntakePreprocess(db, row.org_id, reply.request_id);
   return done({
     request_id: reply.request_id,

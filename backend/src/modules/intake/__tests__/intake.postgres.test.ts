@@ -89,10 +89,10 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
       "create schema auth; create table auth.users(id uuid primary key,email text,raw_user_meta_data jsonb default '{}',created_at timestamptz default now());",
     );
     sql(readFileSync(resolve("schema.sql"), "utf8"));
-    // The requester loop's command boundary takes more arguments than the one
-    // the tracker migrations replayed below create, and their wrappers would
-    // match both. Its own migration replaces the older one again at the end.
-    sql("drop function public.intake_change_request(uuid,uuid,uuid,uuid,integer,text,text,uuid,boolean,uuid[])");
+    // The current command boundary takes more arguments than the ones the
+    // migrations replayed below create, and their wrappers would match both.
+    // The resolution reply's migration replaces the older ones again at the end.
+    sql("drop function public.intake_change_request(uuid,uuid,uuid,uuid,integer,text,text,uuid,boolean,uuid[],text)");
     // The tracker migrations are safe to re-run. Those before the type and
     // the timezone were removed expect their columns, so they come back for
     // them and go again.
@@ -141,6 +141,14 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
     sql(migration("20261103_06_intake_mailbox.sql"));
     sql(migration("20261103_07_intake_teams.sql"));
     sql(migration("20261103_07_intake_teams.sql"));
+    sql(migration("20261104_02_intake_resolution_reply.sql"));
+    sql(migration("20261104_02_intake_resolution_reply.sql"));
+    sql(migration("20261104_03_intake_preprocessing_notes.sql"));
+    sql(migration("20261104_03_intake_preprocessing_notes.sql"));
+    sql(migration("20261104_04_intake_assistant.sql"));
+    sql(migration("20261104_04_intake_assistant.sql"));
+    sql(migration("20261104_06_intake_always_clarify.sql"));
+    sql(migration("20261104_06_intake_always_clarify.sql"));
   }, 90000);
   afterAll(() => {
     execFileSync("docker", [
@@ -1041,11 +1049,15 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
   // Replaying older migrations recreates the command boundary they knew;
   // the requester loop's migrations then bring this database back up to date.
   const beforeReplay = () =>
-    sql("drop function if exists public.intake_change_request(uuid,uuid,uuid,uuid,integer,text,text,uuid,boolean,uuid[])");
+    sql("drop function if exists public.intake_change_request(uuid,uuid,uuid,uuid,integer,text,text,uuid,boolean,uuid[],text)");
   const afterReplay = () => {
     sql(migration("20261103_05_intake_requester_loop.sql"));
     sql(migration("20261103_06_intake_mailbox.sql"));
     sql(migration("20261103_07_intake_teams.sql"));
+    sql(migration("20261104_02_intake_resolution_reply.sql"));
+    sql(migration("20261104_03_intake_preprocessing_notes.sql"));
+    sql(migration("20261104_04_intake_assistant.sql"));
+    sql(migration("20261104_06_intake_always_clarify.sql"));
   };
   it("backfills legacy requests from their creator's profile", () => {
     beforeReplay();
@@ -1224,7 +1236,7 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
     inbound();
     sql(automated(70, 21));
     const post = (body: string) =>
-      sql(`select public.intake_note_automated(${q(10)},${q(21)},${q(80)},'${body}');`);
+      sql(`select public.intake_note_automated(${q(10)},${q(21)},${q(80)},'${body}','preprocessing');`);
     expect(post("AI preprocessing\n\nLooks fine.")).toBe("t");
     expect(post("Posted again")).toBe("f");
     expect(
@@ -1236,9 +1248,18 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
         author_id: null,
         author_name: "MikeGC",
         automated: true,
+        purpose: "preprocessing",
         body: "AI preprocessing\n\nLooks fine.",
       }),
     ]);
+    // Any other note of MikeGC's is a comment, and nothing else is a purpose.
+    sql(`select public.intake_note_automated(${q(10)},${q(21)},${q(83)},'A related thread');`);
+    expect(
+      sql(`select coalesce(purpose,'-') from public.intake_messages where id=${q(83)}`),
+    ).toBe("-");
+    expect(() =>
+      sql(`select public.intake_note_automated(${q(10)},${q(21)},${q(84)},'Odd','summary');`),
+    ).toThrow(/22023/);
     expect(() =>
       sql(`select public.intake_note_automated(${q(10)},${q(99)},${q(81)},'Lost');`),
     ).toThrow(/P0002/);
@@ -1459,16 +1480,33 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
       sql(`select public.intake_resolve_request(${q(10)},${q(3)},${q(129)},${q(21)},1,'Approved.',true,array[${q(62)}]::uuid[]);`),
     ).toThrow(/22023/);
     const resolved = json(
-      `select public.intake_resolve_request(${q(10)},${q(3)},${q(130)},${q(21)},1,'Approved with edits.',true,array[${q(60)}]::uuid[]);`,
+      `select public.intake_resolve_request(${q(10)},${q(3)},${q(130)},${q(21)},1,'Approved with edits.',true,array[${q(60)}]::uuid[],'Here is the signed NDA.');`,
     );
     expect(resolved.outbound_id).toMatch(/^[0-9a-f-]{36}$/);
+    // The reply is its own message, sent; the resolution stays in the app.
+    const reply_message = sql(
+      `select id from public.intake_messages where request_id=${q(21)} and kind='answer' and body='Here is the signed NDA.'`,
+    );
+    expect(reply_message).toMatch(/^[0-9a-f-]{36}$/);
     expect(outbox()).toEqual([
       expect.objectContaining({
         kind: "answer",
+        message_id: reply_message,
         author_id: uid(3),
         documents: [{ document_id: uid(60), version_id: uid(1060) }],
       }),
     ]);
+    const messages = json(`select public.intake_read_history(${q(10)},${q(2)},${q(21)});`);
+    expect(messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "resolution", body: "Approved with edits.", delivery: null }),
+        expect.objectContaining({
+          kind: "answer",
+          body: "Here is the signed NDA.",
+          delivery: expect.objectContaining({ kind: "answer", status: "pending" }),
+        }),
+      ]),
+    );
     const events = json(`select public.intake_read_history(${q(10)},${q(2)},${q(21)},true);`);
     expect(events[events.length - 1]).toMatchObject({
       kind: "resolve",
@@ -1480,19 +1518,46 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
     });
     // The replay returns the same receipt and writes nothing more.
     expect(
-      json(`select public.intake_resolve_request(${q(10)},${q(3)},${q(130)},${q(21)},1,'Approved with edits.',true,array[${q(60)}]::uuid[]);`),
+      json(`select public.intake_resolve_request(${q(10)},${q(3)},${q(130)},${q(21)},1,'Approved with edits.',true,array[${q(60)}]::uuid[],'Here is the signed NDA.');`),
     ).toMatchObject({ replayed: true, outbound_id: resolved.outbound_id });
     expect(outbox()).toHaveLength(1);
     expect(reply(400, 410)).toMatchObject({ state: "resolved" });
     expect(state(21)).toBe(`resolved:2:${uid(3)}`);
     expect(view()).toMatchObject({ new_reply: true, capabilities: { send_to_requester: false } });
   });
-  it("sends nothing for a resolution with no text and no documents", () => {
+  it("lets members edit an open request's documents, and none once it closes", () => {
+    thread(21, 70, q(3));
+    orgDocument(60);
+    const editable = (actor: number) =>
+      sql(`select public.intake_document_editable(${q(10)},${q(actor)},${q(60)})`);
+    // Any member, not only the reviewer; someone outside the organization never.
+    expect(editable(2)).toBe("t");
+    expect(editable(3)).toBe("t");
+    expect(editable(6)).toBe("f");
+    sql(`select public.intake_resolve_request(${q(10)},${q(3)},${q(133)},${q(21)},1,null);`);
+    expect(editable(2)).toBe("f");
+    // A chat started from the request names it, and outlives it.
+    sql(`insert into public.chats(id,user_id,org_id,intake_request_id) values(${q(90)},${q(2)},${q(10)},${q(21)})`);
+    sql(`delete from public.intake_requests where id=${q(21)}`);
+    expect(sql(`select coalesce(intake_request_id::text,'-') from public.chats where id=${q(90)}`)).toBe("-");
+  });
+  it("sends nothing for a resolution with no reply and no documents, even with a resolution", () => {
     thread(21, 70, q(3));
     expect(
       json(`select public.intake_resolve_request(${q(10)},${q(3)},${q(130)},${q(21)},1,null,true,'{}'::uuid[]);`),
     ).toMatchObject({ outbound_id: null, message_id: null });
     expect(outbox()).toEqual([]);
+    // The internal resolution is never what goes to the requester.
+    thread(22, 71, q(3));
+    expect(
+      json(`select public.intake_resolve_request(${q(10)},${q(3)},${q(131)},${q(22)},1,'Internal only.',true,'{}'::uuid[]);`),
+    ).toMatchObject({ outbound_id: null });
+    expect(outbox(22)).toEqual([]);
+    // A reply goes only with sending.
+    thread(23, 72, q(3));
+    expect(() =>
+      sql(`select public.intake_resolve_request(${q(10)},${q(3)},${q(132)},${q(23)},1,null,false,null,'Hello');`),
+    ).toThrow(/22023/);
   });
   it("records how a delivery went, and lets a member send a failed one again", () => {
     thread(21, 70, q(3));
@@ -1558,5 +1623,15 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
       ])
         expect(sql(`select has_function_privilege('${role}','public.${fn}','EXECUTE')`)).toBe("f");
     }
+  });
+  it("leaves no intake function callable by browser roles once every migration has run", () => {
+    // A migration that recreates a function starts it with default grants.
+    for (const role of ["anon", "authenticated"])
+      expect(
+        sql(`select coalesce(string_agg(p.oid::regprocedure::text, ', '), '') from pg_proc p
+          join pg_namespace n on n.oid = p.pronamespace
+          where n.nspname = 'public' and p.proname like 'intake\\_%'
+            and has_function_privilege('${role}', p.oid, 'EXECUTE')`),
+      ).toBe("");
   });
 });

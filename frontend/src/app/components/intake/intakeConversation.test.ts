@@ -7,6 +7,7 @@ import {
   intakeDeliveryStatus,
   intakeDocumentsUnavailable,
   intakeLeftOutDocuments,
+  intakeReplyLabel,
 } from "./intakeConversation";
 
 const conversation = (
@@ -25,25 +26,22 @@ const conversation = (
 });
 const MB = 1024 * 1024;
 
+describe("intakeReplyLabel", () => {
+  it("names where the reply goes", () => {
+    expect(intakeReplyLabel(conversation())).toBe("Send reply in Slack");
+    expect(intakeReplyLabel(conversation({ source: "teams" }))).toBe(
+      "Send reply in Teams",
+    );
+    expect(intakeReplyLabel(conversation({ source: "gmail" }))).toBe(
+      "Send reply by email",
+    );
+  });
+});
+
 describe("intakeAudience", () => {
-  it("says a Slack or Teams thread is visible to its whole channel", () => {
-    expect(intakeAudience(conversation())).toBe(
-      "Posts in the Slack thread in #legal-requests, visible to everyone in the channel.",
-    );
-    expect(intakeAudience(conversation({ channel_name: null }))).toBe(
-      "Posts in the Slack thread, visible to everyone in the channel.",
-    );
-    expect(
-      intakeAudience(
-        conversation({
-          source: "teams",
-          channel_name: "Legal",
-          team_name: "Operations",
-        }),
-      ),
-    ).toBe(
-      "Posts in the Teams channel Legal in Operations, visible to everyone in the channel.",
-    );
+  it("says nothing more for a Slack or Teams thread", () => {
+    expect(intakeAudience(conversation())).toBeNull();
+    expect(intakeAudience(conversation({ source: "teams" }))).toBeNull();
   });
 
   it("names an email's recipients", () => {
@@ -97,9 +95,9 @@ describe("intakeLeftOutDocuments", () => {
 describe("intakeDocumentsUnavailable", () => {
   it("says why a channel can take text only", () => {
     expect(intakeDocumentsUnavailable(conversation())).toBeNull();
-    expect(
-      intakeDocumentsUnavailable(conversation({ documents: false })),
-    ).toBe("Reinstall the Slack app to send documents.");
+    expect(intakeDocumentsUnavailable(conversation({ documents: false }))).toBe(
+      "Reinstall the Slack app to send documents.",
+    );
     expect(
       intakeDocumentsUnavailable(
         conversation({ source: "teams", documents: false }),
@@ -123,7 +121,10 @@ describe("intakeDeliveryStatus", () => {
     expect(intakeDeliveryStatus(delivery({ status: "sent" }))).toBe("Sent");
     expect(
       intakeDeliveryStatus(
-        delivery({ status: "failed", error: "MikeGC was removed from #legal." }),
+        delivery({
+          status: "failed",
+          error: "MikeGC was removed from #legal.",
+        }),
       ),
     ).toBe("Couldn't send: MikeGC was removed from #legal.");
   });
@@ -137,7 +138,9 @@ describe("intakeConversationLink", () => {
       ),
     ).toBe("https://acme.slack.com/archives/C1/p1");
     expect(
-      intakeConversationLink(conversation({ permalink: "javascript:alert(1)" })),
+      intakeConversationLink(
+        conversation({ permalink: "javascript:alert(1)" }),
+      ),
     ).toBeNull();
     expect(intakeConversationLink(conversation())).toBeNull();
   });

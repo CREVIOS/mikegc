@@ -44,7 +44,6 @@ const DEFAULTS: Record<string, () => Row> = {
     created_at: new Date().toISOString(),
   }),
   intake_automation: () => ({
-    clarify_enabled: true,
     email_enabled: false,
     email_allowed_domains: [],
     email_provider: null,
@@ -64,6 +63,10 @@ const DEFAULTS: Record<string, () => Row> = {
     graph_client_state_hash: null,
     graph_delta_link: null,
     gmail_history_id: null,
+    gmail_service_account_key_encrypted: null,
+    gmail_service_account_key_iv: null,
+    gmail_service_account_key_tag: null,
+    gmail_service_account_id: null,
     slack_scopes: null,
     slack_messages_seen_at: null,
     teams_enabled: false,
@@ -336,6 +339,7 @@ export const automatedIntakeRpc: Record<string, RpcHandler> = {
       kind: "note",
       body: args.p_body,
       automated: true,
+      purpose: args.p_purpose ?? null,
     });
     return { data: true, error: null };
   },

@@ -520,8 +520,8 @@ async function processInbound(db: Db, row: InboundRow): Promise<Record<string, u
   const save = () => saveInboundPayload(db, row.id, payload);
   const settings = await loadAutomationRow(db, row.org_id);
   const channel = channelOf(payload);
-  // MikeGC asks only where it can be answered: in a thread, with asking on.
-  const canAsk = !!channel && settings?.clarify_enabled !== false;
+  // MikeGC asks only where it can be answered: in a thread.
+  const canAsk = !!channel;
 
   if (!payload.plan) {
     const message = await inboundMessage(settings, payload);

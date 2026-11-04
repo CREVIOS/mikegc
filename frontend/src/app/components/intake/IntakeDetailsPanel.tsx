@@ -51,6 +51,7 @@ import {
 } from "./intakeConversation";
 import { IntakeUnassigned } from "./IntakeUnassigned";
 import { IntakeMikeGCMark, isMikeGCRequest } from "./IntakeActorAvatar";
+import { parseIntakeDescription } from "./intakeDescription";
 
 /**
  * Grey and flat like the playbook fields. A fixed starting height with no
@@ -531,7 +532,9 @@ function StatusLabel({
         aria-hidden="true"
         className={`h-2 w-2 shrink-0 rounded-full ${INTAKE_STATE_DOT_CLASS[state]}`}
       />
-      {clarifyStage ? intakeStateLabel(state, clarifyStage) : INTAKE_STATE_LABELS[state]}
+      {clarifyStage
+        ? intakeStateLabel(state, clarifyStage)
+        : INTAKE_STATE_LABELS[state]}
     </span>
   );
 }
@@ -914,7 +917,9 @@ export function IntakeSubjectInput({
 
 /**
  * The request's description, with Edit to change it in place. The editor
- * stays open with its text until the saved description matches it.
+ * stays open with its text until the saved description matches it. The
+ * original message MikeGC appended under its summary reads in Messages;
+ * Edit changes only the summary and keeps the message as it was.
  */
 export function IntakeDescription({
   value,
@@ -929,9 +934,11 @@ export function IntakeDescription({
 }) {
   const [draft, setDraft] = useState<string | null>(null);
   const [saved, setSaved] = useState(value);
+  const original = parseIntakeDescription(value);
+  const text = original ? original.summary : value;
   if (saved !== value) {
     setSaved(value);
-    if (draft !== null && draft.trim() === value) setDraft(null);
+    if (draft !== null && draft.trim() === text) setDraft(null);
   }
   const editing = draft !== null;
   return (
@@ -944,7 +951,7 @@ export function IntakeDescription({
           <button
             type="button"
             aria-label="Edit request"
-            onClick={() => setDraft(value)}
+            onClick={() => setDraft(text)}
             title="Edit request"
             className="flex h-6 w-6 items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
           >
@@ -980,8 +987,14 @@ export function IntakeDescription({
             </button>
             <button
               type="button"
-              disabled={!draft.trim() || draft.trim() === value || locked}
-              onClick={() => onSave(draft.trim())}
+              disabled={!draft.trim() || draft.trim() === text || locked}
+              onClick={() =>
+                onSave(
+                  original
+                    ? `${draft.trim()}\n\n${original.original}`
+                    : draft.trim(),
+                )
+              }
               className="rounded-md px-2 text-sm font-medium text-gray-900 transition-colors hover:text-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:text-gray-400"
             >
               Submit
@@ -990,7 +1003,7 @@ export function IntakeDescription({
         </div>
       ) : (
         <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700">
-          {value}
+          {text}
         </p>
       )}
     </section>

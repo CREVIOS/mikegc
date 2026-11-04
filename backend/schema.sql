@@ -10980,6 +10980,12 @@ alter table public.intake_messages add constraint intake_messages_kind_check
   check (kind in ('note', 'resolution', 'cancel_reason', 'question', 'reply', 'answer'));
 -- MikeGC's own notes, such as its preprocessing answer, have no author.
 alter table public.intake_messages add column if not exists automated boolean not null default false;
+-- What a note of MikeGC's is: 'preprocessing' for its preprocessing of the
+-- request, which the activity names as such; null for any other note.
+alter table public.intake_messages add column if not exists purpose text;
+alter table public.intake_messages drop constraint if exists intake_messages_purpose_check;
+alter table public.intake_messages add constraint intake_messages_purpose_check
+  check (purpose is null or (automated and kind = 'note' and purpose = 'preprocessing'));
 -- Who wrote a requester's reply: their name, email and channel user ID.
 alter table public.intake_messages add column if not exists external_author jsonb;
 alter table public.intake_messages drop constraint if exists intake_messages_external_author_check;
@@ -11153,11 +11159,11 @@ end $$;
 -- request stays open asks the caller to run preprocessing now.
 create or replace function public.intake_change_request(p_org uuid, p_actor uuid, p_command uuid, p_request uuid,
   p_version integer, p_action text, p_body text default null, p_assignee uuid default null,
-  p_send boolean default false, p_documents uuid[] default null)
+  p_send boolean default false, p_documents uuid[] default null, p_reply text default null)
 returns jsonb language plpgsql set search_path = public, pg_temp as $$
 declare r public.intake_requests; input jsonb; replay jsonb; next_state text; next_assignee uuid; mid uuid; open boolean;
   send boolean := coalesce(p_send, false); link uuid; oid uuid; docs jsonb := '[]'::jsonb; found_docs integer;
-  receipt jsonb; extra jsonb := '{}'::jsonb;
+  receipt jsonb; extra jsonb := '{}'::jsonb; reply_mid uuid;
 begin
   perform public.intake_lock_org(p_org, p_actor);
   if not public.intake_can_read(p_org, p_actor, p_request) then
@@ -11167,6 +11173,9 @@ begin
   -- Only a sent message adds to the input, so earlier receipts still replay.
   if send then
     input := input || jsonb_build_object('send', true, 'documents', to_jsonb(coalesce(p_documents, '{}'::uuid[])));
+  end if;
+  if p_reply is not null then
+    input := input || jsonb_build_object('reply', p_reply);
   end if;
   -- Resolve committed operations before checking state the original operation
   -- itself may have changed.
@@ -11181,10 +11190,13 @@ begin
     -- A question sent to the requester needs its text.
     or (send and p_action = 'wait' and p_body is null)
     or (p_documents is not null and (not send or p_action <> 'resolve' or cardinality(p_documents) > 10))
+    -- A resolution's reply is its own text, sent in place of the resolution.
+    or (p_reply is not null and (not send or p_action <> 'resolve'))
   then
     raise exception 'Invalid command' using errcode = '22023';
   end if;
-  if p_body is not null and (char_length(p_body) not between 1 and 20000 or btrim(p_body) = '') then
+  if (p_body is not null and (char_length(p_body) not between 1 and 20000 or btrim(p_body) = ''))
+    or (p_reply is not null and (char_length(p_reply) not between 1 and 20000 or btrim(p_reply) = '')) then
     raise exception 'Enter at most 20000 characters' using errcode = '22023';
   end if;
   select * into r from public.intake_requests where org_id = p_org and id = p_request for update;
@@ -11255,11 +11267,20 @@ begin
           when p_action = 'wait' and send then 'question' else 'note' end, p_body)
       returning id into mid;
   end if;
-  -- Nothing to send: a resolution with no text and no documents.
-  if send and (mid is not null or jsonb_array_length(docs) > 0) then
+  -- The reply a resolution sends: written apart from the internal resolution,
+  -- which stays in the app.
+  if p_reply is not null then
+    insert into public.intake_messages(org_id, request_id, author_id, kind, body)
+      values(p_org, p_request, p_actor, 'answer', p_reply)
+      returning id into reply_mid;
+  end if;
+  -- A question sends its text; a resolution only its reply and documents,
+  -- and nothing when it has neither.
+  if send and ((p_action = 'wait' and mid is not null)
+      or (p_action = 'resolve' and (reply_mid is not null or jsonb_array_length(docs) > 0))) then
     oid := gen_random_uuid();
     insert into public.intake_outbound(id, org_id, request_id, link_id, message_id, author_id, kind, documents)
-      values(oid, p_org, p_request, link, mid, p_actor,
+      values(oid, p_org, p_request, link, case when p_action = 'wait' then mid else reply_mid end, p_actor,
         case when p_action = 'wait' then 'question' else 'answer' end, docs);
   end if;
   if p_action = 'note' then
@@ -11306,10 +11327,10 @@ returns jsonb language sql set search_path = public, pg_temp as $$
 $$;
 
 create or replace function public.intake_resolve_request(p_org uuid, p_actor uuid, p_command uuid, p_request uuid, p_version integer,
-  p_body text, p_send boolean default false, p_documents uuid[] default null)
+  p_body text, p_send boolean default false, p_documents uuid[] default null, p_reply text default null)
 returns jsonb language sql set search_path = public, pg_temp as $$
   select public.intake_change_request(p_org, p_actor, p_command, p_request, p_version, 'resolve', p_body, null,
-    p_send, p_documents)
+    p_send, p_documents, p_reply)
 $$;
 
 create or replace function public.intake_cancel_request(p_org uuid, p_actor uuid, p_command uuid, p_request uuid, p_version integer, p_body text)
@@ -11419,6 +11440,9 @@ returns jsonb language sql stable set search_path = public, pg_temp as $$
     'created_at', r.created_at, 'updated_at', r.updated_at,
     'clarify_stage', r.clarify_stage,
     'new_reply', r.last_reply_at is not null and (r.reply_seen_at is null or r.reply_seen_at < r.last_reply_at),
+    'unread_replies', case when r.last_reply_at is null or r.reply_seen_at >= r.last_reply_at then 0 else
+      (select count(*) from public.intake_messages m where m.request_id = r.id and m.kind = 'reply'
+        and (r.reply_seen_at is null or m.created_at > r.reply_seen_at)) end,
     'capabilities', jsonb_build_object(
       'assign', r.state not in ('resolved', 'cancelled'),
       'cancel', r.state not in ('resolved', 'cancelled'),
@@ -11671,13 +11695,14 @@ begin
       order by e.id offset p_offset limit p_limit) x);
   end if;
   return (select coalesce(jsonb_agg(to_jsonb(x) order by x.created_at, x.id), '[]') from (
-    select m.id, m.kind, m.body, m.created_at, m.author_id, m.automated,
+    select m.id, m.kind, m.body, m.created_at, m.author_id, m.automated, m.purpose,
       case when m.automated then 'MikeGC'
         when m.kind = 'reply' and m.author_id is null then coalesce(nullif(btrim(m.external_author->>'name'), ''),
           nullif(btrim(m.external_author->>'email'), ''), 'The requester')
         else coalesce(u.display_name, u.email, 'Former member') end as author_name,
       m.external_author,
-      case when m.kind = 'question' then (select public.intake_delivery(o) from public.intake_outbound o
+      -- A question, or a resolution's reply, sent to the requester.
+      case when m.kind in ('question', 'answer') then (select public.intake_delivery(o) from public.intake_outbound o
         where o.message_id = m.id order by o.created_at limit 1) end as delivery
     from public.intake_messages m left join public.user_profiles u on u.user_id = m.author_id
     where m.org_id = p_org and m.request_id = p_request
@@ -11890,8 +11915,6 @@ $$;
 -- admins configure it; secrets are encrypted by the API (AES-256-GCM).
 create table if not exists public.intake_automation (
   org_id uuid primary key references public.organizations(id) on delete cascade,
-  -- Ask requesters for missing details, in up to two rounds of questions.
-  clarify_enabled boolean not null default true,
   email_enabled boolean not null default false,
   email_allowed_domains text[] not null default '{}' check (cardinality(email_allowed_domains) <= 50),
   -- The intake mailbox MikeGC reads and replies from: Microsoft 365 through
@@ -11918,6 +11941,12 @@ create table if not exists public.intake_automation (
   graph_client_state_hash text check (graph_client_state_hash is null or graph_client_state_hash ~ '^[0-9a-f]{64}$'),
   graph_delta_link text check (graph_delta_link is null or char_length(graph_delta_link) <= 4000),
   gmail_history_id text check (gmail_history_id is null or gmail_history_id ~ '^[0-9]{1,30}$'),
+  -- The organization's own Gmail service account: its JSON key, encrypted,
+  -- and the client ID an admin delegates to. Without one, the deployment's.
+  gmail_service_account_key_encrypted text,
+  gmail_service_account_key_iv text,
+  gmail_service_account_key_tag text,
+  gmail_service_account_id text check (gmail_service_account_id is null or char_length(gmail_service_account_id) between 1 and 320),
   slack_enabled boolean not null default false,
   -- Names the organization in its Slack events URL; requests are verified
   -- with the signing secret, so this identifier is not a credential.
@@ -12115,7 +12144,8 @@ end $$;
 
 -- A note MikeGC posts on a request it recorded, such as its preprocessing
 -- answer. The caller names the note, so posting it again adds nothing.
-create or replace function public.intake_note_automated(p_org uuid, p_request uuid, p_note uuid, p_body text)
+create or replace function public.intake_note_automated(p_org uuid, p_request uuid, p_note uuid, p_body text,
+  p_purpose text default null)
 returns boolean language plpgsql set search_path = public, pg_temp as $$
 begin
   perform 1 from public.organizations where id = p_org and kind in ('team', 'personal')
@@ -12123,12 +12153,13 @@ begin
   if not found or not exists(select 1 from public.intake_requests where org_id = p_org and id = p_request) then
     raise exception 'Request not found' using errcode = 'P0002';
   end if;
-  if p_note is null or p_body is null or char_length(p_body) not between 1 and 20000 or btrim(p_body) = '' then
+  if p_note is null or p_body is null or char_length(p_body) not between 1 and 20000 or btrim(p_body) = ''
+    or (p_purpose is not null and p_purpose <> 'preprocessing') then
     raise exception 'Invalid note' using errcode = '22023';
   end if;
   if exists(select 1 from public.intake_messages where id = p_note) then return false; end if;
-  insert into public.intake_messages(id, org_id, request_id, author_id, kind, body, automated)
-    values(p_note, p_org, p_request, null, 'note', p_body, true);
+  insert into public.intake_messages(id, org_id, request_id, author_id, kind, body, automated, purpose)
+    values(p_note, p_org, p_request, null, 'note', p_body, true, p_purpose);
   update public.intake_requests set updated_at = now() where id = p_request;
   return true;
 end $$;
@@ -12494,6 +12525,31 @@ returns jsonb language sql stable set search_path = public, pg_temp as $$
       left join public.document_versions v on v.id = (d->>'version_id')::uuid), '[]'::jsonb))
 $$;
 
+-- The assistant works on intake requests. A chat whose first message carries a
+-- request's pill names it, so each turn reads the request and its documents; and a request's
+-- members edit its documents (as tracked changes, in new versions) while it
+-- is open, from that chat or wherever documents are edited.
+
+alter table public.chats add column if not exists intake_request_id uuid
+  references public.intake_requests(id) on delete set null;
+create index if not exists chats_intake_request_idx
+  on public.chats(intake_request_id) where intake_request_id is not null;
+-- The request a message's pill named, shown with the message.
+alter table public.chat_messages add column if not exists intake jsonb;
+
+-- Whether a member may edit one of the organization's intake documents: it
+-- belongs to a request they can read that is neither resolved nor cancelled.
+create or replace function public.intake_document_editable(p_org uuid, p_actor uuid, p_document uuid)
+returns boolean language sql stable set search_path = public, pg_temp as $$
+  select exists(select 1 from public.documents d
+    join public.intake_request_documents l on l.document_id = d.id and l.org_id = p_org
+    join public.intake_requests r on r.id = l.request_id and r.org_id = p_org
+    where d.id = p_document and d.org_id = p_org and d.archived_at is null
+      and d.library_kind = 'intake_attachment'
+      and r.state not in ('resolved', 'cancelled')
+      and public.intake_can_read(p_org, p_actor, r.id))
+$$;
+
 -- Tables and functions are inaccessible to browser database roles, even if
 -- default Supabase grants change. The backend service role supplies the actor.
 do $$ declare obj record; begin
@@ -12699,5 +12755,11 @@ insert into public.schema_migrations (filename) values
   ('20261103_04_intake_replace_rules.sql'),
   ('20261103_05_intake_requester_loop.sql'),
   ('20261103_06_intake_mailbox.sql'),
-  ('20261103_07_intake_teams.sql')
+  ('20261103_07_intake_teams.sql'),
+  ('20261104_01_intake_gmail_service_account.sql'),
+  ('20261104_02_intake_resolution_reply.sql'),
+  ('20261104_03_intake_preprocessing_notes.sql'),
+  ('20261104_04_intake_assistant.sql'),
+  ('20261104_05_intake_unread_reply_count.sql'),
+  ('20261104_06_intake_always_clarify.sql')
 on conflict (filename) do nothing;

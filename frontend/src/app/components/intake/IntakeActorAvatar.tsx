@@ -31,15 +31,26 @@ function NeutralMark({ children }: { children: ReactNode }) {
 }
 
 /**
+ * MikeGC's own circle, the size of a small avatar: Mike azure, with its robot
+ * in silver. The colour is named directly because dark mode darkens the
+ * text-gray-200 class, which would sink the robot into the blue.
+ */
+function MikeGCCircle() {
+  return (
+    <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-blue-600 text-(--color-gray-200)">
+      <Bot className="h-2.5 w-2.5" strokeWidth={2.5} />
+    </span>
+  );
+}
+
+/**
  * MikeGC's mark where a person's avatar would be, such as beside "Created
  * by". The name beside it says who it is, so the mark is hidden.
  */
 export function IntakeMikeGCMark() {
   return (
     <span aria-hidden="true" data-actor="mikegc" className="flex shrink-0">
-      <NeutralMark>
-        <Bot className="h-2.5 w-2.5" />
-      </NeutralMark>
+      <MikeGCCircle />
     </span>
   );
 }
@@ -67,9 +78,7 @@ export function IntakeActorAvatar({
       className="flex h-6 w-6 shrink-0 items-center justify-center"
     >
       {mikegc ? (
-        <NeutralMark>
-          <Bot className="h-2.5 w-2.5" />
-        </NeutralMark>
+        <MikeGCCircle />
       ) : name ? (
         <UserAvatar size="sm" name={name} photo={photo} />
       ) : (

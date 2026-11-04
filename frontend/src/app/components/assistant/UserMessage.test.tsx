@@ -4,6 +4,17 @@ import { describe, expect, it, vi } from "vitest";
 import { UserMessage } from "./UserMessage";
 
 describe("UserMessage", () => {
+    it("shows the intake request it processed as a pill", () => {
+        render(
+            <UserMessage
+                content="Process this intake request."
+                intake={{ id: "request-1", title: "Review mutual NDA" }}
+            />,
+        );
+        expect(screen.getByText("Review mutual NDA")).toBeInTheDocument();
+        expect(screen.getByText(", intake request")).toBeInTheDocument();
+    });
+
     it("opens a document-backed file pill", async () => {
         const onFileClick = vi.fn();
         const user = userEvent.setup();

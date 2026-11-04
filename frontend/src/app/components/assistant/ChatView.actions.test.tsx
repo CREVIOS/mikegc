@@ -19,6 +19,7 @@ import {
     deleteDocument,
     getDocumentFile,
     getPlaybook,
+    getIntakeRequest,
     type Playbook,
 } from "@/app/lib/mikeApi";
 import { PageChromeContext } from "@/app/contexts/PageChromeContext";
@@ -35,6 +36,7 @@ const { push, renameChat, deleteChat, leaveChat, setCurrentChatId, setNewChatMes
 
 const addDoc = vi.hoisted(() => vi.fn());
 const attachPlaybook = vi.hoisted(() => vi.fn());
+const startIntake = vi.hoisted(() => vi.fn());
 
 const activeChat: Chat = {
     id: "chat-1",
@@ -88,7 +90,7 @@ vi.mock("./ChatInput", () => ({
         onDocumentClick?: (document: Document) => void;
         ref?: Ref<ChatInputHandle>;
     }) => {
-        useImperativeHandle(ref, () => ({ addDoc, addFiles: vi.fn(), addExcerpt: vi.fn(), startWorkflow: vi.fn(), startWorkflowDocumentSelection: vi.fn(), attachPlaybook }));
+        useImperativeHandle(ref, () => ({ addDoc, addFiles: vi.fn(), addExcerpt: vi.fn(), startWorkflow: vi.fn(), startWorkflowDocumentSelection: vi.fn(), attachPlaybook, startIntake }));
         return <button onClick={() => onDocumentClick?.(spreadsheet)}>
             Open Budget.xlsx
         </button>;
@@ -109,6 +111,7 @@ vi.mock("@/app/lib/mikeApi", async (importOriginal) => ({
     deleteDocument: vi.fn(),
     getDocumentFile: vi.fn(),
     getPlaybook: vi.fn(),
+    getIntakeRequest: vi.fn(),
     listQuickActions: vi.fn().mockResolvedValue([]),
 }));
 vi.mock("../shared/views/SpreadsheetView", () => ({
@@ -1081,6 +1084,33 @@ describe("ChatView opened from a playbook", () => {
         expect(getPlaybook).toHaveBeenCalledTimes(1);
         expect(getPlaybook).toHaveBeenCalledWith("pb-1");
         // Other parameters, such as an open side chat, are kept.
+        expect(window.location.search).toBe("?side=");
+    });
+});
+
+describe("ChatView opened from an intake request", () => {
+    afterEach(() => window.history.replaceState(null, "", "/"));
+
+    it("puts the request's pill and a suggested prompt in the composer, sends nothing, and drops it from the URL", async () => {
+        vi.mocked(getIntakeRequest).mockResolvedValue({
+            id: "request-1",
+            subject: "Review mutual NDA",
+        } as Awaited<ReturnType<typeof getIntakeRequest>>);
+        window.history.replaceState(
+            null,
+            "",
+            "/assistant?intake=request-1&intake_org=org-1&side=",
+        );
+        renderView();
+
+        await waitFor(() =>
+            expect(startIntake).toHaveBeenCalledWith(
+                { id: "request-1", title: "Review mutual NDA" },
+                expect.stringContaining("Process this intake request"),
+            ),
+        );
+        expect(getIntakeRequest).toHaveBeenCalledTimes(1);
+        expect(getIntakeRequest).toHaveBeenCalledWith("org-1", "request-1");
         expect(window.location.search).toBe("?side=");
     });
 });

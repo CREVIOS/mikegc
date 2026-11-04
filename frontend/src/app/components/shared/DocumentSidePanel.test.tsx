@@ -27,16 +27,22 @@ const doc: Document = {
 
 function renderPanel(
     onClose = vi.fn(),
-    options: { readOnly?: boolean; versions?: DocumentVersion[] } = {},
+    options: {
+        readOnly?: boolean;
+        showVersions?: boolean;
+        versions?: DocumentVersion[];
+        onLoadVersions?: (docId: string) => void;
+    } = {},
 ) {
     render(
         <DocumentSidePanel
             doc={doc}
             readOnly={options.readOnly ?? true}
+            showVersions={options.showVersions}
             versions={options.versions ?? []}
             versionsLoading={false}
             onClose={onClose}
-            onLoadVersions={vi.fn()}
+            onLoadVersions={options.onLoadVersions ?? vi.fn()}
             onSelectVersion={vi.fn()}
             onDownloadDocument={vi.fn()}
             onDownloadVersion={vi.fn()}
@@ -88,4 +94,47 @@ it("titles the document view and lists the latest version first", () => {
         "Download Version 2",
         "Download Version 1",
     ]);
+});
+
+it("lists versions in a read-only panel to view and download, without replacing or deleting them", () => {
+    const onLoadVersions = vi.fn();
+    renderPanel(vi.fn(), {
+        readOnly: true,
+        showVersions: true,
+        onLoadVersions,
+        versions: [
+            {
+                id: "v1",
+                version_number: 1,
+                source: "upload",
+                created_at: "2026-09-01T00:00:00Z",
+                filename: "agreement.docx",
+            },
+            {
+                id: "v2",
+                version_number: 2,
+                source: "upload",
+                created_at: "2026-09-02T00:00:00Z",
+                filename: "agreement-redline.docx",
+            },
+        ],
+    });
+    expect(onLoadVersions).toHaveBeenCalledWith("doc-1");
+    expect(screen.getByText("Versions")).toBeInTheDocument();
+    expect(
+        screen.getAllByRole("button", { name: /^Download Version/ }),
+    ).toHaveLength(2);
+    expect(
+        screen.queryByRole("button", { name: /^Replace Version/ }),
+    ).not.toBeInTheDocument();
+    expect(
+        screen.queryByRole("button", { name: /^Delete Version/ }),
+    ).not.toBeInTheDocument();
+});
+
+it("lists no versions in a read-only panel unless asked", () => {
+    const onLoadVersions = vi.fn();
+    renderPanel(vi.fn(), { readOnly: true, onLoadVersions });
+    expect(onLoadVersions).not.toHaveBeenCalled();
+    expect(screen.queryByText("Versions")).not.toBeInTheDocument();
 });

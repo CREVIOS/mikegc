@@ -124,6 +124,7 @@ interface ServerMessage {
     files?: MessageFile[] | null;
     workflow?: { id: string; title: string } | null;
     playbook?: { id: string; title: string } | null;
+    intake?: { id: string; title: string } | null;
     citations?: Citation[] | null;
     created_at: string;
 }
@@ -2843,6 +2844,7 @@ export async function getChat(chatId: string): Promise<ChatDetailOut> {
                 files: m.files ?? undefined,
                 workflow: m.workflow ?? undefined,
                 playbook: m.playbook ?? undefined,
+                intake: m.intake ?? undefined,
             };
         }
         const events = Array.isArray(m.content)
@@ -3034,6 +3036,8 @@ export async function streamChat(payload: {
         content: string;
         files?: MessageFile[];
         workflow?: { id: string; title: string };
+        /** An intake request's pill: it links the chat to the request. */
+        intake?: { id: string; title: string };
     }[];
     chat_id?: string;
     project_id?: string;

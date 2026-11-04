@@ -139,7 +139,6 @@ describe("who manages automated intake", () => {
     expect(result).toEqual({
       ok: true,
       data: {
-        clarify_enabled: true,
         email: {
           enabled: false,
           provider: null,
@@ -148,7 +147,7 @@ describe("who manages automated intake", () => {
           from_name: "Legal",
           graph: { tenant_id: null, client_id: null, secret_set: false },
           notification_url: `https://app.example.com/api/webhooks/intake/graph/${row().email_webhook_id}`,
-          gmail_client_id: null,
+          gmail: { client_id: null, key_set: false, deployment_key: false },
           status: { subscription_expires_at: null, last_read_at: null, error: null },
           needs_reconnect: false,
         },
@@ -457,9 +456,10 @@ describe("the intake mailbox", () => {
     expect(row().email_provider).toBeNull();
   });
   it("connects Google Workspace from the mailbox's current history, with the deployment's service account", async () => {
+    // Neither the organization nor the deployment has a service account.
     expect(
       await connectIntakeMailbox(memory.db, scope(owner), { provider: "gmail", mailbox: "intake@firm.test" }),
-    ).toMatchObject({ ok: false, kind: "unavailable", detail: expect.stringMatching(/INTAKE_GMAIL_SERVICE_ACCOUNT_KEY/) });
+    ).toMatchObject({ ok: false, kind: "validation", detail: "Paste the service account's JSON key." });
     process.env.INTAKE_GMAIL_SERVICE_ACCOUNT_KEY = JSON.stringify({
       client_email: "mikegc@project.iam.gserviceaccount.com",
       private_key: "-----BEGIN PRIVATE KEY-----",
@@ -473,10 +473,22 @@ describe("the intake mailbox", () => {
     );
     expect(result).toMatchObject({
       ok: true,
-      data: { email: { provider: "gmail", enabled: true, gmail_client_id: "1234567890" } },
+      data: {
+        email: {
+          provider: "gmail",
+          enabled: true,
+          gmail: { client_id: "1234567890", key_set: false, deployment_key: true },
+        },
+      },
     });
     expect(row().gmail_history_id).toBe("9001");
-    expect(mocks.gmailSendTest).toHaveBeenCalledWith("intake@firm.test", "olive@firm.test", "Legal");
+    expect(row().gmail_service_account_key_encrypted).toBeNull();
+    const deployment = expect.objectContaining({
+      address: "intake@firm.test",
+      account: expect.objectContaining({ client_email: "mikegc@project.iam.gserviceaccount.com" }),
+    });
+    expect(mocks.gmailProfile).toHaveBeenCalledWith(deployment);
+    expect(mocks.gmailSendTest).toHaveBeenCalledWith(deployment, "olive@firm.test", "Legal");
     // A test email on request, then disconnecting stops email.
     expect(await sendIntakeMailboxTest(memory.db, { ...scope(owner), userEmail: "olive@firm.test" })).toEqual({
       ok: true,
@@ -551,6 +563,59 @@ describe("the intake mailbox", () => {
     expect(result).toMatchObject({ ok: false, kind: "validation", detail: "Connect the intake mailbox before turning email on." });
     expect(row().email_enabled).toBe(false);
   });
+  it("connects Gmail with the organization's own service account, kept encrypted and never shown", async () => {
+    const key = {
+      type: "service_account",
+      client_email: "intake@firm-project.iam.gserviceaccount.com",
+      private_key: "-----BEGIN PRIVATE KEY-----\nMIIEv\n-----END PRIVATE KEY-----\n",
+      client_id: "987654321",
+    };
+    // What isn't a service account's key is refused before Google is asked.
+    expect(
+      await connectIntakeMailbox(memory.db, scope(owner), {
+        provider: "gmail",
+        mailbox: "intake@firm.test",
+        service_account_key: '{"client_email": "x"}',
+      }),
+    ).toMatchObject({ ok: false, kind: "validation", detail: expect.stringMatching(/JSON key/) });
+    expect(mocks.gmailProfile).not.toHaveBeenCalled();
+
+    mocks.gmailProfile.mockResolvedValue({ emailAddress: "intake@firm.test", historyId: "42" });
+    const result = await connectIntakeMailbox(memory.db, scope(owner), {
+      provider: "gmail",
+      mailbox: "intake@firm.test",
+      service_account_key: JSON.stringify(key, null, 2),
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        email: {
+          provider: "gmail",
+          gmail: { client_id: "987654321", key_set: true, deployment_key: false },
+        },
+      },
+    });
+    // Encrypted at rest, and never sent back.
+    expect(row().gmail_service_account_key_encrypted).toEqual(expect.any(String));
+    expect(row().gmail_service_account_key_encrypted).not.toContain("PRIVATE KEY");
+    expect(row().gmail_service_account_id).toBe("987654321");
+    expect(JSON.stringify(result)).not.toContain("PRIVATE KEY");
+    const own = expect.objectContaining({
+      address: "intake@firm.test",
+      account: expect.objectContaining({ client_email: key.client_email }),
+    });
+    expect(mocks.gmailProfile).toHaveBeenLastCalledWith(own);
+
+    // Reconnecting without a key keeps the saved one, even with a deployment key.
+    process.env.INTAKE_GMAIL_SERVICE_ACCOUNT_KEY = JSON.stringify({
+      client_email: "mikegc@project.iam.gserviceaccount.com",
+      private_key: "-----BEGIN PRIVATE KEY-----",
+    });
+    expect(
+      await connectIntakeMailbox(memory.db, scope(owner), { provider: "gmail", mailbox: "intake@firm.test" }),
+    ).toMatchObject({ ok: true, data: { email: { gmail: { client_id: "987654321", key_set: true } } } });
+    expect(mocks.gmailProfile).toHaveBeenLastCalledWith(own);
+  });
   it("tells an organization that used Postmark to connect its mailbox", async () => {
     memory.tables.intake_automation = [{ ...row(), org_id: org }];
     await getIntakeAutomation(memory.db, scope(owner));
@@ -610,10 +675,6 @@ describe("Teams", () => {
 });
 
 describe("asking requesters", () => {
-  it("is on by default and can be switched off", async () => {
-    const off = await updateIntakeAutomation(memory.db, scope(owner), { clarify_enabled: false });
-    expect(off.ok && off.data.clarify_enabled).toBe(false);
-  });
   it("names the Slack scopes the requester loop still needs", async () => {
     vi.stubGlobal(
       "fetch",

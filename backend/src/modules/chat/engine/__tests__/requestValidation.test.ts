@@ -42,6 +42,32 @@ describe("chat request validation", () => {
       detail: "messages[0].playbook.title must be a non-empty string",
     });
   });
+  it("keeps the intake request a user is processing, and refuses a malformed one", () => {
+    expect(
+      parseChatMessages([
+        {
+          role: "user",
+          content: "Process this intake request",
+          intake: { id: "request-1", title: "Review mutual NDA" },
+        },
+      ]),
+    ).toEqual({
+      ok: true,
+      value: [
+        {
+          role: "user",
+          content: "Process this intake request",
+          intake: { id: "request-1", title: "Review mutual NDA" },
+        },
+      ],
+    });
+    expect(
+      parseChatMessages([{ role: "user", content: "x", intake: { title: "NDA" } }]),
+    ).toEqual({
+      ok: false,
+      detail: "messages[0].intake.id must be a non-empty string",
+    });
+  });
   it("normalizes valid messages and their nested metadata", () => {
     expect(
             parseChatMessages([

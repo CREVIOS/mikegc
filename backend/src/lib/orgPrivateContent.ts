@@ -27,6 +27,25 @@ export async function hasOrgPrivateContentAccess(
   return kind === "document" ? data === true : data === "viewer";
 }
 
+/**
+ * Whether a member may edit one of the organization's intake documents: it
+ * belongs to an open request they can read. Others reach it read-only.
+ */
+export async function canEditIntakeDocument(
+  db: Db,
+  orgId: string | null | undefined,
+  userId: string,
+  documentId: string | null | undefined,
+): Promise<boolean> {
+  if (!orgId || !documentId) return false;
+  const { data, error } = await db.rpc("intake_document_editable", {
+    p_org: orgId,
+    p_actor: userId,
+    p_document: documentId,
+  });
+  return !error && data === true;
+}
+
 /** Directory/export lists use the same live verdict as single-item reads. */
 export async function listOrgPrivateContentAccess(
   db: Db,

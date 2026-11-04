@@ -6,9 +6,8 @@ import { ModalTextarea } from "@/app/components/modals/ModalTextarea";
 import { FieldLabel } from "@/app/components/ui/form-field";
 
 /**
- * Collects the resolution or cancel reason a closing command carries. A
- * cancellation needs its reason; a resolution's text is optional, and the
- * resolve dialog adds what it sends to the requester below the text.
+ * Collects the reason a cancellation carries; it can't be sent without one.
+ * Resolving has its own dialog, which asks first whether to reply.
  */
 export function IntakeReasonModal({
   title,
@@ -24,12 +23,10 @@ export function IntakeReasonModal({
   onClose,
   status,
   secondaryAction,
-  optional = false,
-  children,
 }: {
   title: string;
   label: string;
-  hint: ReactNode;
+  hint?: ReactNode;
   confirmLabel: string;
   confirmVariant?: "primary" | "danger";
   value: string;
@@ -41,16 +38,14 @@ export function IntakeReasonModal({
   onClose: () => void;
   status?: ReactNode;
   secondaryAction?: ModalAction;
-  /** The text may be left empty, as a resolution's may. */
-  optional?: boolean;
-  /** More of the form, after the text and its hint. */
-  children?: ReactNode;
 }) {
   const id = useId();
   return (
     <Modal
       open
       size="sm"
+      // As tall as the form, not the default modal height.
+      className="h-auto max-h-[calc(100vh-2rem)]"
       onClose={() => !locked && onClose()}
       breadcrumbs={["Intake", title]}
       footerStatus={status}
@@ -60,7 +55,7 @@ export function IntakeReasonModal({
         variant: confirmVariant,
         icon: busy ? <Loader2 className="h-4 w-4 animate-spin" /> : undefined,
         onClick: onConfirm,
-        disabled: locked || (!optional && !value.trim()),
+        disabled: locked || !value.trim(),
       }}
       cancelAction={{ label: "Back", onClick: onClose, disabled: locked }}
     >
@@ -68,7 +63,7 @@ export function IntakeReasonModal({
         className="space-y-2 pb-4"
         onSubmit={(event) => {
           event.preventDefault();
-          if (!locked && (optional || value.trim())) onConfirm();
+          if (!locked && value.trim()) onConfirm();
         }}
       >
         <FieldLabel htmlFor={id}>{label}</FieldLabel>
@@ -81,8 +76,7 @@ export function IntakeReasonModal({
           autoFocus
           onChange={(event) => onChange(event.target.value)}
         />
-        <p className="text-xs text-gray-500">{hint}</p>
-        {children}
+        {hint && <p className="text-xs text-gray-500">{hint}</p>}
       </form>
     </Modal>
   );

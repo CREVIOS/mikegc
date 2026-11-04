@@ -66,8 +66,8 @@ const MESSAGE_ACTIONS: Record<IntakeMessage["kind"], string> = {
   // A member's question, or MikeGC's own, sent to the requester.
   question: "asked the requester",
   reply: "replied",
-  // Legacy answer messages read as comments.
-  answer: "commented",
+  // A resolution's reply to the requester, which reads in Messages.
+  answer: "replied to the requester",
 };
 
 /**
@@ -78,6 +78,8 @@ export function describeIntakeMessage(
   message: IntakeMessage,
 ): IntakeActivityLine {
   const channel = message.external_author?.source;
+  if (message.purpose === "preprocessing")
+    return { actor: message.author_name, action: "preprocessed this request" };
   if (message.kind === "reply" && channel)
     return {
       actor: message.author_name,

@@ -175,7 +175,12 @@ describe("AI preprocessing", () => {
       doc: { id: nda },
       edits: [{ find: "five years", replace: "two years", reason: "Standard term." }],
     });
-    expect(note()).toMatchObject({ id: noteId, automated: true, author_id: null });
+    expect(note()).toMatchObject({
+      id: noteId,
+      automated: true,
+      author_id: null,
+      purpose: "preprocessing",
+    });
     expect(note()!.body).toBe(
       "AI preprocessing, following the workflow “NDA first pass”\n\n" +
         "The NDA runs five years; the usual is two.\n\n" +
@@ -423,7 +428,7 @@ describe("checking what preprocessing needs first", () => {
     ]);
     expect(note()!.body).toContain("Fine.");
   });
-  it("doesn't ask without a thread, with asking off, or once a lawyer has taken over", async () => {
+  it("doesn't ask without a thread, or once a lawyer has taken over", async () => {
     readiness({ ready: false, questions: ["Which entity is signing?"] });
     await run();
     expect(mocks.completeText).toHaveBeenCalledTimes(1);

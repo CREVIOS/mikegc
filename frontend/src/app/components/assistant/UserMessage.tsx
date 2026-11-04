@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { ClipboardCheck, Waypoints } from "lucide-react";
+import { ClipboardCheck, Inbox, Waypoints } from "lucide-react";
 import { playbookPath } from "../playbooks/PlaybookTable";
 import { FileTypeIcon } from "../shared/FileTypeIcon";
 import type { MessageFile } from "../shared/types";
@@ -20,6 +20,8 @@ interface Props {
     workflow?: { id: string; title: string };
     /** The playbook this message ran; its pill links to the playbook. */
     playbook?: { id: string; title: string };
+    /** The intake request this message processed, shown like a document. */
+    intake?: { id: string; title: string };
     onFileClick?: (file: MessageFile) => void;
     /** Reveals the workflow this message ran, in the workflow modal. */
     onWorkflowClick?: (workflow: { id: string; title: string }) => void;
@@ -30,6 +32,7 @@ export function UserMessage({
     files,
     workflow,
     playbook,
+    intake,
     onFileClick,
     onWorkflowClick,
 }: Props) {
@@ -49,7 +52,11 @@ export function UserMessage({
                         {body}
                     </p>
                 )}
-                {(workflow || playbook || hasFiles || excerpts.length > 0) && (
+                {(workflow ||
+                    playbook ||
+                    intake ||
+                    hasFiles ||
+                    excerpts.length > 0) && (
                     <div
                         className={`flex flex-wrap justify-end gap-1.5 ${body ? "mt-3" : ""}`}
                     >
@@ -95,6 +102,21 @@ export function UserMessage({
                                     {playbook.title}
                                 </span>
                             </Link>
+                        )}
+                        {intake && (
+                            <div
+                                title={intake.title}
+                                className={`inline-flex items-center gap-1 rounded-[10px] py-0.5 pl-2 pr-2.5 text-xs text-gray-800 ${LIQUID_GLASS_FLAT_CLASS}`}
+                            >
+                                <Inbox
+                                    aria-hidden="true"
+                                    className="h-2.5 w-2.5 shrink-0"
+                                />
+                                <span className="max-w-[140px] truncate">
+                                    {intake.title}
+                                </span>
+                                <span className="sr-only">, intake request</span>
+                            </div>
                         )}
                         {hasFiles &&
                             files.map((f, i) => {

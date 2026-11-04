@@ -1314,11 +1314,13 @@ export async function buildDocContext(
   chatId?: string | null,
   messageTable = "chat_messages",
   userEmail?: string | null,
+  /** Documents the chat's container puts in scope, such as its intake request's. */
+  extraDocumentIds: string[] = [],
 ): Promise<{ docIndex: DocIndex; docStore: DocStore }> {
   const docIndex: DocIndex = {};
   const docStore: DocStore = new Map();
 
-  const documentIds = new Set<string>();
+  const documentIds = new Set<string>(extraDocumentIds);
   for (const m of messages) {
     for (const f of m.files ?? []) {
       if (f.document_id) documentIds.add(f.document_id);

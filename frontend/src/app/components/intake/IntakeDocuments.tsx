@@ -7,7 +7,9 @@ import type { Document } from "@/app/components/shared/types";
 import {
   getDocument,
   getDocumentUrl,
+  listDocumentVersions,
   uploadIntakeDocuments,
+  type DocumentVersion,
 } from "@/app/lib/mikeApi";
 import { notifyError, notifyPartialFailure } from "@/app/lib/userFacingError";
 import {
@@ -109,12 +111,40 @@ export function useIntakeDocumentUpload(
  */
 export function useIntakeDocumentViewer() {
   const [viewing, setViewing] = useState<Document | null>(null);
+  // Its versions, as the library lists them, and the one being viewed.
+  const [history, setHistory] = useState<{
+    documentId: string;
+    currentVersionId: string | null;
+    versions: DocumentVersion[];
+  } | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [versionId, setVersionId] = useState<string | null>(null);
 
   async function open(documentId: string) {
     try {
+      setVersionId(null);
       setViewing(await getDocument(documentId));
     } catch (error) {
       notifyError(error, { action: "open the document" });
+    }
+  }
+
+  async function loadVersions(documentId: string) {
+    setHistoryLoading(true);
+    try {
+      const res = await listDocumentVersions(documentId);
+      setHistory({
+        documentId,
+        currentVersionId: res.current_version_id,
+        versions: res.versions,
+      });
+    } catch (error) {
+      notifyError(error, {
+        action: "load the version history",
+        onRetry: () => void loadVersions(documentId),
+      });
+    } finally {
+      setHistoryLoading(false);
     }
   }
 
@@ -134,12 +164,22 @@ export function useIntakeDocumentViewer() {
     <DocumentSidePanel
       doc={viewing}
       readOnly
-      versions={[]}
-      versionsLoading={false}
+      showVersions
+      versionId={versionId}
+      currentVersionId={
+        history?.documentId === viewing?.id ? history?.currentVersionId : null
+      }
+      versions={
+        history && history.documentId === viewing?.id ? history.versions : []
+      }
+      versionsLoading={historyLoading}
       canDelete={false}
-      onClose={() => setViewing(null)}
-      onLoadVersions={noop}
-      onSelectVersion={noop}
+      onClose={() => {
+        setViewing(null);
+        setVersionId(null);
+      }}
+      onLoadVersions={(documentId) => loadVersions(documentId)}
+      onSelectVersion={(id) => setVersionId(id)}
       onDownloadDocument={(documentId) => download(documentId)}
       onDownloadVersion={(documentId, versionId) =>
         download(documentId, versionId)

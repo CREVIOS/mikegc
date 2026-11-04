@@ -149,11 +149,11 @@ function parseMessageFiles(
   return { ok: true, value: files };
 }
 
-/** A picked workflow or playbook: `{ id, title }`. */
+/** A picked workflow, playbook or intake request: `{ id, title }`. */
 function parseMessageWorkflow(
   value: unknown,
   messageIndex: number,
-  field: "workflow" | "playbook" = "workflow",
+  field: "workflow" | "playbook" | "intake" = "workflow",
 ): ValidationResult<NonNullable<ChatMessage["workflow"]>> {
   if (!isRecord(value)) {
     return {
@@ -229,12 +229,20 @@ export function parseChatMessages(
       playbook = parsedPlaybook.value;
     }
 
+    let intake: ChatMessage["intake"];
+    if (message.intake !== undefined) {
+      const parsedIntake = parseMessageWorkflow(message.intake, index, "intake");
+      if (!parsedIntake.ok) return parsedIntake;
+      intake = parsedIntake.value;
+    }
+
     messages.push({
       role,
       content: message.content,
       ...(files ? { files } : {}),
       ...(workflow ? { workflow } : {}),
       ...(playbook ? { playbook } : {}),
+      ...(intake ? { intake } : {}),
     });
   }
 

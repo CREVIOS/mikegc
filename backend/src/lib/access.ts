@@ -1,6 +1,7 @@
 import type { Db } from "./supabase";
 import { chunkArray } from "./arrays";
 import {
+    canEditIntakeDocument,
     hasOrgPrivateContentAccess,
     listOrgPrivateContentAccess,
 } from "./orgPrivateContent";
@@ -688,9 +689,17 @@ export async function ensureDocAccess(
     // unshared files. In a team organization the uploader must still be a member.
     const isCreator = !!doc.user_id && doc.user_id === userId;
     if (!isCreator) {
-        return await hasOrgPrivateContentAccess(db, doc.org_id, userId, "document", doc.id)
-            ? resourceAccessFor("viewer", null, false)
-            : { ok: false };
+        if (!(await hasOrgPrivateContentAccess(db, doc.org_id, userId, "document", doc.id)))
+            return { ok: false };
+        // An open intake request's members edit its documents; anything
+        // else reached this way is read-only.
+        return resourceAccessFor(
+            (await canEditIntakeDocument(db, doc.org_id, userId, doc.id))
+                ? "editor"
+                : "viewer",
+            null,
+            false,
+        );
     }
     const teamOrgId = await teamOrgIdOf(db, doc.org_id);
     if (!teamOrgId) return resourceAccessFor("owner", null, true);

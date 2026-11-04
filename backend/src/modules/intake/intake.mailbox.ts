@@ -13,7 +13,16 @@ import {
   routeThreadMessage,
   type ChannelLink,
 } from "./intake.channels";
-import { GmailApiError, gmailHistory, gmailListSince, gmailMarkRecorded, gmailProfile, gmailReadMessage } from "./intake.gmail";
+import {
+  GmailApiError,
+  gmailHistory,
+  gmailListSince,
+  gmailMailbox,
+  gmailMarkRecorded,
+  gmailProfile,
+  gmailReadMessage,
+  noGmailAccount,
+} from "./intake.gmail";
 import {
   MAX_MESSAGE_CHARS,
   cleanText,
@@ -259,7 +268,10 @@ async function markRecorded(settings: AutomationRow, mail: ReadMail) {
       }
     })();
     if (credentials) await graphMarkRecorded(credentials, mail.providerId);
-  } else if (settings.email_mailbox) await gmailMarkRecorded(settings.email_mailbox, mail.providerId);
+  } else {
+    const mailbox = gmailMailbox(settings);
+    if (mailbox) await gmailMarkRecorded(mailbox, mail.providerId);
+  }
 }
 
 async function saveMailbox(db: Db, orgId: string, patch: Record<string, unknown>) {
@@ -341,8 +353,9 @@ async function pollGraph(db: Db, settings: AutomationRow, renew: boolean) {
 
 /** Read what arrived in a Gmail mailbox since the stored history ID. */
 async function pollGmail(db: Db, settings: AutomationRow) {
-  const mailbox = settings.email_mailbox;
-  if (!mailbox) return;
+  if (!settings.email_mailbox) return;
+  const mailbox = gmailMailbox(settings);
+  if (!mailbox) throw noGmailAccount();
   let start = settings.gmail_history_id;
   if (!start) {
     start = (await gmailProfile(mailbox)).historyId;

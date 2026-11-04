@@ -86,8 +86,13 @@ import { can, roleFrom } from "@/app/lib/permissions";
 import { AssistantChatHistoryMenu } from "./AssistantChatHistoryMenu";
 import { cn } from "@/app/lib/utils";
 import { notifyError, userFacingApiError } from "@/app/lib/userFacingError";
-import { getPlaybook } from "@/app/lib/mikeApi";
+import { getIntakeRequest, getPlaybook } from "@/app/lib/mikeApi";
 import { LINKED_PLAYBOOK_PARAM } from "@/app/lib/assistantPlaybookLink";
+import {
+    INTAKE_PROCESS_PROMPT,
+    LINKED_INTAKE_ORG_PARAM,
+    LINKED_INTAKE_PARAM,
+} from "@/app/lib/assistantIntakeLink";
 
 interface Props {
     chatId?: string | null;
@@ -997,6 +1002,38 @@ export function AssistantChatColumn({
         );
     }, [paneId, canWrite, chatLoading]);
 
+    // "Process in Assistant" on an intake request opens a new chat with
+    // `?intake=`: its pill and a suggested prompt wait in the composer, and
+    // nothing is sent until the user sends it. Then drop it from the URL.
+    const linkedIntakeHandled = useRef(false);
+    useEffect(() => {
+        const input = chatInputRef.current;
+        if (paneId !== "primary" || linkedIntakeHandled.current) return;
+        if (!input || !canWrite) return;
+        const params = new URLSearchParams(window.location.search);
+        const requestId = params.get(LINKED_INTAKE_PARAM);
+        const org = params.get(LINKED_INTAKE_ORG_PARAM);
+        if (!requestId || !org) return;
+        linkedIntakeHandled.current = true;
+        params.delete(LINKED_INTAKE_PARAM);
+        params.delete(LINKED_INTAKE_ORG_PARAM);
+        const search = params.toString();
+        window.history.replaceState(
+            null,
+            "",
+            `${window.location.pathname}${search ? `?${search}` : ""}${window.location.hash}`,
+        );
+        getIntakeRequest(org, requestId).then(
+            (request) =>
+                input.startIntake(
+                    { id: request.id, title: request.subject },
+                    INTAKE_PROCESS_PROMPT,
+                ),
+            (error) =>
+                notifyError(error, { action: "attach the intake request" }),
+        );
+    }, [paneId, canWrite, chatLoading]);
+
     // The panel keeps what it is handed, so hand it a stable way to reach
     // the latest handler: registering on every new handler would re-render
     // the panel, and with it this column, without end.
@@ -1121,6 +1158,7 @@ export function AssistantChatColumn({
                                                         files={msg.files}
                                                         workflow={msg.workflow}
                                                         playbook={msg.playbook}
+                                                        intake={msg.intake}
                                                         onWorkflowClick={(wf) => {
                                                             setWorkflowModalInitialId(
                                                                 wf.id,

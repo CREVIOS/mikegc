@@ -78,6 +78,11 @@ export type ChatMessage = {
   /** The playbook the user picked to run, shown as a pill. */
   playbook?: { id: string; title: string };
   /**
+   * The intake request the user is processing, shown as a pill; sending it
+   * links the chat to the request, which every turn then reads.
+   */
+  intake?: { id: string; title: string };
+  /**
    * Stored reasoning for an assistant turn, attached server-side by
    * attachPriorReasoning. Never accepted from the request body.
    */

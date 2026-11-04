@@ -7,7 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import { useRouter } from "next/navigation";
-import { Link2, MoreHorizontal, RotateCcw } from "lucide-react";
+import { Link2, MessageSquare, MoreHorizontal, RotateCcw } from "lucide-react";
 import { cn } from "@/app/lib/utils";
 import { useIntakeMemory, useIntakeDraft } from "./useIntakeMemory";
 import type {
@@ -27,6 +27,7 @@ import {
   useWorkspace,
 } from "@/app/contexts/WorkspaceContext";
 import { useItemWorkspace } from "@/app/hooks/useItemWorkspace";
+import { assistantPathWithIntake } from "@/app/lib/assistantIntakeLink";
 import {
   commandIntakeRequest,
   copyIntakeDocuments,
@@ -80,29 +81,27 @@ import {
   IntakeNoteForm,
   NOTE_TITLE_CLASS,
   NOTE_TITLE_ICON_CLASS,
-  type IntakeNoteMode,
 } from "./IntakeNoteForm";
 import { IntakeReasonModal } from "./IntakeReasonModal";
 import {
   IntakeResolveDialog,
   defaultIntakeReplyDocuments,
 } from "./IntakeResolveDialog";
-import { IntakeDeliveryStatus } from "./IntakeDeliveryStatus";
 import {
-  intakeAudience,
-  intakeDocumentsUnavailable,
-} from "./intakeConversation";
+  IntakeMessages,
+  IntakeMessagesSkeleton,
+  isIntakeRequesterMessage,
+  type IntakeSentResolution,
+} from "./IntakeMessages";
+import { parseIntakeDescription } from "./intakeDescription";
+import { intakeDocumentsUnavailable } from "./intakeConversation";
 import {
   IntakeDescription,
   IntakeDetailsPanel,
   IntakeSubjectInput,
 } from "./IntakeDetailsPanel";
 import { formatIntakeDateTime, intakeDeleteMessage } from "./intakeLabels";
-import {
-  describeIntakeEvent,
-  describeIntakeMessage,
-  intakeOutgoingName,
-} from "./intakeActivity";
+import { describeIntakeEvent, describeIntakeMessage } from "./intakeActivity";
 import { INTAKE_REQUESTS_PATH } from "./intakeQuery";
 import {
   IntakeDocumentPicker,
@@ -158,7 +157,10 @@ function settledDeliveryAnnouncement(
 ): string {
   let said = "";
   for (const delivery of deliveries) {
-    if (seen.get(delivery.outbound_id) === "pending" && delivery.status !== "pending")
+    if (
+      seen.get(delivery.outbound_id) === "pending" &&
+      delivery.status !== "pending"
+    )
       said =
         delivery.status === "sent"
           ? "Message to the requester sent."
@@ -217,6 +219,8 @@ export function Detail({
   const memory = useIntakeMemory(orgId, requestId);
   const [request, setRequest] = useState<IntakeRequest | null>(null);
   const [messages, setMessages] = useState<IntakeMessage[]>([]);
+  // Messages starts collapsed; sending the requester something opens it.
+  const [messagesOpen, setMessagesOpen] = useState(false);
   const [events, setEvents] = useState<IntakeEvent[]>([]);
   const [documents, setDocuments] = useState<IntakeDocument[]>([]);
   const [members, setMembers] = useState<IntakeMember[]>([]);
@@ -249,11 +253,11 @@ export function Detail({
     "consumes",
     null,
   );
-  // An internal note, or a message to the requester in the request's thread.
-  const [noteMode, setNoteMode] = useIntakeDraft<IntakeNoteMode>(
+  // A message to the requester, written in Messages and kept like the note.
+  const [requesterMessage, setRequesterMessage] = useIntakeDraft(
     memory,
-    "noteMode",
-    "note",
+    "requesterMessage",
+    "",
   );
   // The resolve dialog's reply: whether it goes, and its documents in the
   // order they were ticked.
@@ -261,6 +265,13 @@ export function Detail({
     memory,
     "resolveReply",
     true,
+  );
+  // The reply's message, written apart from the internal resolution: the
+  // comment fills it when replying is switched on, and can be changed.
+  const [resolveMessage, setResolveMessage] = useIntakeDraft(
+    memory,
+    "resolveMessage",
+    "",
   );
   const [resolveDocuments, setResolveDocuments] = useIntakeDraft<string[]>(
     memory,
@@ -404,9 +415,10 @@ export function Detail({
       if (consumes === "note" && closing === "resolve") {
         setClosing(null);
         setResolveDocuments([]);
-        setResolveReply(true);
+        setResolveReply(false);
+        setResolveMessage("");
       }
-      if (consumes === "message") setNote("");
+      if (consumes === "message") setRequesterMessage("");
       if (consumes === "reason") {
         setReason("");
         setClosing(null);
@@ -436,6 +448,8 @@ export function Detail({
   );
   useIntakeDraftWarning(
     !!note ||
+      !!requesterMessage ||
+      !!resolveMessage ||
       noteFiles.length > 0 ||
       notePicked.length > 0 ||
       !!reason ||
@@ -526,16 +540,15 @@ export function Detail({
   });
   const caps = request?.capabilities;
   const conversation = request?.conversation ?? null;
-  // The note form can message the requester while the request has a thread.
-  const audience =
-    conversation && caps?.send_to_requester
-      ? intakeAudience(conversation)
-      : null;
+  // Messages can write to the requester while the request has a thread.
+  const canMessage = !!conversation && !!caps?.send_to_requester;
   /** Resolve: with a thread, the dialog that also replies; else at once. */
   function startResolving() {
     if (!request) return;
     if (conversation) {
-      setResolveReply(true);
+      // It asks first whether to reply, and never assumes so: the reply is
+      // written apart from the comment, which stays the internal resolution.
+      setResolveReply(false);
       setResolveDocuments(defaultIntakeReplyDocuments(documents));
       setClosing("resolve");
     } else
@@ -553,12 +566,17 @@ export function Detail({
       conversation &&
       !intakeDocumentsUnavailable(conversation) &&
       resolveDocuments.length > 0;
+    if (resolveReply) setMessagesOpen(true);
     command(
       "resolve",
       "resolve the request",
       {
+        // The comment is the internal resolution; only the reply is sent.
         ...(note.trim() ? { body: note } : {}),
         ...(resolveReply ? { send_to_requester: true } : {}),
+        ...(resolveReply && resolveMessage.trim()
+          ? { reply: resolveMessage }
+          : {}),
         ...(sendDocuments ? { documents: resolveDocuments } : {}),
       },
       "note",
@@ -608,15 +626,32 @@ export function Detail({
     request?.state === "resolved" || request?.state === "cancelled";
   // A resolution is saved with its "resolved" change in one transaction, so
   // they share a time: the resolution reads under that change, not alone.
+  // Its reply to the requester is a message of its own, in Messages; a
+  // resolution sent as the reply itself, from before they were written
+  // apart, reads in Messages instead.
   const resolutions = new Map<number, IntakeMessage>();
+  const sentResolutions: IntakeSentResolution[] = [];
   for (const event of events) {
     if (event.kind !== "resolve") continue;
-    const text = messages.find(
-      (m) => m.kind === "resolution" && m.created_at === event.created_at,
-    );
-    if (text) resolutions.set(event.id, text);
+    const at = (kind: IntakeMessage["kind"]) =>
+      messages.find(
+        (m) => m.kind === kind && m.created_at === event.created_at,
+      );
+    const text = at("resolution");
+    if (!text) continue;
+    if (event.delivery && !at("answer"))
+      sentResolutions.push({ message: text, delivery: event.delivery });
+    else resolutions.set(event.id, text);
   }
-  const shown = new Set([...resolutions.values()].map((m) => m.id));
+  // Activity is the work in the app; the conversation with the requester
+  // has a section of its own.
+  const requesterMessages = messages.filter(isIntakeRequesterMessage);
+  const original = request ? parseIntakeDescription(request.description) : null;
+  const shown = new Set([
+    ...[...resolutions.values()].map((m) => m.id),
+    ...sentResolutions.map((r) => r.message.id),
+    ...requesterMessages.map((m) => m.id),
+  ]);
   // Notes and changes read as one story, oldest first.
   const timeline = [
     ...events.map((event) => ({
@@ -665,49 +700,66 @@ export function Detail({
     <div className="flex h-full min-h-0 flex-col">
       <PageHeader
         shrink
-        actions={
+        // Processing in the Assistant is a group of its own, apart from the
+        // request's link and its other actions.
+        actionGroups={
           request
             ? [
-                {
-                  title: "Copy link",
-                  iconOnly: true,
-                  icon: <Link2 aria-hidden="true" className="h-4 w-4" />,
-                  onClick: () => {
-                    const link = new URL(
-                      `/intake/${requestId}?org=${orgId}`,
-                      window.location.origin,
-                    ).href;
-                    navigator.clipboard.writeText(link).then(
-                      () => notifySuccess("Link copied"),
-                      (e) => notifyError(e, { action: "copy the link" }),
-                    );
-                  },
-                },
-                caps?.delete &&
-                  !operation.locked && {
-                    type: "custom",
-                    render: (
-                      // A round trigger to match the other header buttons.
-                      <Dropdown>
-                        <DropdownTrigger asChild>
-                          <HeaderButtonUI iconOnly aria-label="More actions">
-                            <MoreHorizontal
-                              aria-hidden="true"
-                              className="h-4 w-4"
-                            />
-                          </HeaderButtonUI>
-                        </DropdownTrigger>
-                        <DropdownContent align="end">
-                          <DropdownItem
-                            variant="destructive"
-                            onSelect={() => setConfirmingDelete(true)}
-                          >
-                            Delete request
-                          </DropdownItem>
-                        </DropdownContent>
-                      </Dropdown>
+                [
+                  {
+                    title: "Process this request in a new Assistant chat",
+                    label: "Process in Assistant",
+                    icon: (
+                      <MessageSquare aria-hidden="true" className="h-4 w-4" />
                     ),
+                    // A new chat, with the request's pill and a suggested
+                    // prompt in its composer; the user sends it.
+                    onClick: () =>
+                      router.push(assistantPathWithIntake(requestId, orgId)),
                   },
+                ],
+                [
+                  {
+                    title: "Copy link",
+                    iconOnly: true,
+                    icon: <Link2 aria-hidden="true" className="h-4 w-4" />,
+                    onClick: () => {
+                      const link = new URL(
+                        `/intake/${requestId}?org=${orgId}`,
+                        window.location.origin,
+                      ).href;
+                      navigator.clipboard.writeText(link).then(
+                        () => notifySuccess("Link copied"),
+                        (e) => notifyError(e, { action: "copy the link" }),
+                      );
+                    },
+                  },
+                  caps?.delete &&
+                    !operation.locked && {
+                      type: "custom",
+                      render: (
+                        // A round trigger to match the other header buttons.
+                        <Dropdown>
+                          <DropdownTrigger asChild>
+                            <HeaderButtonUI iconOnly aria-label="More actions">
+                              <MoreHorizontal
+                                aria-hidden="true"
+                                className="h-4 w-4"
+                              />
+                            </HeaderButtonUI>
+                          </DropdownTrigger>
+                          <DropdownContent align="end">
+                            <DropdownItem
+                              variant="destructive"
+                              onSelect={() => setConfirmingDelete(true)}
+                            >
+                              Delete request
+                            </DropdownItem>
+                          </DropdownContent>
+                        </Dropdown>
+                      ),
+                    },
+                ],
               ]
             : undefined
         }
@@ -871,6 +923,43 @@ export function Detail({
               </div>
             </GlassCardUI>
 
+            {(conversation ||
+              !!original?.entries.length ||
+              requesterMessages.length > 0) && (
+              <IntakeMessages
+                original={original}
+                messages={requesterMessages}
+                resolutions={sentResolutions}
+                createdAt={request.created_at}
+                members={members}
+                documents={documents}
+                uploading={upload.uploading}
+                open={messagesOpen}
+                newReply={request.new_reply}
+                retrying={retrying}
+                onOpenChange={setMessagesOpen}
+                onOpenDocument={(documentId) => void viewer.open(documentId)}
+                onRetry={retryDelivery}
+                // An outstanding request with a thread can be asked about.
+                composer={
+                  canMessage && !closed
+                    ? {
+                        value: requesterMessage,
+                        locked: operation.locked,
+                        onChange: setRequesterMessage,
+                        onSubmit: () =>
+                          command(
+                            "wait",
+                            "send the question to the requester",
+                            { body: requesterMessage, send_to_requester: true },
+                            "message",
+                          ),
+                      }
+                    : undefined
+                }
+              />
+            )}
+
             <GlassCardUI>
               <section aria-labelledby="intake-activity">
                 <h2
@@ -945,36 +1034,6 @@ export function Detail({
                               </>
                             );
                           })()}
-                          {(() => {
-                            // A question, or a resolution reply, sent to the requester.
-                            const delivery =
-                              "message" in entry
-                                ? entry.message.delivery
-                                : entry.event.delivery;
-                            if (!delivery) return null;
-                            const question =
-                              "message" in entry ||
-                              delivery.kind === "question";
-                            return (
-                              <IntakeDeliveryStatus
-                                delivery={delivery}
-                                name={intakeOutgoingName(
-                                  question ? "question" : "resolution",
-                                )}
-                                text={
-                                  "message" in entry
-                                    ? entry.message.body
-                                    : entry.text?.body
-                                }
-                                retrying={retrying.includes(
-                                  delivery.outbound_id,
-                                )}
-                                onRetry={() =>
-                                  retryDelivery(delivery.outbound_id)
-                                }
-                              />
-                            );
-                          })()}
                         </div>
                       </li>
                     );
@@ -1026,18 +1085,8 @@ export function Detail({
                       )
                     }
                     onResolve={caps.resolve ? startResolving : undefined}
-                    audience={audience}
-                    mode={audience ? noteMode : "note"}
-                    onModeChange={setNoteMode}
                     onSubmit={() =>
-                      audience && noteMode === "message"
-                        ? command(
-                            "wait",
-                            "send the question to the requester",
-                            { body: note, send_to_requester: true },
-                            "message",
-                          )
-                        : command("notes", "add the note", { body: note }, "note")
+                      command("notes", "add the note", { body: note }, "note")
                     }
                   />
                 )}
@@ -1077,12 +1126,16 @@ export function Detail({
       {/* With a thread, resolving asks what to send the requester. */}
       {closing === "resolve" && request && conversation && (
         <IntakeResolveDialog
-          value={note}
-          onChange={setNote}
+          value={resolveMessage}
+          onChange={setResolveMessage}
           conversation={conversation}
           documents={documents}
           reply={resolveReply}
-          onReplyChange={setResolveReply}
+          onReplyChange={(reply) => {
+            setResolveReply(reply);
+            // The comment starts the reply, which is then its own.
+            if (reply && !resolveMessage.trim()) setResolveMessage(note);
+          }}
           ticked={resolveDocuments}
           onTickedChange={setResolveDocuments}
           busy={operation.busy}
@@ -1225,6 +1278,7 @@ function DetailSkeleton({ children }: { children?: ReactNode }) {
             <SkeletonLine className="h-[5.25rem] w-full rounded-xl" />
           </div>
         </GlassCardUI>
+        <IntakeMessagesSkeleton />
         <GlassCardUI>
           <div className="space-y-4 px-5 py-4">
             <SkeletonLine className="w-16" />

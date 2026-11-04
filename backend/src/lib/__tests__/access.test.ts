@@ -2101,6 +2101,22 @@ describe("explicit private organization access", () => {
         opened = false;
         for (const check of checks) expect(await check()).toMatchObject({ ok: false });
     });
+    it("lets a member edit an open intake request's document, and only read the rest", async () => {
+        const db = makeDb({
+            organizations: [{ id: "org", kind: "team" }],
+            org_members: [{ org_id: "org", user_id: "member", role: "member" }],
+        });
+        // MikeGC recorded it: it has no uploader.
+        const doc = { id: "intake-doc", user_id: null, project_id: null, workflow_id: null, org_id: "org" };
+        let open = true;
+        db.rpc = vi.fn(async (name: string) => ({
+            data: name === "org_private_document_access" ? true : name === "intake_document_editable" ? open : null,
+            error: null,
+        }));
+        expect(await ensureDocAccess(doc, "member", "member@example.test", db)).toMatchObject({ ok: true, projectRole: "editor", isCreator: false });
+        open = false;
+        expect(await ensureDocAccess(doc, "member", "member@example.test", db)).toMatchObject({ ok: true, projectRole: "viewer" });
+    });
     it("includes an explicitly opened project in the accessible-ID list", async () => {
         const db = makeDb({
             organizations: [{ id: "org", kind: "team" }],

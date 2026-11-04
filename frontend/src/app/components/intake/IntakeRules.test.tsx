@@ -72,7 +72,6 @@ const rule = (
   ...extra,
 });
 const settings = (rules: IntakeAssignmentRule[]): IntakeAutomationSettings => ({
-  clarify_enabled: true,
   email: {
     enabled: false,
     provider: null,
@@ -81,7 +80,7 @@ const settings = (rules: IntakeAssignmentRule[]): IntakeAutomationSettings => ({
     from_name: "Legal",
     graph: { tenant_id: null, client_id: null, secret_set: false },
     notification_url: "https://api.example.test/webhooks/intake/graph/1",
-    gmail_client_id: null,
+    gmail: { client_id: null, key_set: false, deployment_key: false },
     status: { subscription_expires_at: null, last_read_at: null, error: null },
     needs_reconnect: false,
   },
