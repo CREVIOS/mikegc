@@ -1061,7 +1061,9 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
     sql(migration("20261104_02_intake_resolution_reply.sql"));
     sql(migration("20261104_03_intake_preprocessing_notes.sql"));
     sql(migration("20261104_04_intake_assistant.sql"));
+    sql(migration("20261104_05_intake_unread_reply_count.sql"));
     sql(migration("20261104_06_intake_always_clarify.sql"));
+    sql(migration("20261104_07_intake_delivery_message.sql"));
   };
   it("backfills legacy requests from their creator's profile", () => {
     beforeReplay();
