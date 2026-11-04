@@ -107,7 +107,7 @@ const generalLimiter = makeLimiter({
   // tool-result lane out of the shared IP budget.
   skip: (req) =>
     req.path === TOOL_RESULT_PATH ||
-    req.path === INTAKE_NOTIFICATIONS_PATH ||
+    (req.method === "POST" && req.path === INTAKE_NOTIFICATIONS_PATH) ||
     req.path === "/upload-sessions" ||
     req.path.startsWith("/upload-sessions/") ||
     req.path.startsWith(WEBHOOK_PREFIX) ||
@@ -178,6 +178,14 @@ const chatCreateLimiter = makeLimiter({
 const intakeSubmitLimiter = makeLimiter({
   windowMs: minutes(1),
   max: 30,
+});
+// The notification claim is out of the shared budget, so this bounds callers
+// it turns away (no or a bad session, each a token check) per address before
+// authentication runs. Only failures count, so polling never reaches it.
+const intakeNotificationsFailureLimiter = makeLimiter({
+  windowMs: minutes(envInt("RATE_LIMIT_INTAKE_NOTIFICATIONS_WINDOW_MINUTES", 15)),
+  max: envInt("RATE_LIMIT_INTAKE_NOTIFICATIONS_FAILED_MAX", 60),
+  skipSuccessfulRequests: true,
 });
 const exportLimiter = makeLimiter({
   windowMs: hours(envInt("RATE_LIMIT_EXPORT_WINDOW_HOURS", 1)),
@@ -308,6 +316,7 @@ app.use(
 
 app.use(generalLimiter);
 app.post("/intake/:orgId/requests", intakeSubmitLimiter);
+app.post(INTAKE_NOTIFICATIONS_PATH, intakeNotificationsFailureLimiter);
 app.use("/intake", express.json({ limit: "128kb" }));
 
 app.post("/auth/login", authLoginIpLimiter);

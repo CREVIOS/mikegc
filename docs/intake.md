@@ -270,8 +270,10 @@ update (in Contoso Legal)". Several changes to one request since
 the last check make one toast ("Sam Colleague resolved it · 2 more updates"). If
 more than three requests have news at once, the two newest get their own
 toast and one more sums up the rest, with **View requests** when they are all
-in the open workspace. An open request page or requests list refreshes when a
-notification names it.
+in the open workspace. An open request page refreshes when a notification
+names it, and so does the requests list, unless it has more than one page
+loaded: like returning to the window, it then keeps the rows already on
+screen.
 
 While a tab is visible it checks every 30 seconds, and again as soon as the
 tab is shown or focused. Each notification is shown once, by whichever of the
@@ -280,7 +282,9 @@ sees what was assigned or changed overnight. Notifications are kept for a day:
 one nobody collected by then is never shown. A notification for a request that
 is no longer assigned to the member, or in a workspace they have left, is
 dropped. A failed check says nothing and tries again later, less often, up to
-every 5 minutes.
+every 5 minutes. A check that gets no answer within 30 seconds stops holding up
+the next one, and a notification collected while the tab is hidden waits until
+it is shown, so it isn't timed out unseen.
 
 `intake_notifications` holds only references: the recipient, the request, and
 the history entry or message that caused it. Triggers on `intake_events` and
@@ -296,7 +300,10 @@ day. The claim is rate limited per signed-in member
 (`RATE_LIMIT_INTAKE_NOTIFICATIONS_MAX` per
 `RATE_LIMIT_INTAKE_NOTIFICATIONS_WINDOW_MINUTES`, 240 per 15 minutes by
 default) instead of from the shared per-address budget, so an office behind
-one address doesn't use that budget up.
+one address doesn't use that budget up. Claims it turns away (no session or a
+bad one) are counted per address before the session is checked
+(`RATE_LIMIT_INTAKE_NOTIFICATIONS_FAILED_MAX`, 60 per window), and other
+methods on the path stay under the shared budget.
 
 ## Access and retention
 

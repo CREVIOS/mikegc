@@ -5,6 +5,7 @@ import { claimIntakeNotifications } from "@/app/lib/mikeApi";
 import { useWorkspace } from "@/app/contexts/WorkspaceContext";
 import { ToastViewportUI, clearToasts } from "@/shared/ui/ToastUI";
 import {
+  INTAKE_NOTIFICATION_CLAIM_WAIT_MS,
   INTAKE_NOTIFICATION_MAX_BACKOFF_MS,
   INTAKE_NOTIFICATION_POLL_MS,
   IntakeNotifications,
@@ -163,6 +164,30 @@ describe("IntakeNotifications", () => {
     expect(claim).toHaveBeenCalledTimes(1);
     await act(async () => answer({ notifications: [notification()] }));
     expect(screen.getAllByText("New Intake Request")).toHaveLength(1);
+  });
+  it("keeps what a check brings back while the tab is hidden, and shows it on return", async () => {
+    let answer!: (claim: { notifications: IntakeNotification[] }) => void;
+    claim.mockReturnValueOnce(new Promise((resolve) => (answer = resolve)));
+    mount();
+    act(() => setVisibility("hidden"));
+    await act(async () => answer({ notifications: [notification()] }));
+    // A toast shown now would time out before anyone saw it.
+    expect(screen.queryByText("New Intake Request")).not.toBeInTheDocument();
+    act(() => setVisibility("visible"));
+    expect(screen.getByText("New Intake Request")).toBeInTheDocument();
+    // Showing it needed no second claim.
+    expect(claim).toHaveBeenCalledTimes(1);
+  });
+  it("carries on polling past a claim that doesn't answer, and still shows its late answer", async () => {
+    let answer!: (claim: { notifications: IntakeNotification[] }) => void;
+    claim.mockReturnValueOnce(new Promise((resolve) => (answer = resolve)));
+    mount();
+    await act(() => vi.advanceTimersByTimeAsync(INTAKE_NOTIFICATION_CLAIM_WAIT_MS));
+    // Given up on, it waits longer before the next check, which claims afresh.
+    await act(() => vi.advanceTimersByTimeAsync(2 * INTAKE_NOTIFICATION_POLL_MS));
+    expect(claim).toHaveBeenCalledTimes(2);
+    await act(async () => answer({ notifications: [notification()] }));
+    expect(screen.getByText("New Intake Request")).toBeInTheDocument();
   });
   it("checks nothing without a signed-in account, and stops when unmounted", async () => {
     vi.mocked(useWorkspace).mockReturnValue({

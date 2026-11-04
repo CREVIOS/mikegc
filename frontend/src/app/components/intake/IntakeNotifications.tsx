@@ -23,12 +23,19 @@ export const INTAKE_NOTIFICATION_POLL_MS = 30_000;
 export const INTAKE_NOTIFICATION_MAX_BACKOFF_MS = 5 * 60_000;
 /** Coming back to the tab checks at once, unless it just did. */
 const MIN_CHECK_GAP_MS = 5_000;
+/**
+ * How long a check waits for its claim before polling carries on. The claim
+ * isn't abandoned: the server may already have handed its notifications
+ * over, so an answer that comes later is still shown.
+ */
+export const INTAKE_NOTIFICATION_CLAIM_WAIT_MS = 30_000;
 
 /**
  * The account's check in flight, if any. A claim hands notifications over
  * only once, so a remount while one is in flight (React's development
  * double-mount, or the layout mounting again) waits for the same claim
- * instead of starting a second one that would find nothing left.
+ * instead of starting a second one that would find nothing left. One that
+ * hasn't answered within the wait no longer holds up later checks.
  */
 let inFlightClaim: {
   accountId: string;
@@ -37,11 +44,24 @@ let inFlightClaim: {
 
 function claimFor(accountId: string) {
   if (inFlightClaim?.accountId === accountId) return inFlightClaim.promise;
-  const promise = claimIntakeNotifications().finally(() => {
-    if (inFlightClaim?.promise === promise) inFlightClaim = null;
+  const entry = { accountId, promise: claimIntakeNotifications() };
+  inFlightClaim = entry;
+  const release = () => {
+    clearTimeout(expiry);
+    if (inFlightClaim === entry) inFlightClaim = null;
+  };
+  const expiry = setTimeout(release, INTAKE_NOTIFICATION_CLAIM_WAIT_MS);
+  entry.promise.then(release, release);
+  return entry.promise;
+}
+
+/** The claim's answer, or null when it hasn't come within the wait. */
+function withinClaimWait<T>(claim: Promise<T>): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const wait = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), INTAKE_NOTIFICATION_CLAIM_WAIT_MS);
   });
-  inFlightClaim = { accountId, promise };
-  return promise;
+  return Promise.race([claim, wait]).finally(() => clearTimeout(timer));
 }
 
 function IntakeNotificationMessage({
@@ -80,7 +100,12 @@ export function IntakeNotifications() {
     let timer: ReturnType<typeof setTimeout> | null = null;
     let delay = INTAKE_NOTIFICATION_POLL_MS;
     let lastCheck = 0;
+    // Collected while the tab was hidden, where a toast would time out unseen.
+    let held: IntakeNotification[] = [];
     const hidden = () => document.visibilityState === "hidden";
+    const backOff = () => {
+      delay = Math.min(delay * 2, INTAKE_NOTIFICATION_MAX_BACKOFF_MS);
+    };
 
     const show = (notifications: IntakeNotification[]) => {
       const { workspaceId: open, router: navigate } = context.current;
@@ -108,6 +133,11 @@ export function IntakeNotifications() {
       }
       announceIntakeNotifications(notifications);
     };
+    const deliver = (notifications: IntakeNotification[]) => {
+      if (disposed || !notifications.length) return;
+      if (hidden()) held = [...held, ...notifications];
+      else show(notifications);
+    };
 
     const stop = () => {
       if (timer !== null) clearTimeout(timer);
@@ -121,13 +151,20 @@ export function IntakeNotifications() {
       if (disposed || inFlight || hidden()) return;
       inFlight = true;
       lastCheck = Date.now();
+      const claim = claimFor(accountId);
       try {
-        const { notifications } = await claimFor(accountId);
-        delay = INTAKE_NOTIFICATION_POLL_MS;
-        if (!disposed && notifications.length) show(notifications);
+        const answer = await withinClaimWait(claim);
+        if (answer) {
+          delay = INTAKE_NOTIFICATION_POLL_MS;
+          deliver(answer.notifications);
+        } else {
+          // Polling carries on; an answer that comes after all is shown.
+          claim.then(({ notifications }) => deliver(notifications), () => {});
+          backOff();
+        }
       } catch {
         // A background check never interrupts the member; it waits longer.
-        delay = Math.min(delay * 2, INTAKE_NOTIFICATION_MAX_BACKOFF_MS);
+        backOff();
       } finally {
         inFlight = false;
         schedule();
@@ -135,6 +172,11 @@ export function IntakeNotifications() {
     };
     const wake = () => {
       if (hidden()) return stop();
+      if (held.length) {
+        const waiting = held;
+        held = [];
+        show(waiting);
+      }
       if (inFlight) return;
       if (Date.now() - lastCheck >= MIN_CHECK_GAP_MS) return void check();
       if (timer === null) schedule();
