@@ -51,19 +51,12 @@ function IntakeNotificationMessage({
 }) {
   // "Supplier NDA: Sam Patel assigned it to you", the subject in bold.
   return (
-    <>
-      <span className="block" data-testid="intake-notification-line">
-        {toast.subject ? (
-          <>
-            <span className="font-semibold">{toast.subject}</span>:{" "}
-          </>
-        ) : null}
-        <span className="text-gray-600">{toast.line}</span>
-      </span>
-      {toast.workspaceName ? (
-        <span className="block text-gray-500">In {toast.workspaceName}</span>
+    <span className="block" data-testid="intake-notification-line">
+      {toast.subject ? (
+        <span className="font-semibold text-gray-500">{toast.subject}: </span>
       ) : null}
-    </>
+      <span className="text-gray-600">{toast.line}</span>
+    </span>
   );
 }
 

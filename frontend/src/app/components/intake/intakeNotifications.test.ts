@@ -84,14 +84,12 @@ describe("planIntakeNotificationToasts", () => {
         title: NEW_INTAKE_REQUEST_TITLE,
         subject: "Supplier NDA",
         line: "Sam Colleague assigned it to you",
-        workspaceName: null,
         action: { label: "Open", href: "/intake/request-1?org=org-1" },
       },
       expect.objectContaining({
         key: "intake-notification:personal:request-2",
-        title: INTAKE_REQUEST_UPDATE_TITLE,
-        // Another workspace is named.
-        workspaceName: "Personal",
+        // Another workspace is named in the title.
+        title: `${INTAKE_REQUEST_UPDATE_TITLE} (in Personal)`,
         action: { label: "Open", href: "/intake/request-2?org=personal" },
       }),
     ]);
@@ -111,7 +109,6 @@ describe("planIntakeNotificationToasts", () => {
       title: NEW_INTAKE_REQUEST_TITLE,
       subject: null,
       line: "3 more requests were assigned to you or updated",
-      workspaceName: null,
       action: { label: "View requests", href: "/intake/requests?assignee=me" },
     });
   });
@@ -121,9 +118,8 @@ describe("planIntakeNotificationToasts", () => {
     );
     const [summary] = planIntakeNotificationToasts(elsewhere, open);
     expect(summary).toMatchObject({
-      title: INTAKE_REQUEST_UPDATE_TITLE,
+      title: `${INTAKE_REQUEST_UPDATE_TITLE} (in Beta Legal)`,
       line: "2 more of your requests were updated",
-      workspaceName: "Beta Legal",
       action: null,
     });
   });

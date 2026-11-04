@@ -263,9 +263,10 @@ their attention:
   or a colleague stops MikeGC asking.
 
 Nobody is notified of their own changes, and an unassigned request notifies
-nobody. Each toast names the request and what happened, says which workspace
-it is in when that isn't the open one, and has **Open**, which opens the
-request and switches to its workspace. Several changes to one request since
+nobody. Each toast names the request and what happened, and has **Open**,
+which opens the request and switches to its workspace. A request in a
+workspace other than the open one names it in the title: "Intake request
+update (in Contoso Legal)". Several changes to one request since
 the last check make one toast ("Sam Colleague resolved it · 2 more updates"). If
 more than three requests have news at once, the two newest get their own
 toast and one more sums up the rest, with **View requests** when they are all

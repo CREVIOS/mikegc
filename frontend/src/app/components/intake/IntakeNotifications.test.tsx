@@ -76,7 +76,10 @@ describe("IntakeNotifications", () => {
     expect(screen.getByTestId("intake-notification-line")).toHaveTextContent(
       "Supplier NDA for Acme: Sam Colleague assigned it to you",
     );
-    expect(screen.getByText("Supplier NDA for Acme")).toHaveClass("font-semibold");
+    expect(screen.getByText("Supplier NDA for Acme:")).toHaveClass(
+      "font-semibold",
+      "text-gray-500",
+    );
     fireEvent.click(screen.getByRole("button", { name: "Open" }));
     expect(push).toHaveBeenCalledWith("/intake/request-1?org=org-1");
     // Opening it closes the toast.
@@ -97,9 +100,11 @@ describe("IntakeNotifications", () => {
     });
     mount();
     await flush();
-    expect(screen.getByText("Intake request update")).toBeInTheDocument();
+    // Another workspace is named in the title.
+    expect(
+      screen.getByText("Intake request update (in Beta Legal)"),
+    ).toBeInTheDocument();
     expect(screen.getByText("Jane Business replied in Slack")).toBeInTheDocument();
-    expect(screen.getByText("In Beta Legal")).toBeInTheDocument();
   });
   it("tells open intake views which requests have news", async () => {
     const listener = vi.fn();

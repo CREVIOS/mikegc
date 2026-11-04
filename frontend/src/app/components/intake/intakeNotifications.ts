@@ -15,14 +15,18 @@ export const INTAKE_NOTIFICATION_TOAST_MS = 10_000;
 export interface IntakeNotificationToast {
   /** Toasts with the same key replace each other: one per request. */
   key: string;
+  /** Names the workspace too when it isn't the one open. */
   title: string;
   /** The request's subject; a summary of several requests has none. */
   subject: string | null;
   line: string;
-  /** The workspace it is in, when that is not the one open. */
-  workspaceName: string | null;
   /** Where its action goes, or null when it has none. */
   action: { label: string; href: string } | null;
+}
+
+/** "Intake request update (in Contoso Legal)", or the title alone. */
+function inWorkspace(title: string, workspaceName: string | null) {
+  return workspaceName ? `${title} (in ${workspaceName})` : title;
 }
 
 export function intakeNotificationTitle(
@@ -100,13 +104,14 @@ export function planIntakeNotificationToasts(
 ): IntakeNotificationToast[] {
   const one = (notification: IntakeNotification): IntakeNotificationToast => ({
     key: `intake-notification:${notification.workspace}:${notification.request_id}`,
-    title: intakeNotificationTitle(notification),
-    subject: notification.subject,
-    line: intakeNotificationLine(notification),
-    workspaceName:
+    title: inWorkspace(
+      intakeNotificationTitle(notification),
       notification.workspace === context.workspaceId
         ? null
         : notification.workspace_name,
+    ),
+    subject: notification.subject,
+    line: intakeNotificationLine(notification),
     action: {
       label: "Open",
       href: intakeRequestHref(notification.workspace, notification.request_id),
@@ -137,11 +142,12 @@ function summaryToast(
   const inOpenWorkspace = workspaces.size === 1 && only === context.workspaceId;
   return {
     key: "intake-notification:summary",
-    title: fresh ? NEW_INTAKE_REQUEST_TITLE : INTAKE_REQUEST_UPDATE_TITLE,
+    title: inWorkspace(
+      fresh ? NEW_INTAKE_REQUEST_TITLE : INTAKE_REQUEST_UPDATE_TITLE,
+      workspaces.size === 1 && !inOpenWorkspace ? rest[0].workspace_name : null,
+    ),
     subject: null,
     line,
-    workspaceName:
-      workspaces.size === 1 && !inOpenWorkspace ? rest[0].workspace_name : null,
     // The list shows the open workspace's requests only.
     action:
       inOpenWorkspace && context.accountId
