@@ -106,6 +106,7 @@ import {
 import { formatIntakeDateTime, intakeDeleteMessage } from "./intakeLabels";
 import { describeIntakeEvent, describeIntakeMessage } from "./intakeActivity";
 import { INTAKE_REQUESTS_PATH } from "./intakeQuery";
+import { onIntakeNotified } from "./intakeNotifications";
 import {
   IntakeDocumentPicker,
   type IntakePickedDocument,
@@ -359,6 +360,14 @@ export function Detail({
     window.addEventListener("focus", focus);
     return () => window.removeEventListener("focus", focus);
   }, [refresh]);
+  // A notification about this request means it changed: show the change.
+  useEffect(
+    () =>
+      onIntakeNotified(orgId, (ids) => {
+        if (ids.includes(requestId)) void refresh();
+      }),
+    [orgId, requestId, refresh],
+  );
   // Detail edits replace every field at the request's version, so one made
   // while another change is saving waits for the refreshed request.
   const queuedDetails = useRef<Partial<IntakeDetails> | null>(null);

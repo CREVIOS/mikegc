@@ -7,6 +7,7 @@ import { expireDepartureArchives, purgeExpiredOrganizations } from "../modules/o
 import { purgeExpiredSubagentRuns } from "../modules/chat/chat.service";
 import {
     ensureIntakeMailboxPolls,
+    expireIntakeNotifications,
     requeueStalledIntakeDeliveries,
 } from "../modules/intake/intake.service";
 
@@ -42,6 +43,10 @@ export async function runStaleWorkSweep(
     // A message to a requester whose delivery job was never queued.
     await requeueStalledIntakeDeliveries(db).catch((err) => {
         logError("stale-sweep", safeError(err), { sweep: "intake-deliveries" });
+    });
+    // Toasts nobody collected within a day are never shown.
+    await expireIntakeNotifications(db).catch((err) => {
+        logError("stale-sweep", safeError(err), { sweep: "intake-notifications" });
     });
     return { documents, cells };
 }

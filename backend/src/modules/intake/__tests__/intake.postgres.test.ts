@@ -151,6 +151,8 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
     sql(migration("20261104_05_intake_unread_reply_count.sql"));
     sql(migration("20261104_06_intake_always_clarify.sql"));
     sql(migration("20261104_06_intake_always_clarify.sql"));
+    sql(migration("20261104_07_intake_notifications.sql"));
+    sql(migration("20261104_07_intake_notifications.sql"));
   }, 90000);
   afterAll(() => {
     execFileSync("docker", [
@@ -1635,5 +1637,143 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
           where n.nspname = 'public' and p.proname like 'intake\\_%'
             and has_function_privilege('${role}', p.oid, 'EXECUTE')`),
       ).toBe("");
+  });
+  // Toasts for the member a request is assigned to.
+  type Claimed = { change: string; kind: string; created_at: string } & Record<string, unknown>;
+  const claim = (actor: number): Claimed[] =>
+    json(`select public.intake_claim_notifications(${q(actor)});`);
+  const waiting = () => sql("select count(*) from public.intake_notifications");
+  it("tells the assignee about a request that became theirs, once, and never about their own changes", () => {
+    sql(submit(100, { assignee: q(2) }));
+    expect(claim(2)).toEqual([]);
+    sql(cmd("assign", 2, 101, 1, `,${q(3)}`));
+    expect(claim(3)).toEqual([
+      {
+        id: expect.any(Number),
+        workspace: uid(10),
+        workspace_name: "Test legal",
+        request_id: uid(20),
+        subject: "Supplier NDA",
+        kind: "new_request",
+        change: "assign",
+        actor_name: "person2@example.test",
+        automated: false,
+        channel: null,
+        created_at: expect.any(String),
+      },
+    ]);
+    // Collected once, by whichever tab asks first.
+    expect(claim(3)).toEqual([]);
+    // A retried command replays its receipt and tells nobody again.
+    sql(cmd("assign", 2, 101, 1, `,${q(3)}`));
+    expect(waiting()).toBe("0");
+    // The assignee's own work tells nobody.
+    sql(cmd("wait", 3, 102, 2));
+    sql(note(3, 103, "Chasing the draft"));
+    expect(waiting()).toBe("0");
+    // Unassigning leaves nobody to tell.
+    sql(cmd("assign", 2, 104, 3, ",null"));
+    expect(waiting()).toBe("0");
+  });
+  it("tells the assignee about others' changes, MikeGC's and the requester's replies, as updates", () => {
+    thread(21, 70, q(3));
+    expect(claim(3)).toEqual([
+      expect.objectContaining({
+        kind: "new_request",
+        change: "submitted",
+        actor_name: null,
+        automated: true,
+      }),
+    ]);
+    sql(note(2, 110, "Looks routine", 21));
+    // A note written with a status change is reported by the change.
+    sql(`select public.intake_wait_request(${q(10)},${q(2)},${q(111)},${q(21)},1,'Need the draft');`);
+    // The reply puts the request back to work in the same transaction.
+    reply(400, 410);
+    sql(`select public.intake_note_automated(${q(10)},${q(21)},${q(80)},'Summary','preprocessing');`);
+    const updates = claim(3);
+    expect(updates.map((n) => [n.kind, n.change])).toEqual([
+      ["update", "note"],
+      ["update", "wait"],
+      ["update", "reply"],
+      ["update", "resume"],
+      ["update", "preprocessing"],
+    ]);
+    expect(updates[0]).toMatchObject({ actor_name: "person2@example.test", automated: false });
+    expect(updates[2]).toMatchObject({ actor_name: "Jane Business", channel: "slack", automated: false });
+    expect(updates[3]).toMatchObject({ actor_name: null, automated: true });
+    expect(updates[4]).toMatchObject({ actor_name: null, automated: true });
+    // One change's entries share its time, so a client can count changes.
+    expect(updates[2].created_at).toBe(updates[3].created_at);
+    expect(updates[1].created_at).not.toBe(updates[2].created_at);
+    sql(cmd("edit", 2, 112, 3, ",'Supplier NDA v2','Please review','Jane Business','jane@acme.test',null,null", 21));
+    sql(cmd("resolve", 2, 113, 4, ",'Signed off'", 21));
+    sql(cmd("reopen", 4, 114, 5, "", 21));
+    expect(claim(3).map((n) => [n.change, n.subject])).toEqual([
+      ["edited", "Supplier NDA v2"],
+      ["resolve", "Supplier NDA v2"],
+      ["reopen", "Supplier NDA v2"],
+    ]);
+  });
+  it("drops notifications for work that is no longer the recipient's", () => {
+    sql(submit(100, { assignee: q(3) }));
+    sql(cmd("assign", 2, 101, 1, `,${q(4)}`));
+    // Reassigned before member 3 looked: theirs is deleted unseen.
+    expect(claim(3)).toEqual([]);
+    expect(waiting()).toBe("1");
+    // A member who leaves hears nothing more from the organization.
+    sql(`delete from public.org_members where org_id=${q(10)} and user_id=${q(4)}`);
+    expect(waiting()).toBe("0");
+    // Nobody collected it within a day: never shown, and swept.
+    sql(submit(105, { request: 22, assignee: q(3) }));
+    sql(submit(106, { request: 23, assignee: q(3) }));
+    sql(`update public.intake_notifications set created_at = now() - interval '2 days' where request_id=${q(22)}`);
+    expect(sql("select public.intake_expire_notifications()")).toBe("1");
+    expect(claim(3).map((n) => n.request_id)).toEqual([uid(23)]);
+    sql(submit(107, { request: 24, assignee: q(3) }));
+    sql(`update public.intake_notifications set created_at = now() - interval '2 days'`);
+    expect(claim(3)).toEqual([]);
+    expect(waiting()).toBe("0");
+  });
+  it("names a personal workspace as personal, never by its organization", () => {
+    const personal = sql(
+      `select id from public.organizations where personal_user_id=${q(2)} and kind='personal'`,
+    );
+    sql(
+      `select public.intake_submit_request('${personal}',${q(2)},${q(200)},${q(30)},'Lease renewal','Check the break clause',` +
+        `'Me',null,null,null,${q(2)});`,
+    );
+    expect(claim(2)).toEqual([]);
+    sql(`select public.intake_note_automated('${personal}',${q(30)},${q(81)},'Summary','preprocessing');`);
+    expect(claim(2)).toEqual([
+      expect.objectContaining({ workspace: "personal", workspace_name: "Personal", change: "preprocessing" }),
+    ]);
+  });
+  it("deletes notifications with the account, the request and the organization's intake data", () => {
+    sql(submit(100, { assignee: q(3) }));
+    sql(`delete from auth.users where id=${q(3)}`);
+    expect(waiting()).toBe("0");
+    sql(submit(101, { request: 22, assignee: q(4) }));
+    sql(cmd("delete", 2, 102, 1, "", 22));
+    expect(waiting()).toBe("0");
+    sql(submit(103, { request: 23, assignee: q(4) }));
+    sql(`select public.intake_purge(${q(10)},${q(1)})`);
+    expect(waiting()).toBe("0");
+    expect(() => sql(`select public.intake_claim_notifications(${q(4)},0)`)).toThrow(/22023/);
+  });
+  it("writes notifications as the trusted owner and keeps them from browser roles", () => {
+    for (const fn of ["intake_notify_event", "intake_notify_message", "intake_notification_departure"])
+      expect(
+        sql(`select count(*) from pg_proc p join pg_roles r on r.oid=p.proowner
+        where p.oid='public.${fn}()'::regprocedure and p.prosecdef
+        and r.rolname not in ('anon','authenticated','service_role','supabase_auth_admin')
+        and 'search_path=pg_catalog, public, pg_temp'=any(p.proconfig)`),
+      ).toBe("1");
+    for (const role of ["anon", "authenticated"]) {
+      expect(sql(`select has_table_privilege('${role}','public.intake_notifications','SELECT')`)).toBe("f");
+      expect(
+        sql(`select has_function_privilege('${role}','public.intake_claim_notifications(uuid,integer)','EXECUTE')`),
+      ).toBe("f");
+    }
   });
 });

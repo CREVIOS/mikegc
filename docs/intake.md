@@ -242,8 +242,60 @@ then copies it to the request.
 
 Apart from the triage, clarifying questions and preprocessing that
 [automated intake](intake-automation.md) runs on the messages it receives,
-intake does not include notifications, scheduled processing or automatic legal
-decisions. A requester's reply is flagged in the queue rather than notified.
+intake does not include scheduled processing or automatic legal decisions.
+Members hear about their requests through the web app's
+[notifications](#notifications) only; nothing is emailed or posted.
+
+## Notifications
+
+The member a request is assigned to gets a toast in the web app when it needs
+their attention:
+
+- **New Intake Request** when a request becomes theirs: it is created and
+  assigned to them by a colleague, assigned or reassigned to them, or recorded
+  and assigned by MikeGC (including when MikeGC assigns it by a rule once the
+  requester has answered its questions). For example: "**Supplier NDA**: Sam
+  Colleague assigned it to you".
+- **Intake request update** when someone else changes a request assigned to
+  them: the requester replies, a colleague comments, waits on the requester,
+  resumes, resolves, cancels or reopens it, edits its details or adds a
+  document, MikeGC asks the requester for details or finishes preprocessing,
+  or a colleague stops MikeGC asking.
+
+Nobody is notified of their own changes, and an unassigned request notifies
+nobody. Each toast names the request and what happened, says which workspace
+it is in when that isn't the open one, and has **Open**, which opens the
+request and switches to its workspace. Several changes to one request since
+the last check make one toast ("Sam Colleague resolved it · 2 more updates"). If
+more than three requests have news at once, the two newest get their own
+toast and one more sums up the rest, with **View requests** when they are all
+in the open workspace. An open request page or requests list refreshes when a
+notification names it.
+
+While a tab is visible it checks every 30 seconds, and again as soon as the
+tab is shown or focused. Each notification is shown once, by whichever of the
+member's tabs collects it first, so a lawyer who opens the app in the morning
+sees what was assigned or changed overnight. Notifications are kept for a day:
+one nobody collected by then is never shown. A notification for a request that
+is no longer assigned to the member, or in a workspace they have left, is
+dropped. A failed check says nothing and tries again later, less often, up to
+every 5 minutes.
+
+`intake_notifications` holds only references: the recipient, the request, and
+the history entry or message that caused it. Triggers on `intake_events` and
+`intake_messages` write it in the same transaction as the change, so a retried
+command (which replays its receipt) notifies nobody twice.
+`POST /intake/notifications/claim` (`intake_claim_notifications`) hands the
+signed-in member theirs from every workspace and deletes them, reading names
+and the subject at that moment; it names a personal workspace `personal`. A
+notification is deleted with its request, the history entry or message, the
+organization's intake data or the recipient's account, and when the recipient
+leaves the organization; the stale-work sweep deletes uncollected ones after a
+day. The claim is rate limited per signed-in member
+(`RATE_LIMIT_INTAKE_NOTIFICATIONS_MAX` per
+`RATE_LIMIT_INTAKE_NOTIFICATIONS_WINDOW_MINUTES`, 240 per 15 minutes by
+default) instead of from the shared per-address budget, so an office behind
+one address doesn't use that budget up.
 
 ## Access and retention
 
@@ -371,6 +423,10 @@ Apply migrations before starting the new application build:
   and `20261103_07_intake_teams.sql` add the requester loop, the Outlook and
   Gmail intake mailbox (retiring Postmark) and Teams. See
   [Automated intake](intake-automation.md#deployment) for what each changes.
+- `20261104_07_intake_notifications.sql` adds [notifications](#notifications):
+  the `intake_notifications` table, the triggers on `intake_events`,
+  `intake_messages` and `org_members` that write and clear it, and
+  `intake_claim_notifications` and `intake_expire_notifications`.
 
 Use the existing migration runner documented in [deployment.md](deployment.md).
 Do not replay historical migrations over a fresh schema. Fresh installations use

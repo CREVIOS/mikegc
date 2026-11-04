@@ -1,12 +1,16 @@
 import { Router, type Response } from "express";
+import rateLimit from "express-rate-limit";
 import { requireAuth } from "../../middleware/auth";
 import { asyncRoute, routerErrorHandler } from "../../middleware/asyncRoute";
+import { rateLimitedBody } from "../../lib/httpError";
+import { envInt } from "../../lib/runtimeConfig";
 import { createServerSupabase } from "../../lib/supabase";
 import {
   sendServiceFailure,
   type ServiceResult,
 } from "../../lib/serviceResult";
 import {
+  claimIntakeNotifications,
   commandIntakeRequest,
   editIntakeRequest,
   getIntakeDashboard,
@@ -48,6 +52,31 @@ import {
 
 export const intakeRouter = Router();
 intakeRouter.use(requireAuth);
+
+// Every open tab polls this about twice a minute, and a whole office can share
+// one address, so app.ts keeps it out of the shared per-address budget and it
+// is limited per signed-in member instead.
+const notificationClaimLimiter = rateLimit({
+  windowMs: envInt("RATE_LIMIT_INTAKE_NOTIFICATIONS_WINDOW_MINUTES", 15) * 60 * 1000,
+  max: envInt("RATE_LIMIT_INTAKE_NOTIFICATIONS_MAX", 240),
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (_req, res) => String(res.locals.userId),
+  message: rateLimitedBody("Notifications were checked too often. Please try again shortly."),
+});
+// The signed-in member's notifications from every workspace they belong to,
+// handed over once. Registered before the workspace routes, which it never
+// matches: it names no organization.
+intakeRouter.post(
+  "/notifications/claim",
+  notificationClaimLimiter,
+  asyncRoute(async (_req, res) => {
+    send(
+      res,
+      await claimIntakeNotifications(createServerSupabase(), res.locals.userId),
+    );
+  }),
+);
 // A team organization's id, or "personal" for the caller's own workspace,
 // which is resolved here so every handler works with an organization id.
 intakeRouter.param("orgId", (req, res, next, value) => {

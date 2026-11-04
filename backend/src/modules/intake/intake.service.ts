@@ -24,6 +24,10 @@ export { copyIntakeDocuments } from "./intake.copy";
 export { intakeChatBrief, intakeRequestWorkspace } from "./intake.assistant";
 export { getIntakeDashboard } from "./intake.dashboard";
 export {
+  claimIntakeNotifications,
+  expireIntakeNotifications,
+} from "./intake.notifications";
+export {
   PERSONAL_INTAKE,
   personalIntakeOrgId,
   resolveIntakeOrg,
