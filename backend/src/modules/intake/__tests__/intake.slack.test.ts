@@ -84,13 +84,18 @@ describe("Slack markup as plain text", () => {
 describe("Slack Web API", () => {
   it("reads the workspace and bot user from auth.test with the token as a bearer", async () => {
     const fetchMock = vi.fn(async () =>
-      Response.json({ ok: true, team_id: "T1", team: "Acme", user_id: "UBOT" }),
+      Response.json(
+        { ok: true, team_id: "T1", team: "Acme", user_id: "UBOT" },
+        { headers: { "x-oauth-scopes": "app_mentions:read,chat:write, files:write" } },
+      ),
     );
     vi.stubGlobal("fetch", fetchMock);
     await expect(slackAuthTest("xoxb-1")).resolves.toEqual({
       team_id: "T1",
       team: "Acme",
       user_id: "UBOT",
+      // The token's scopes, which say whether the app can send documents.
+      scopes: ["app_mentions:read", "chat:write", "files:write"],
     });
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("https://slack.com/api/auth.test");

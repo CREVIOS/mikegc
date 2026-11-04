@@ -5,7 +5,7 @@ import { handleDocumentCleanup, handleDocumentExtractText, markDocumentTextFaile
 import { handleExtractionExtract, markExtractionJobFailed } from "../modules/tabular/tabular.service";
 import { handleMemoryConsolidation, markMemoryConsolidationFailed } from "../modules/memory/memory.service";
 import { handlePlaybookImport, handlePlaybookReview, markPlaybookImportJobFailed, markPlaybookReviewJobFailed } from "../modules/playbooks/playbooks.service";
-import { handleIntakeInbound, handleIntakePreprocess, markIntakeInboundFailed, markIntakePreprocessFailed } from "../modules/intake/intake.service";
+import { handleIntakeDeliver, handleIntakeInbound, handleIntakeMailboxPoll, handleIntakePreprocess, handleIntakeReply, markIntakeDeliverFailed, markIntakeInboundFailed, markIntakePreprocessFailed, markIntakeReplyFailed } from "../modules/intake/intake.service";
 import { handleStorageCleanup } from "../lib/dbq/storageCleanup";
 import { type DbJobHandlers } from "../lib/dbq/types";
 import { type DbJobFailureHook } from "../lib/dbq/runner";
@@ -26,6 +26,9 @@ export const DB_JOB_HANDLERS: DbJobHandlers = {
   "playbook.import": handlePlaybookImport,
   "intake.inbound": handleIntakeInbound,
   "intake.preprocess": handleIntakePreprocess,
+  "intake.reply": handleIntakeReply,
+  "intake.deliver": handleIntakeDeliver,
+  "intake.mailbox.poll": handleIntakeMailboxPoll,
 };
 export const DB_JOB_FAILURE_HOOKS: Record<string, DbJobFailureHook> = {
   "conversion.convert": markConversionFailed,
@@ -36,6 +39,8 @@ export const DB_JOB_FAILURE_HOOKS: Record<string, DbJobFailureHook> = {
   "playbook.import": markPlaybookImportJobFailed,
   "intake.inbound": markIntakeInboundFailed,
   "intake.preprocess": markIntakePreprocessFailed,
+  "intake.reply": markIntakeReplyFailed,
+  "intake.deliver": markIntakeDeliverFailed,
 };
 export {
   handleChatTurnAudit,

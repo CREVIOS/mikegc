@@ -1,7 +1,8 @@
 "use client";
 import { useId, useRef, useState, type ReactNode } from "react";
-import { CalendarDays, ChevronDown, Pencil } from "lucide-react";
+import { CalendarDays, ChevronDown, ExternalLink, Pencil } from "lucide-react";
 import type {
+  IntakeConversation,
   IntakeDetails,
   IntakeMember,
   IntakeRequest,
@@ -10,6 +11,7 @@ import type {
 } from "@mike/contracts";
 import { SETTINGS_CONTROL_CLASS } from "@/app/components/settings/SettingsTextInput";
 import { FormTextInput } from "@/app/components/ui/form-field";
+import { TextButtonUI } from "@/shared/ui/TextButtonUI";
 import { UserAvatar } from "@/app/components/ui/user-avatar";
 import { cn } from "@/app/lib/utils";
 import {
@@ -38,8 +40,15 @@ import {
   formatIntakeDate,
   formatIntakeDateTime,
   intakeMemberName,
+  intakeStateLabel,
   isIntakeOverdue,
 } from "./intakeLabels";
+import {
+  INTAKE_CHANNEL_LABELS,
+  INTAKE_SOURCE_LABELS,
+  intakeConversationLink,
+  isEmailConversation,
+} from "./intakeConversation";
 import { IntakeUnassigned } from "./IntakeUnassigned";
 import { IntakeMikeGCMark, isMikeGCRequest } from "./IntakeActorAvatar";
 
@@ -105,6 +114,7 @@ export function IntakeDetailsPanel({
   onAssign,
   onStatus,
   onStatusMenuClosed,
+  onStopAsking,
 }: {
   request: IntakeRequest;
   members: IntakeMember[];
@@ -116,6 +126,8 @@ export function IntakeDetailsPanel({
   onStatus: (action: IntakeStatusAction) => void;
   /** After Resolved is chosen and the menu closes, where focus goes next. */
   onStatusMenuClosed?: () => void;
+  /** Stop MikeGC asking the requester for missing details. */
+  onStopAsking?: () => void;
 }) {
   const caps = request.capabilities;
   const editable = caps.edit;
@@ -150,10 +162,13 @@ export function IntakeDetailsPanel({
               <button
                 type="button"
                 disabled={locked}
-                aria-label={`Status: ${INTAKE_STATE_LABELS[request.state]}`}
+                aria-label={`Status: ${intakeStateLabel(request.state, request.clarify_stage)}`}
                 className={MENU_FIELD_CLASS}
               >
-                <StatusLabel state={request.state} />
+                <StatusLabel
+                  state={request.state}
+                  clarifyStage={request.clarify_stage}
+                />
                 <ChevronDown
                   aria-hidden="true"
                   className="h-4 w-4 shrink-0 text-gray-400"
@@ -207,8 +222,19 @@ export function IntakeDetailsPanel({
         </div>
       ) : (
         <Fact label="Status">
-          <StatusLabel state={request.state} />
+          <StatusLabel
+            state={request.state}
+            clarifyStage={request.clarify_stage}
+          />
         </Fact>
+      )}
+      {request.clarify_stage && (
+        <ClarifyNotice
+          rounds={request.clarify_rounds}
+          maxRounds={request.clarify_max_rounds}
+          locked={locked}
+          onStop={caps.stop_asking ? onStopAsking : undefined}
+        />
       )}
       {caps.assign ? (
         <AssigneeField
@@ -302,6 +328,9 @@ export function IntakeDetailsPanel({
             )}
           </Fact>
         </>
+      )}
+      {request.conversation && (
+        <ConversationFact conversation={request.conversation} />
       )}
       <Fact label="Created by">
         <Person
@@ -488,15 +517,124 @@ export function TargetDateField({
 }
 
 /** A status with its colour dot, matching the intake table. */
-function StatusLabel({ state }: { state: IntakeState }) {
+function StatusLabel({
+  state,
+  clarifyStage,
+}: {
+  state: IntakeState;
+  /** Waiting on requester says when MikeGC asked. */
+  clarifyStage?: IntakeRequest["clarify_stage"];
+}) {
   return (
     <span className="flex items-center gap-2">
       <span
         aria-hidden="true"
         className={`h-2 w-2 shrink-0 rounded-full ${INTAKE_STATE_DOT_CLASS[state]}`}
       />
-      {INTAKE_STATE_LABELS[state]}
+      {clarifyStage ? intakeStateLabel(state, clarifyStage) : INTAKE_STATE_LABELS[state]}
     </span>
+  );
+}
+
+/**
+ * MikeGC asked the requester for missing details and is waiting for the
+ * answer. Stop asking hands the request back to Legal as it stands.
+ */
+function ClarifyNotice({
+  rounds,
+  maxRounds,
+  locked,
+  onStop,
+}: {
+  rounds: number;
+  maxRounds: number;
+  locked: boolean;
+  onStop?: () => void;
+}) {
+  const round = Math.min(Math.max(rounds, 1), maxRounds);
+  return (
+    <div className="space-y-1">
+      <p className="text-xs text-gray-500">
+        MikeGC is waiting for the requester&apos;s answer (round {round} of{" "}
+        {maxRounds}).
+      </p>
+      {onStop && (
+        <TextButtonUI
+          size="xs"
+          className="-ml-2"
+          disabled={locked}
+          onClick={onStop}
+        >
+          Stop asking
+        </TextButtonUI>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The thread the request came from, where messages to the requester go: a
+ * Slack or Teams channel with a link to the thread, or the email's
+ * recipients, each on its own line.
+ */
+function ConversationFact({
+  conversation,
+}: {
+  conversation: IntakeConversation;
+}) {
+  const link = intakeConversationLink(conversation);
+  const channel = conversation.channel_name?.replace(/^#/, "");
+  if (isEmailConversation(conversation))
+    return (
+      <Fact label="Conversation">
+        <span className="block">
+          {INTAKE_CHANNEL_LABELS[conversation.source]} email
+          {conversation.mailbox && (
+            <span className="text-gray-500"> from {conversation.mailbox}</span>
+          )}
+        </span>
+        {conversation.to.length > 0 && (
+          <span className="block text-xs text-gray-500">
+            To {conversation.to.join(", ")}
+          </span>
+        )}
+        {conversation.cc.length > 0 && (
+          <span className="block text-xs text-gray-500">
+            Cc {conversation.cc.join(", ")}
+          </span>
+        )}
+      </Fact>
+    );
+  const name =
+    conversation.source === "slack"
+      ? channel
+        ? `Slack thread in #${channel}`
+        : "Slack thread"
+      : channel
+        ? `Teams thread in ${channel}`
+        : "Teams thread";
+  return (
+    <Fact label="Conversation">
+      {link ? (
+        <a
+          href={link}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 rounded-sm text-blue-600 underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+        >
+          {name}
+          <ExternalLink aria-hidden="true" className="h-3 w-3 shrink-0" />
+          <span className="sr-only"> (opens in a new tab)</span>
+        </a>
+      ) : (
+        <span className="block">{name}</span>
+      )}
+      {conversation.source === "teams" && conversation.team_name && (
+        <span className="block text-xs text-gray-500">
+          {conversation.team_name}
+        </span>
+      )}
+    </Fact>
   );
 }
 
@@ -515,8 +653,12 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
 /** Where a request came from, after its creator; a member's own has none. */
 const INTAKE_SOURCE_NOTES: Record<IntakeSource, string | null> = {
   manual: null,
+  // Recorded through Postmark, before MikeGC read the mailbox itself.
   email: "from email",
-  slack: "from Slack",
+  slack: `from ${INTAKE_SOURCE_LABELS.slack}`,
+  outlook: `from ${INTAKE_SOURCE_LABELS.outlook}`,
+  gmail: `from ${INTAKE_SOURCE_LABELS.gmail}`,
+  teams: `from ${INTAKE_SOURCE_LABELS.teams}`,
 };
 
 /** A person's avatar beside their name; the name labels the avatar. */

@@ -2,20 +2,13 @@
 
 import { useId, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { Check, ChevronDown, Copy, Info, X } from "lucide-react";
-import type {
-  IntakeAutomationSettings,
-  IntakeEmailWebhook,
-} from "@mike/contracts";
+import { ChevronDown, Info } from "lucide-react";
+import type { IntakeAutomationSettings } from "@mike/contracts";
 import { Modal } from "@/app/components/modals/Modal";
 import { SettingsHeading } from "@/app/components/settings/SettingsHeading";
 import { SettingsRow } from "@/app/components/settings/SettingsRow";
 import { SettingsDescription } from "@/app/components/settings/SettingsText";
-import {
-  SETTINGS_CONTROL_CLASS,
-  SettingsTextInput,
-} from "@/app/components/settings/SettingsTextInput";
-import { notifyError, notifySuccess } from "@/app/lib/userFacingError";
+import { SETTINGS_CONTROL_CLASS } from "@/app/components/settings/SettingsTextInput";
 import { cn } from "@/app/lib/utils";
 import {
   MODELS,
@@ -34,24 +27,22 @@ import {
 } from "@/shared/ui/dropdown";
 import { orderedModelGroups } from "@/shared/ui/ModelToggleUI";
 import { GlassCardUI } from "@/shared/ui/GlassCardUI";
-import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 import { pillButtonUIClassName } from "@/shared/ui/PillButtonUI.styles";
 import { TextButtonUI } from "@/shared/ui/TextButtonUI";
 import { textButtonUIClassName } from "@/shared/ui/TextButtonUI.styles";
 import { TextSlabUI } from "@/shared/ui/TextSlabUI";
-import { ToggleSwitchUI } from "@/shared/ui/ToggleSwitchUI";
+import type { IntakeAutomationDraft } from "./intakeAutomation";
 import {
-  intakeDomainInputError,
-  normalizeIntakeDomain,
-  type IntakeAutomationDraft,
-} from "./intakeAutomation";
+  ROW_DESCRIPTION_CLASS,
+  ROW_LABEL_CLASS,
+  ToggleRow,
+} from "./IntakeSettingsFields";
 
-/** Settings' field label, and its label and description beside a switch. */
-const LABEL_CLASS = "mb-2 block text-sm font-medium text-gray-700";
-const ROW_LABEL_CLASS = "text-sm font-medium text-gray-700";
-const ROW_DESCRIPTION_CLASS = "text-sm text-gray-500";
-const HINT_CLASS = "mt-1 text-xs text-gray-500";
-const ERROR_CLASS = "mt-1 text-xs text-red-600";
+/**
+ * The page's own sections: triage rules and, on Model Preferences, intake's
+ * models. The channels are cards of their own, set up in modals
+ * (IntakeChannelSettings.tsx).
+ */
 
 type Change = (patch: Partial<IntakeAutomationDraft>) => void;
 
@@ -116,411 +107,6 @@ function IntakeSettingsSection({
         </Modal>
       )}
     </section>
-  );
-}
-
-/** A setting turned on or off, named by its visible label. */
-function ToggleRow({
-  label,
-  description,
-  checked,
-  onChange,
-}: {
-  label: string;
-  description?: ReactNode;
-  checked: boolean;
-  onChange: (checked: boolean) => void;
-}) {
-  const labelId = useId();
-  const descriptionId = useId();
-  return (
-    <SettingsRow>
-      <div className="min-w-0 space-y-1">
-        <p id={labelId} className={ROW_LABEL_CLASS}>
-          {label}
-        </p>
-        {description && (
-          <p id={descriptionId} className={ROW_DESCRIPTION_CLASS}>
-            {description}
-          </p>
-        )}
-      </div>
-      <ToggleSwitchUI
-        checked={checked}
-        onCheckedChange={onChange}
-        aria-labelledby={labelId}
-        aria-describedby={description ? descriptionId : undefined}
-        className="shrink-0"
-      />
-    </SettingsRow>
-  );
-}
-
-/**
- * A value to paste elsewhere, such as a webhook URL: shown whole, wrapping
- * rather than scrolling, with a button that copies it.
- */
-function CopyValue({
-  label,
-  name,
-  value,
-  children,
-}: {
-  label: string;
-  /** What the copy button copies, for its accessible name. */
-  name: string;
-  value: string;
-  children?: ReactNode;
-}) {
-  return (
-    <div>
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <p className={ROW_LABEL_CLASS}>{label}</p>
-        <TextButtonUI
-          size="xs"
-          // Names what it copies; the visible "Copy" starts the name.
-          aria-label={`Copy ${name}`}
-          onClick={() =>
-            // Inside the promise, so a browser without clipboard access
-            // reports it like any other failure.
-            Promise.resolve()
-              .then(() => navigator.clipboard.writeText(value))
-              .then(
-                () => notifySuccess(`${label} copied`),
-                (e) => notifyError(e, { action: `copy the ${name}` }),
-              )
-          }
-        >
-          <Copy aria-hidden="true" className="h-3 w-3" />
-          Copy
-        </TextButtonUI>
-      </div>
-      <TextSlabUI>
-        <code className="block font-mono text-xs text-gray-900 [overflow-wrap:anywhere]">
-          {value}
-        </code>
-      </TextSlabUI>
-      {children}
-    </div>
-  );
-}
-
-/** "Saved" beside a write-only field whose value is kept. */
-function SavedMark() {
-  return (
-    <span className="inline-flex items-center gap-1 text-xs text-gray-500">
-      <Check aria-hidden="true" className="h-3 w-3 text-emerald-600" />
-      Saved
-    </span>
-  );
-}
-
-/**
- * Email: forward a shared address to Postmark, which posts each message to
- * a secret webhook URL MikeGC generates. The URL is shown once.
- */
-export function IntakeEmailSection({
-  settings,
-  draft,
-  webhook,
-  generating,
-  onChange,
-  onGenerate,
-}: {
-  settings: IntakeAutomationSettings["email"];
-  draft: IntakeAutomationDraft;
-  /** A URL generated on this visit; it is never shown again. */
-  webhook: IntakeEmailWebhook | null;
-  generating: boolean;
-  onChange: Change;
-  onGenerate: () => void;
-}) {
-  const domainId = useId();
-  const domainError = intakeDomainInputError(draft);
-  const addDomain = () => {
-    const domain = normalizeIntakeDomain(draft.domainInput);
-    if (!domain || domainError) return;
-    onChange({
-      domains: draft.domains.includes(domain)
-        ? draft.domains
-        : [...draft.domains, domain],
-      domainInput: "",
-    });
-  };
-  return (
-    <IntakeSettingsSection
-      title="Email"
-      description="Forward a shared address, such as legal-intake@company.com, and MikeGC records each message sent to it as a request."
-      steps={[
-        "Turn email on, generate the webhook URL below and copy it.",
-        "In Postmark, open your server's Inbound stream and paste it as the Webhook URL.",
-        "Forward your intake address to the stream's inbound address.",
-        "Add the domains to accept mail from. Until one is added, no mail is recorded.",
-      ]}
-    >
-      <ToggleRow
-        label="Record requests from email"
-        description={
-          draft.emailEnabled && !settings.configured
-            ? "Generate the webhook URL to finish turning email on."
-            : undefined
-        }
-        checked={draft.emailEnabled}
-        onChange={(emailEnabled) => onChange({ emailEnabled })}
-      />
-      {/* Its setup is shown only while email is on. */}
-      {draft.emailEnabled && (
-        <>
-          <SettingsRow layout="stacked">
-            <div className="flex items-center justify-between gap-3">
-              <p className="min-w-0 text-sm text-gray-700 [overflow-wrap:anywhere]">
-                {!settings.configured
-                  ? "No webhook URL yet."
-                  : settings.token_hint
-                    ? `Webhook URL ending …${settings.token_hint}`
-                    : "A webhook URL is set."}
-              </p>
-              <PillButtonUI
-                tone="white"
-                size="sm"
-                className="shrink-0"
-                // The visible word starts the name, which says what it makes.
-                aria-label={
-                  settings.configured
-                    ? "Replace webhook URL"
-                    : "Generate webhook URL"
-                }
-                loading={generating}
-                onClick={onGenerate}
-              >
-                {settings.configured ? "Replace" : "Generate"}
-              </PillButtonUI>
-            </div>
-            {webhook && (
-              <CopyValue
-                label="Webhook URL"
-                name="webhook URL"
-                value={webhook.webhook_url}
-              >
-                <p role="status" className={HINT_CLASS}>
-                  Copy it now: MikeGC won&apos;t show it again.
-                </p>
-              </CopyValue>
-            )}
-          </SettingsRow>
-          <SettingsRow layout="stacked">
-            <div>
-              <label htmlFor={domainId} className={LABEL_CLASS}>
-                Allowed sender domains
-              </label>
-              {draft.domains.length > 0 && (
-                <ul className="mb-2 space-y-1">
-                  {draft.domains.map((domain) => (
-                    <li
-                      key={domain}
-                      className="flex min-w-0 items-center justify-between gap-2 text-sm text-gray-900"
-                    >
-                      <span className="min-w-0 [overflow-wrap:anywhere]">
-                        {domain}
-                      </span>
-                      <TextButtonUI
-                        size="icon-xs"
-                        aria-label={`Remove ${domain}`}
-                        onClick={() =>
-                          onChange({
-                            domains: draft.domains.filter(
-                              (item) => item !== domain,
-                            ),
-                          })
-                        }
-                      >
-                        <X aria-hidden="true" className="h-3.5 w-3.5" />
-                      </TextButtonUI>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {/* Add sits inside the field, at its end. */}
-              <div className="relative">
-                <SettingsTextInput
-                  id={domainId}
-                  className="pr-14"
-                  placeholder="example.com"
-                  autoComplete="off"
-                  spellCheck={false}
-                  maxLength={253}
-                  value={draft.domainInput}
-                  aria-invalid={!!domainError}
-                  aria-describedby={
-                    domainError ? `${domainId}-error` : undefined
-                  }
-                  onChange={(event) =>
-                    onChange({ domainInput: event.target.value })
-                  }
-                  onKeyDown={(event) => {
-                    // Enter adds the domain rather than submitting the form.
-                    if (event.key !== "Enter") return;
-                    event.preventDefault();
-                    addDomain();
-                  }}
-                />
-                <TextButtonUI
-                  size="xs"
-                  className="absolute right-2 top-1/2 -translate-y-1/2"
-                  disabled={!draft.domainInput.trim() || !!domainError}
-                  onClick={addDomain}
-                >
-                  Add
-                </TextButtonUI>
-              </div>
-              {domainError && (
-                <p id={`${domainId}-error`} className={ERROR_CLASS}>
-                  {domainError}
-                </p>
-              )}
-            </div>
-          </SettingsRow>
-        </>
-      )}
-    </IntakeSettingsSection>
-  );
-}
-
-/**
- * A write-only secret: never shown, kept when left empty. It saves once it
- * is complete, on leaving the field or Enter, never part-typed.
- */
-function SecretField({
-  label,
-  saved,
-  value,
-  placeholder,
-  onChange,
-  onCommit,
-}: {
-  label: string;
-  saved: boolean;
-  value: string;
-  placeholder: string;
-  onChange: (value: string) => void;
-  onCommit: () => void;
-}) {
-  const id = useId();
-  return (
-    <div>
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <label htmlFor={id} className={ROW_LABEL_CLASS}>
-          {label}
-        </label>
-        {saved && !value && <SavedMark />}
-      </div>
-      <SettingsTextInput
-        id={id}
-        type="password"
-        // Not a sign-in: keep the browser from filling a saved password.
-        autoComplete="new-password"
-        spellCheck={false}
-        value={value}
-        placeholder={saved ? "Paste a new one to replace it" : placeholder}
-        aria-describedby={saved ? `${id}-hint` : undefined}
-        onChange={(event) => onChange(event.target.value)}
-        onBlur={onCommit}
-        onKeyDown={(event) => {
-          if (event.key !== "Enter") return;
-          event.preventDefault();
-          onCommit();
-        }}
-      />
-      {saved && (
-        <p id={`${id}-hint`} className={HINT_CLASS}>
-          Leave empty to keep the saved one.
-        </p>
-      )}
-    </div>
-  );
-}
-
-/**
- * Slack: a Slack app called MikeGC posts each @MikeGC mention to its events
- * URL; its signing secret and bot token are saved here, write-only.
- */
-export function IntakeSlackSection({
-  settings,
-  draft,
-  onChange,
-  onCommitSecret,
-}: {
-  settings: IntakeAutomationSettings["slack"];
-  draft: IntakeAutomationDraft;
-  onChange: Change;
-  /** A typed secret is complete and may be saved. */
-  onCommitSecret: (secret: "signingSecret" | "botToken") => void;
-}) {
-  return (
-    <IntakeSettingsSection
-      title="Slack"
-      description="People write @MikeGC in Slack to send a message, or the thread it's in, to Legal."
-      steps={[
-        "Create a Slack app called MikeGC and install it to your workspace.",
-        "Turn Slack on, then paste the app's Signing Secret and Bot User OAuth Token below.",
-        "In the app's Event Subscriptions, paste the Events Request URL, subscribe to the app_mention bot event, then invite @MikeGC to your channels.",
-      ]}
-    >
-      <ToggleRow
-        label="Record requests from Slack"
-        description={
-          draft.slackEnabled && !settings.configured
-            ? "Save the Signing Secret and Bot User OAuth Token to finish turning Slack on."
-            : undefined
-        }
-        checked={draft.slackEnabled}
-        onChange={(slackEnabled) => onChange({ slackEnabled })}
-      />
-      {/* Its setup is shown only while Slack is on. */}
-      {draft.slackEnabled && (
-        <>
-          <SettingsRow layout="stacked">
-            <CopyValue
-              label="Events Request URL"
-              name="Events Request URL"
-              value={settings.events_url}
-            />
-          </SettingsRow>
-          <SettingsRow layout="stacked">
-            <SecretField
-              label="Signing Secret"
-              saved={settings.configured}
-              value={draft.signingSecret}
-              placeholder="Paste the app's Signing Secret"
-              onChange={(signingSecret) => onChange({ signingSecret })}
-              onCommit={() => onCommitSecret("signingSecret")}
-            />
-            <SecretField
-              label="Bot User OAuth Token"
-              saved={settings.configured}
-              value={draft.botToken}
-              placeholder="xoxb-…"
-              onChange={(botToken) => onChange({ botToken })}
-              onCommit={() => onCommitSecret("botToken")}
-            />
-            {settings.configured &&
-              (settings.team_name || settings.team_id) && (
-                <div>
-                  <p className={LABEL_CLASS}>Connected workspace</p>
-                  <p className="text-sm text-gray-900 [overflow-wrap:anywhere]">
-                    {settings.team_name ?? settings.team_id}
-                  </p>
-                  {settings.bot_user_id && (
-                    <p className="text-xs text-gray-500 [overflow-wrap:anywhere]">
-                      MikeGC bot user {settings.bot_user_id}
-                    </p>
-                  )}
-                </div>
-              )}
-          </SettingsRow>
-        </>
-      )}
-    </IntakeSettingsSection>
   );
 }
 
@@ -731,14 +317,21 @@ function ModelRow({
   );
 }
 
-/** Triage rules: who each request goes to, on a table page of their own. */
+/**
+ * Triage rules: who each request goes to, on a table page of their own, and
+ * whether MikeGC asks requesters for what it is missing.
+ */
 export function IntakeTriageRulesSection({
   rulesHref,
   modelsHref,
+  draft,
+  onChange,
 }: {
   rulesHref: string;
   /** Model Preferences, where triage's and preprocessing's models are chosen. */
   modelsHref: string;
+  draft?: IntakeAutomationDraft;
+  onChange?: Change;
 }) {
   return (
     <IntakeSettingsSection title="Triage rules">
@@ -773,6 +366,14 @@ export function IntakeTriageRulesSection({
           Edit
         </Link>
       </SettingsRow>
+      {draft && onChange && (
+        <ToggleRow
+          label="Ask requesters for missing details"
+          description="Before Legal starts, MikeGC asks in the request's thread for what it needs to choose a rule, then for what the rule's playbook or workflow needs. It asks at most two rounds of questions, and stops once a lawyer acts on the request."
+          checked={draft.clarifyEnabled}
+          onChange={(clarifyEnabled) => onChange({ clarifyEnabled })}
+        />
+      )}
     </IntakeSettingsSection>
   );
 }

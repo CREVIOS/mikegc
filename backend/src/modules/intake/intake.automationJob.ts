@@ -1,58 +1,51 @@
-import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { createDocumentVersion } from "../documents/documents.service";
-import { convertedPdfKey } from "../../lib/convert";
-import { contentSha256 } from "../../lib/documentVersions";
-import {
-  ALLOWED_DOCUMENT_TYPES,
-  contentTypeForDocumentType,
-  documentSuffix,
-  shouldConvertToPdf,
-} from "../../lib/documentTypes";
 import { enqueueDbJob } from "../../lib/dbq/enqueue";
 import { NonRetryableJobError, dbJobsEnabled } from "../../lib/dbq/runner";
 import type { DbJob } from "../../lib/dbq/types";
-import { isPersonalOrg } from "../../lib/personalOrgs";
-import { enqueueConversion } from "../../lib/queue/conversionQueue";
-import { configuredFrontendUrl } from "../../lib/runtimeConfig";
 import { safeError } from "../../lib/safeError";
-import {
-  deleteFile,
-  deleteFileBestEffort,
-  downloadFile,
-  storageKey,
-  uploadFile,
-} from "../../lib/storage";
+import { deleteFile } from "../../lib/storage";
 import type { Db } from "../../lib/supabase";
+import { loadAutomationRow, type AutomationRow } from "./intake.settingsRow";
+import { acknowledgeRequest, askRequester } from "./intake.outbox";
 import {
-  loadAutomationRow,
-  slackBotToken,
-  type AutomationRow,
-} from "./intake.automation";
+  IntakeAutomationError,
+  RECORDED_INCOMPLETE,
+  addDocuments,
+  channelAttachments,
+  type CandidateDownloader,
+} from "./intake.attachments";
+import {
+  linkThread,
+  loadRequestLink,
+  type ChannelSource,
+} from "./intake.channels";
+import { MAX_CLARIFY_ROUNDS, stableId } from "./intake.clarify";
+import { requestLink } from "./intake.deliver";
 import {
   MAX_ATTACHMENT_BYTES,
-  MAX_ATTACHMENTS,
   MAX_MESSAGE_CHARS,
   cleanText,
   clip,
   inboundPayload,
   stagedKeys,
-  type AttachmentCandidate,
   type EmailInboundPayload,
   type InboundPayload,
-  type SkippedAttachment,
+  type MailInboundPayload,
   type SlackInboundPayload,
   type TriagePlan,
 } from "./intake.inboundPayload";
-import { intakeRpc } from "./intake.shared";
+import { mailThread, recordEmailMessageIds } from "./intake.mail";
 import { queueIntakePreprocess } from "./intake.preprocess";
+import { slackBotToken } from "./intake.secrets";
+import { dispatchIntakeJob, intakeRpc } from "./intake.shared";
 import {
   SLACK_TOKEN_ERRORS,
   SlackApiError,
   downloadSlackFile,
   isPermanentSlackError,
   mentionedUsers,
-  slackEscape,
+  slackChannelName,
+  slackPermalink,
   slackPostMessage,
   slackTextToPlain,
   slackThreadMessages,
@@ -60,6 +53,13 @@ import {
   type SlackFile,
   type SlackPerson,
 } from "./intake.slack";
+import {
+  TeamsApiError,
+  isPermanentTeamsError,
+  teamsDownloadFile,
+  teamsInboundMessage,
+  teamsThread,
+} from "./intake.teams";
 import {
   formatSent,
   loadTriageRules,
@@ -70,30 +70,18 @@ import {
 
 /**
  * The intake.inbound job: triage a received message, record it as MikeGC's
- * request, add its documents and answer in Slack. Every step can run again:
- * the plan, each document's ids and the Slack reply are saved on the message
- * as they happen, and recording the request is keyed by the message.
+ * request, add its documents, link the request to its thread and answer
+ * there: with MikeGC's questions when it needs more to choose a rule, else
+ * with an acknowledgement (which waits for the readiness check when the
+ * rule's preprocessing may ask too). Every step can run again: the plan,
+ * each document's ids and each step done are saved on the message as they
+ * happen, and recording the request is keyed by the message.
  */
 
 export const INTAKE_INBOUND_JOB = "intake.inbound";
 const JOB_ATTEMPTS = 4;
-/** A document owner segment for MikeGC's files, which have no uploader. */
-const ownerSegment = (orgId: string) => `intake-${orgId}`;
-
-/**
- * A failure an admin can act on. Its message is the sentence shown in the
- * settings page's recent messages, so it never carries message content.
- */
-class IntakeAutomationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "IntakeAutomationError";
-  }
-}
 
 const GENERIC_FAILURE = "MikeGC couldn't record this message. Try sending it again.";
-const RECORDED_INCOMPLETE =
-  "The request was recorded, but MikeGC couldn't add all of its documents or reply in Slack.";
 
 /** The sentence an admin sees for why a message failed. */
 function adminMessage(error: unknown): string {
@@ -111,13 +99,14 @@ function adminMessage(error: unknown): string {
       return "MikeGC couldn't download a file from Slack. Check that the Slack app has the files:read permission.";
     return "MikeGC couldn't reach Slack.";
   }
+  if (error instanceof TeamsApiError) return error.sentence;
   return GENERIC_FAILURE;
 }
 
 type InboundRow = {
   id: string;
   org_id: string;
-  source: "email" | "slack";
+  source: "email" | ChannelSource;
   status: "pending" | "done" | "failed" | "ignored";
   payload: unknown;
   request_id: string | null;
@@ -141,7 +130,7 @@ async function loadInbound(
 }
 
 /** Write progress, only while the message is still waiting. */
-async function savePayload(db: Db, id: string, payload: InboundPayload) {
+export async function saveInboundPayload(db: Db, id: string, payload: unknown) {
   const { error } = await db
     .from("intake_inbound")
     .update({ payload, updated_at: new Date().toISOString() })
@@ -151,12 +140,12 @@ async function savePayload(db: Db, id: string, payload: InboundPayload) {
 }
 
 /**
- * Leave the waiting state for good, dropping the content. An email's staged
+ * Leave the waiting state for good, dropping the content. Staged
  * attachments are released first: if settling then fails, the message is
  * settled again and released again, which is harmless, rather than settled
  * with its staged files left behind.
  */
-async function settle(
+export async function settleInbound(
   db: Db,
   id: string,
   status: "done" | "failed",
@@ -178,7 +167,7 @@ async function settle(
 }
 
 /**
- * Remove an email's staged attachments, once nothing will read them: a
+ * Remove a message's staged attachments, once nothing will read them: a
  * storage.cleanup job, or with the job runner off, which would never run it,
  * deleted now. Unlike enqueueStorageCleanup this throws when neither is
  * certain, so the message keeps its payload, and with it the keys, until a
@@ -207,6 +196,7 @@ function requireSlackToken(settings: AutomationRow | null): string {
   return token;
 }
 
+/** A Postmark email, recorded before MikeGC read the mailbox itself. */
 function emailMessage(payload: EmailInboundPayload): InboundMessage {
   const email = payload.from.email;
   return {
@@ -230,37 +220,33 @@ function emailMessage(payload: EmailInboundPayload): InboundMessage {
   };
 }
 
-const slackDate = (ts: string) => new Date(Number(ts.split(".")[0]) * 1000);
-
-/** Slack's files on the request, held to the same limits as an email's. */
-function slackAttachments(files: SlackInboundPayload["files"]): {
-  candidates: AttachmentCandidate[];
-  skipped: SkippedAttachment[];
-} {
-  const candidates: AttachmentCandidate[] = [];
-  const skipped: SkippedAttachment[] = [];
-  for (const file of files) {
-    const fileType = documentSuffix(file.name);
-    if (!ALLOWED_DOCUMENT_TYPES.has(fileType))
-      skipped.push({ name: file.name, reason: "type" });
-    else if (file.size !== null && file.size > MAX_ATTACHMENT_BYTES)
-      skipped.push({ name: file.name, reason: "size" });
-    else if (!file.url) skipped.push({ name: file.name, reason: "unreadable" });
-    else if (candidates.length >= MAX_ATTACHMENTS)
-      skipped.push({ name: file.name, reason: "count" });
-    else
-      candidates.push({
-        name: file.name,
-        file_type: fileType,
-        size: file.size,
-        key: null,
-        url: file.url,
-      });
-  }
-  return { candidates, skipped };
+/** An email to the intake mailbox, read through Graph or the Gmail API. */
+function mailMessage(payload: MailInboundPayload): InboundMessage {
+  const email = payload.from.email;
+  return {
+    source: payload.provider === "graph" ? "outlook" : "gmail",
+    sender: {
+      name: payload.from.name ?? email?.split("@")[0] ?? "Unknown sender",
+      email,
+    },
+    sentAt: new Date(payload.date),
+    subject: payload.subject,
+    subjectHint: payload.subject,
+    text: payload.text,
+    candidates: payload.attachments.map((a) => ({
+      name: a.name,
+      file_type: a.file_type,
+      size: a.size,
+      key: a.key,
+      url: null,
+    })),
+    skipped: payload.skipped,
+  };
 }
 
-function fileRefs(files: SlackFile[] | undefined): SlackInboundPayload["files"] {
+const slackDate = (ts: string) => new Date(Number(ts.split(".")[0]) * 1000);
+
+export function slackFileRefs(files: SlackFile[] | undefined): SlackInboundPayload["files"] {
   return (files ?? [])
     .filter((f) => f.mode !== "tombstone" && f.mode !== "external" && !f.is_external)
     .map((f) => ({
@@ -304,7 +290,7 @@ async function slackMessage(
         user: m.user ?? null,
         ts: m.ts,
         text: cleanText(m.text ?? ""),
-        files: fileRefs(m.files),
+        files: slackFileRefs(m.files),
       }))
       .filter((m) => m.text.trim() || m.files.length);
     // The thread as far as it could be read, ending with the mention even
@@ -369,7 +355,106 @@ async function slackMessage(
     subject: null,
     subjectHint: firstLine,
     text: clip(text, MAX_MESSAGE_CHARS),
-    ...slackAttachments(files),
+    ...channelAttachments(files, "slack"),
+  };
+}
+
+/** The message as triage reads it, whichever channel it came from. */
+async function inboundMessage(
+  settings: AutomationRow | null,
+  payload: InboundPayload,
+): Promise<InboundMessage> {
+  switch (payload.kind) {
+    case "email":
+      return emailMessage(payload);
+    case "mail":
+      return mailMessage(payload);
+    case "slack":
+      return slackMessage(requireSlackToken(settings), settings, payload);
+    case "teams":
+      if (!settings) throw new NonRetryableJobError("Teams isn't connected.");
+      return teamsInboundMessage(settings, payload);
+  }
+}
+
+/** The channel a message can be answered in; Postmark email has none. */
+function channelOf(payload: InboundPayload): ChannelSource | null {
+  switch (payload.kind) {
+    case "slack":
+      return "slack";
+    case "mail":
+      return payload.provider === "graph" ? "outlook" : "gmail";
+    case "teams":
+      return "teams";
+    case "email":
+      return null;
+  }
+}
+
+/** The thread to link a request to: its key and what posting there needs. */
+async function threadOf(
+  settings: AutomationRow,
+  payload: InboundPayload,
+): Promise<{ source: ChannelSource; key: string; address: Record<string, unknown> } | null> {
+  switch (payload.kind) {
+    case "email":
+      return null;
+    case "slack": {
+      const token = requireSlackToken(settings);
+      const root = payload.thread_ts ?? payload.ts;
+      const team = payload.team_id ?? settings.slack_team_id ?? "";
+      const [channelName, permalink] = await Promise.all([
+        slackChannelName(token, payload.channel),
+        slackPermalink(token, payload.channel, root),
+      ]);
+      return {
+        source: "slack",
+        key: `${team}:${payload.channel}:${root}`,
+        address: {
+          team_id: team || null,
+          channel: payload.channel,
+          thread_ts: root,
+          channel_name: channelName,
+          permalink,
+        },
+      };
+    }
+    case "mail":
+      return mailThread(settings, payload);
+    case "teams":
+      return teamsThread(payload);
+  }
+}
+
+/** Link a recorded request to the thread its message came from. */
+async function linkRequestThread(
+  db: Db,
+  orgId: string,
+  requestId: string,
+  settings: AutomationRow,
+  payload: InboundPayload,
+) {
+  const thread = await threadOf(settings, payload);
+  if (!thread) return;
+  const linkId = await linkThread(db, {
+    orgId,
+    requestId,
+    source: thread.source,
+    threadKey: thread.key,
+    address: thread.address,
+  });
+  if (linkId && payload.kind === "mail")
+    await recordEmailMessageIds(db, orgId, linkId, [payload.message_id]);
+}
+
+/** Download a channel file for an attachment. */
+function downloader(settings: AutomationRow | null): CandidateDownloader {
+  return async (candidate) => {
+    if (!candidate.url || !settings) return null;
+    if (candidate.via === "teams")
+      return teamsDownloadFile(settings, candidate.url, MAX_ATTACHMENT_BYTES);
+    const token = slackBotToken(settings);
+    return token ? downloadSlackFile(token, candidate.url, MAX_ATTACHMENT_BYTES) : null;
   };
 }
 
@@ -406,193 +491,25 @@ async function submit(db: Db, row: InboundRow, plan: TriagePlan): Promise<string
   );
 }
 
-/**
- * Make one attachment MikeGC's document on the request, as an upload is
- * made: linked before any bytes are written, so it never belongs to no
- * request, then given its version and marked ready. A Word or PowerPoint file
- * is queued for the PDF rendition the viewer opens. Returns false when the
- * request is gone.
- */
-async function addDocument(
-  db: Db,
-  args: {
-    orgId: string;
-    requestId: string;
-    entry: { document_id: string; version_id: string };
-    name: string;
-    fileType: string;
-    bytes: ArrayBuffer;
-  },
-): Promise<boolean> {
-  const { orgId, entry } = args;
-  const documentId = entry.document_id;
-  const { error: insertError } = await db.from("documents").upsert(
-    {
-      id: documentId,
-      user_id: null,
-      org_id: orgId,
-      status: "processing",
-      library_kind: "intake_attachment",
-    },
-    { onConflict: "id", ignoreDuplicates: true },
-  );
-  if (insertError) throw insertError;
-  const attached = await intakeRpc<null>(db, "intake_attach_automated", {
-    p_org: orgId,
-    p_request: args.requestId,
-    p_document: documentId,
-  });
-  if (!attached.ok) {
-    await db.from("documents").delete().eq("id", documentId);
-    if (attached.kind === "not_found") return false;
-    if (attached.kind === "error") throw attached.error;
-    throw new IntakeAutomationError(RECORDED_INCOMPLETE);
-  }
-  const key = storageKey(ownerSegment(orgId), documentId, args.name);
-  try {
-    await uploadFile(key, args.bytes, contentTypeForDocumentType(args.fileType));
-    const { error: versionError } = await createDocumentVersion(db, {
-      id: entry.version_id,
-      document_id: documentId,
-      storage_path: key,
-      pdf_storage_path: args.fileType === "pdf" ? key : null,
-      source: "upload",
-      version_number: 1,
-      filename: args.name,
-      file_type: args.fileType,
-      size_bytes: args.bytes.byteLength,
-      page_count: null,
-      textless_page_count: null,
-      content_sha256: contentSha256(args.bytes),
-    });
-    if (versionError) throw versionError;
-    const { error: readyError } = await db
-      .from("documents")
-      .update({ status: "ready", updated_at: new Date().toISOString() })
-      .eq("id", documentId);
-    if (readyError) throw readyError;
-  } catch (error) {
-    await Promise.all([
-      deleteFileBestEffort(key, "intake-automation-rollback"),
-      db.from("documents").delete().eq("id", documentId),
-    ]);
-    throw error;
-  }
-  if (shouldConvertToPdf(args.fileType)) {
-    try {
-      await enqueueConversion({
-        documentId,
-        versionId: entry.version_id,
-        userId: ownerSegment(orgId),
-        storagePath: key,
-        fileType: args.fileType,
-        pdfKey: convertedPdfKey(ownerSegment(orgId), documentId),
-        finalizeDocumentStatus: false,
-      });
-    } catch (error) {
-      // The document still opens as its original file.
-      console.warn("[intake-automation] rendition not queued", safeError(error));
-    }
-  }
-  return true;
-}
-
-async function addDocuments(
+/** A note on the request whose thread this mail arrived in, linking to it. */
+async function noteRelated(
   db: Db,
   row: InboundRow,
-  payload: InboundPayload,
-  plan: TriagePlan,
+  relatedId: string,
   requestId: string,
-  slackToken: string | null,
+  sender: string | null,
 ) {
-  payload.documents ??= {};
-  for (const index of plan.attachments) {
-    const candidate = plan.candidates[index];
-    if (!candidate) continue;
-    let entry = payload.documents[String(index)];
-    if (entry?.done) continue;
-    if (!entry) {
-      // Named before it is made, so a retry makes this same document.
-      entry = { document_id: randomUUID(), version_id: randomUUID(), done: false };
-      payload.documents[String(index)] = entry;
-      await savePayload(db, row.id, payload);
-    }
-    const bytes = candidate.key
-      ? await downloadFile(candidate.key)
-      : candidate.url && slackToken
-        ? await downloadSlackFile(slackToken, candidate.url, MAX_ATTACHMENT_BYTES)
-        : null;
-    if (!bytes) {
-      // Larger than Slack said, or an email's staged copy is gone.
-      if (candidate.key) throw new Error("Staged intake attachment is missing");
-      entry.done = true;
-      await savePayload(db, row.id, payload);
-      continue;
-    }
-    const added = await addDocument(db, {
-      orgId: row.org_id,
-      requestId,
-      entry,
-      name: candidate.name,
-      fileType: candidate.file_type,
-      bytes,
-    });
-    if (!added) return;
-    entry.done = true;
-    await savePayload(db, row.id, payload);
-  }
-}
-
-/** The link to a request, in the workspace the web app names it by. */
-async function requestLink(db: Db, orgId: string, requestId: string) {
-  const workspace = (await isPersonalOrg(db, orgId)) ? "personal" : orgId;
-  return `${configuredFrontendUrl()}/intake/${requestId}?org=${encodeURIComponent(workspace)}`;
-}
-
-/** The thread's answer, or null when the request has since been deleted. */
-async function recordedReply(
-  db: Db,
-  orgId: string,
-  requestId: string,
-): Promise<string | null> {
-  const { data, error } = await db
-    .from("intake_requests")
-    .select("subject, assignee_id")
-    .eq("id", requestId)
-    .maybeSingle();
-  if (error) throw error;
-  const request = data as { subject: string; assignee_id: string | null } | null;
-  if (!request) return null;
-  let assignee: string | null = null;
-  if (request.assignee_id) {
-    const profile = await db
-      .from("user_profiles")
-      .select("display_name, email")
-      .eq("user_id", request.assignee_id)
-      .maybeSingle();
-    if (profile.error) throw profile.error;
-    const p = profile.data as { display_name: string | null; email: string | null } | null;
-    assignee = p?.display_name?.trim() || p?.email || null;
-  }
-  const link = await requestLink(db, orgId, requestId);
-  const subject = slackEscape(request.subject);
-  return (
-    `Logged for Legal: <${link}|${subject}>. ` +
-    (assignee
-      ? `Assigned to ${slackEscape(assignee)}.`
-      : "Not assigned to a reviewer yet.")
-  );
-}
-
-const FAILED_REPLY =
-  "Sorry, I couldn't log this for Legal. Please try again, or contact the Legal team directly.";
-
-async function replyInThread(token: string, payload: SlackInboundPayload, text: string) {
-  await slackPostMessage(token, {
-    channel: payload.channel,
-    threadTs: payload.thread_ts ?? payload.ts,
-    text,
+  const link = await requestLink(db, row.org_id, requestId);
+  const note = await intakeRpc<boolean>(db, "intake_note_automated", {
+    p_org: row.org_id,
+    p_request: relatedId,
+    p_note: stableId(`intake.related:${row.id}`),
+    p_body:
+      `A message in this request's email thread came from ${sender ?? "someone"}, who isn't on the thread, ` +
+      `so MikeGC recorded it as a new request: ${link}`,
   });
+  if (!note.ok && note.kind !== "not_found")
+    throw note.kind === "error" ? note.error : new Error(note.detail);
 }
 
 async function processInbound(db: Db, row: InboundRow): Promise<Record<string, unknown>> {
@@ -600,14 +517,14 @@ async function processInbound(db: Db, row: InboundRow): Promise<Record<string, u
   if (!parsed.success)
     throw new NonRetryableJobError("The received message couldn't be read.");
   const payload = parsed.data;
+  const save = () => saveInboundPayload(db, row.id, payload);
   const settings = await loadAutomationRow(db, row.org_id);
-  const slackToken = payload.kind === "slack" ? requireSlackToken(settings) : null;
+  const channel = channelOf(payload);
+  // MikeGC asks only where it can be answered: in a thread, with asking on.
+  const canAsk = !!channel && settings?.clarify_enabled !== false;
 
   if (!payload.plan) {
-    const message =
-      payload.kind === "email"
-        ? emailMessage(payload)
-        : await slackMessage(slackToken!, settings, payload);
+    const message = await inboundMessage(settings, payload);
     // Triage runs with the model the organization chose; without one, or
     // once its key has gone, the message is recorded as it arrived.
     const [rules, model] = await Promise.all([
@@ -619,43 +536,96 @@ async function processInbound(db: Db, row: InboundRow): Promise<Record<string, u
         settings?.triage_model ?? null,
       ),
     ]);
-    payload.plan = await triageInbound({
-      message,
-      rules,
-      model,
-    });
-    await savePayload(db, row.id, payload);
+    const plan = await triageInbound({ message, rules, model });
+    // With questions, the rule is undecided: recorded unassigned, waiting.
+    if (plan.questions.length && canAsk && MAX_CLARIFY_ROUNDS > 0) {
+      plan.assignee_id = null;
+      plan.preprocess = null;
+    } else plan.questions = [];
+    payload.plan = plan;
+    await save();
   }
   const plan = payload.plan;
   // Recorded, then deleted before this run: it stays deleted.
   if (payload.recorded && !row.request_id) {
-    await settle(db, row.id, "done", null, payload);
+    await settleInbound(db, row.id, "done", null, payload);
     return { request_id: null, deleted: true };
   }
   const requestId = row.request_id ?? (await submit(db, row, plan));
   if (!payload.recorded) {
     payload.recorded = true;
-    await savePayload(db, row.id, payload);
+    await save();
   }
-  await addDocuments(db, row, payload, plan, requestId, slackToken);
-  // Once its documents are attached, so preprocessing reads them.
+  if (channel && settings && !payload.linked) {
+    await linkRequestThread(db, row.org_id, requestId, settings, payload);
+    payload.linked = true;
+    await save();
+  }
+  payload.documents ??= {};
+  const attached = await addDocuments(db, {
+    orgId: row.org_id,
+    requestId,
+    candidates: plan.candidates,
+    chosen: plan.attachments,
+    documents: payload.documents,
+    save,
+    download: downloader(settings),
+  });
+  if (!attached) {
+    // The request was deleted while its documents were being added.
+    await settleInbound(db, row.id, "done", null, payload);
+    return { request_id: null, deleted: true };
+  }
+  if (payload.kind === "mail" && payload.related_request_id && !payload.relatedNoted) {
+    await noteRelated(db, row, payload.related_request_id, requestId, payload.from.email);
+    payload.relatedNoted = true;
+    await save();
+  }
+  const linked = !!(await loadRequestLink(db, row.org_id, requestId));
+  // Questions to choose a rule go in the acknowledgement.
+  if (plan.questions.length && !payload.acknowledged) {
+    const asked =
+      linked &&
+      (await askRequester(db, {
+        orgId: row.org_id,
+        requestId,
+        seed: `${requestId}:rule:0`,
+        questions: plan.questions,
+        stage: "rule",
+        acknowledge: true,
+      }));
+    if (!asked && linked) await acknowledgeRequest(db, row.org_id, requestId);
+    payload.acknowledged = true;
+    await save();
+  }
+  // Once its documents are attached, so preprocessing reads them. When its
+  // readiness check may ask, the acknowledgement waits for it, so any
+  // questions go in the same message.
+  const deferAcknowledgement = !!plan.preprocess && linked && canAsk;
   if (plan.preprocess && !payload.preprocessQueued) {
     await queueIntakePreprocess(db, {
       orgId: row.org_id,
       requestId,
       with: plan.preprocess.with,
+      condition: plan.preprocess.condition ?? null,
+      round: 0,
+      acknowledge: deferAcknowledgement && !payload.acknowledged,
     });
     payload.preprocessQueued = true;
-    await savePayload(db, row.id, payload);
+    if (deferAcknowledgement) payload.acknowledged = true;
+    await save();
   }
-  if (payload.kind === "slack" && !payload.replied) {
-    const reply = await recordedReply(db, row.org_id, requestId);
-    if (reply) await replyInThread(slackToken!, payload, reply);
-    payload.replied = true;
-    await savePayload(db, row.id, payload);
+  if (!payload.acknowledged && !payload.replied) {
+    if (linked) await acknowledgeRequest(db, row.org_id, requestId);
+    payload.acknowledged = true;
+    await save();
   }
-  await settle(db, row.id, "done", null, payload);
-  return { request_id: requestId, triaged: plan.triaged };
+  await settleInbound(db, row.id, "done", null, payload);
+  return {
+    request_id: requestId,
+    triaged: plan.triaged,
+    asked: plan.questions.length > 0,
+  };
 }
 
 /**
@@ -684,17 +654,20 @@ export async function handleIntakeInbound(
       .eq("id", row.id)
       .eq("status", "pending")
       .then(undefined, () => undefined);
-    if (isPermanentSlackError(error))
+    if (isPermanentSlackError(error) || isPermanentTeamsError(error))
       throw new NonRetryableJobError(reason);
     throw error;
   }
 }
 
+const FAILED_REPLY =
+  "Sorry, I couldn't log this for Legal. Please try again, or contact the Legal team directly.";
+
 /**
  * When a message's job has failed for good: mark it failed with the reason
- * already recorded, drop its content and staged files, and tell the Slack
- * thread. A request that was recorded keeps its link, and the thread is
- * pointed to it rather than told nothing was logged.
+ * already recorded, and drop its content and staged files. A request that
+ * was recorded keeps its link, and its thread is acknowledged rather than
+ * told nothing was logged; a Slack thread with no request is told so.
  */
 export async function markIntakeInboundFailed(db: Db, job: DbJob): Promise<void> {
   const ids = jobPayload.safeParse(job.payload);
@@ -704,60 +677,43 @@ export async function markIntakeInboundFailed(db: Db, job: DbJob): Promise<void>
   const parsed = inboundPayload.safeParse(row.payload);
   const payload = parsed.success ? parsed.data : null;
   const reason = row.request_id ? RECORDED_INCOMPLETE : row.error ?? GENERIC_FAILURE;
-  if (payload?.kind === "slack" && !payload.replied) {
+  if (payload && !payload.acknowledged && !payload.replied) {
     try {
-      const settings = await loadAutomationRow(db, row.org_id);
-      const token = settings ? slackBotToken(settings) : null;
-      const reply = row.request_id
-        ? await recordedReply(db, row.org_id, row.request_id)
-        : FAILED_REPLY;
-      if (token && reply) await replyInThread(token, payload, reply);
+      if (row.request_id) {
+        // Failed before its thread was linked: link it, so the thread hears.
+        const settings = payload.linked ? null : await loadAutomationRow(db, row.org_id);
+        if (settings && channelOf(payload))
+          await linkRequestThread(db, row.org_id, row.request_id, settings, payload);
+        await acknowledgeRequest(db, row.org_id, row.request_id);
+      } else if (payload.kind === "slack") {
+        const settings = await loadAutomationRow(db, row.org_id);
+        const token = settings ? slackBotToken(settings) : null;
+        if (token)
+          await slackPostMessage(token, {
+            channel: payload.channel,
+            threadTs: payload.thread_ts ?? payload.ts,
+            text: FAILED_REPLY,
+          });
+      }
     } catch (error) {
       console.warn("[intake-automation] failure reply not sent", safeError(error));
     }
   }
-  await settle(db, row.id, "failed", reason, row.payload);
+  await settleInbound(db, row.id, "failed", reason, row.payload);
 }
 
-/**
- * Queue a stored message's job. With the job runner switched off
- * (DB_JOBS_ENABLED=false) nothing would claim it, so it runs here, detached
- * from the webhook request, without retries.
- */
+/** Queue a stored message's job. */
 export async function dispatchIntakeInbound(
   db: Db,
   orgId: string,
   inboundId: string,
 ): Promise<void> {
-  const payload = { inboundId, orgId };
-  const dedupeKey = `${INTAKE_INBOUND_JOB}:${inboundId}`;
-  if (!dbJobsEnabled()) {
-    const now = new Date().toISOString();
-    const job: DbJob = {
-      id: `inline:${dedupeKey}`,
-      kind: INTAKE_INBOUND_JOB,
-      payload,
-      status: "running",
-      attempts: 1,
-      max_attempts: 1,
-      run_at: now,
-      claimed_at: now,
-      finished_at: null,
-      last_error: null,
-      dedupe_key: dedupeKey,
-      result: null,
-      created_at: now,
-    };
-    void handleIntakeInbound(db, job).catch(async (error) => {
-      console.warn("[intake-automation] inline job failed", safeError(error));
-      await markIntakeInboundFailed(db, job).catch(() => undefined);
-    });
-    return;
-  }
-  await enqueueDbJob(db, {
+  await dispatchIntakeJob(db, {
     kind: INTAKE_INBOUND_JOB,
-    payload,
-    dedupeKey,
+    payload: { inboundId, orgId },
+    dedupeKey: `${INTAKE_INBOUND_JOB}:${inboundId}`,
     maxAttempts: JOB_ATTEMPTS,
+    handler: handleIntakeInbound,
+    onFailure: markIntakeInboundFailed,
   });
 }

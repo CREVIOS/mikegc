@@ -23,15 +23,20 @@ export type MemoryDb = {
 
 const UNIQUE: Record<string, string[][]> = {
   intake_inbound: [["id"], ["org_id", "source", "external_id"]],
-  intake_automation: [["org_id"], ["slack_webhook_id"], ["email_token_hash"]],
+  intake_automation: [["org_id"], ["slack_webhook_id"], ["email_webhook_id"], ["teams_webhook_id"]],
   intake_assignment_rules: [["id"]],
   documents: [["id"]],
   intake_requests: [["id"]],
+  intake_channel_links: [["id"], ["request_id"], ["org_id", "source", "thread_key"]],
+  intake_outbound: [["id"]],
+  intake_messages: [["id"]],
+  intake_email_message_ids: [["org_id", "message_id"]],
 };
 
 const DEFAULTS: Record<string, () => Row> = {
   intake_inbound: () => ({
     id: randomUUID(),
+    kind: "request",
     status: "pending",
     payload: null,
     request_id: null,
@@ -39,10 +44,36 @@ const DEFAULTS: Record<string, () => Row> = {
     created_at: new Date().toISOString(),
   }),
   intake_automation: () => ({
+    clarify_enabled: true,
     email_enabled: false,
-    email_token_hash: null,
-    email_token_hint: null,
     email_allowed_domains: [],
+    email_provider: null,
+    email_mailbox: null,
+    email_from_name: "Legal",
+    email_webhook_id: randomUUID(),
+    email_last_read_at: null,
+    email_error: null,
+    email_reconnect_notice: false,
+    graph_tenant_id: null,
+    graph_client_id: null,
+    graph_client_secret_encrypted: null,
+    graph_client_secret_iv: null,
+    graph_client_secret_tag: null,
+    graph_subscription_id: null,
+    graph_subscription_expires_at: null,
+    graph_client_state_hash: null,
+    graph_delta_link: null,
+    gmail_history_id: null,
+    slack_scopes: null,
+    slack_messages_seen_at: null,
+    teams_enabled: false,
+    teams_webhook_id: randomUUID(),
+    teams_app_id: null,
+    teams_tenant_id: null,
+    teams_client_secret_encrypted: null,
+    teams_client_secret_iv: null,
+    teams_client_secret_tag: null,
+    teams_files_access: null,
     slack_enabled: false,
     slack_webhook_id: randomUUID(),
     slack_team_id: null,
@@ -59,6 +90,9 @@ const DEFAULTS: Record<string, () => Row> = {
     configured_by: null,
   }),
   documents: () => ({ id: randomUUID() }),
+  intake_channel_links: () => ({ id: randomUUID(), address: {}, created_at: new Date().toISOString() }),
+  intake_messages: () => ({ created_at: new Date().toISOString() }),
+  intake_email_message_ids: () => ({ created_at: new Date().toISOString() }),
 };
 
 const copy = <T,>(value: T): T =>
@@ -172,6 +206,10 @@ export function memoryDb(
       delete: () => ((op = "delete"), builder),
       eq: (c: string, v: unknown) => (filters.push((r) => r[c] === v), builder),
       neq: (c: string, v: unknown) => (filters.push((r) => r[c] !== v), builder),
+      // Timestamps are ISO strings here, which compare in time order.
+      lt: (c: string, v: unknown) => (
+        filters.push((r) => r[c] !== null && r[c] !== undefined && String(r[c]) < String(v)), builder
+      ),
       in: (c: string, v: unknown[]) => (filters.push((r) => v.includes(r[c])), builder),
       is: (c: string, v: unknown) => (filters.push((r) => (r[c] ?? null) === v), builder),
       not: (c: string, operator: string, v: unknown) => {
@@ -278,9 +316,11 @@ export const automatedIntakeRpc: Record<string, RpcHandler> = {
         document_id: args.p_document,
         added_by: null,
         automated: true,
+        message_id: args.p_message ?? null,
       });
     return { data: null, error: null };
   },
+  ...requesterLoopRpc(),
   intake_note_automated: (args, memory) => {
     const request = memory
       .rows("intake_requests")
@@ -300,3 +340,168 @@ export const automatedIntakeRpc: Record<string, RpcHandler> = {
     return { data: true, error: null };
   },
 };
+
+const MAX_ROUNDS = 2;
+const findRequest = (memory: MemoryDb, org: unknown, id: unknown) =>
+  memory.rows("intake_requests").find((r) => r.org_id === org && r.id === id);
+const linkOf = (memory: MemoryDb, request: unknown) =>
+  memory.rows("intake_channel_links").find((l) => l.request_id === request);
+const event = (memory: MemoryDb, row: Row) => memory.rows("intake_events").push(row);
+
+/**
+ * The requester loop's SQL functions as the migration defines them, enough
+ * for unit tests: links, MikeGC's questions and acknowledgement, replies,
+ * settling a stage and recording deliveries.
+ */
+export function requesterLoopRpc(): Record<string, RpcHandler> {
+  return {
+    intake_link_thread: (args, memory) => {
+      if (!findRequest(memory, args.p_org, args.p_request)) return { data: null, error: { code: "P0002" } };
+      const own = linkOf(memory, args.p_request);
+      if (own) return { data: own.id, error: null };
+      const taken = memory
+        .rows("intake_channel_links")
+        .some((l) => l.org_id === args.p_org && l.source === args.p_source && l.thread_key === args.p_thread_key);
+      if (taken) return { data: null, error: null };
+      const id = randomUUID();
+      memory.rows("intake_channel_links").push({
+        id,
+        org_id: args.p_org,
+        request_id: args.p_request,
+        source: args.p_source,
+        thread_key: args.p_thread_key,
+        address: copy(args.p_address ?? {}),
+      });
+      return { data: id, error: null };
+    },
+    intake_acknowledge_automated: (args, memory) => {
+      const link = linkOf(memory, args.p_request);
+      if (!link) return { data: null, error: null };
+      const existing = memory
+        .rows("intake_outbound")
+        .find((o) => o.request_id === args.p_request && o.kind === "acknowledgement");
+      if (existing) return { data: existing.status === "pending" ? existing.id : null, error: null };
+      memory.rows("intake_outbound").push({
+        id: args.p_outbound,
+        org_id: args.p_org,
+        request_id: args.p_request,
+        link_id: link.id,
+        message_id: null,
+        author_id: null,
+        kind: "acknowledgement",
+        documents: [],
+        status: "pending",
+        external_id: null,
+        attempted_at: null,
+      });
+      return { data: args.p_outbound, error: null };
+    },
+    intake_ask_automated: (args, memory) => {
+      const request = findRequest(memory, args.p_org, args.p_request);
+      if (!request) return { data: null, error: { code: "P0002" } };
+      if (memory.rows("intake_messages").some((m) => m.id === args.p_message)) return { data: true, error: null };
+      const link = linkOf(memory, args.p_request);
+      const rounds = Number(request.clarify_rounds ?? 0);
+      if (!link || request.clarify_stopped || rounds >= MAX_ROUNDS || ["resolved", "cancelled"].includes(String(request.state)))
+        return { data: false, error: null };
+      const acknowledged = memory
+        .rows("intake_outbound")
+        .some((o) => o.request_id === args.p_request && o.kind === "acknowledgement");
+      memory.rows("intake_messages").push({
+        id: args.p_message,
+        org_id: args.p_org,
+        request_id: args.p_request,
+        author_id: null,
+        kind: "question",
+        body: args.p_body,
+        automated: true,
+        created_at: new Date().toISOString(),
+      });
+      memory.rows("intake_outbound").push({
+        id: args.p_outbound,
+        org_id: args.p_org,
+        request_id: args.p_request,
+        link_id: link.id,
+        message_id: args.p_message,
+        author_id: null,
+        kind: args.p_acknowledge && !acknowledged ? "acknowledgement" : "question",
+        documents: [],
+        status: "pending",
+        external_id: null,
+        attempted_at: null,
+      });
+      if (request.state !== "needs_information")
+        event(memory, { request_id: request.id, kind: "wait", automated: true, from_state: request.state, to_state: "needs_information" });
+      Object.assign(request, {
+        clarify_stage: args.p_stage,
+        clarify_rounds: rounds + 1,
+        clarify_preprocess: args.p_preprocess ?? request.clarify_preprocess ?? null,
+        state: "needs_information",
+      });
+      return { data: true, error: null };
+    },
+    intake_settle_clarify_automated: (args, memory) => {
+      const request = findRequest(memory, args.p_org, args.p_request);
+      if (!request) return { data: null, error: { code: "P0002" } };
+      if ((request.clarify_stage ?? null) !== args.p_stage) return { data: false, error: null };
+      const member = memory
+        .rows("org_members")
+        .some((m) => m.org_id === args.p_org && m.user_id === args.p_assignee);
+      const assignee = args.p_assign && args.p_assignee && member ? args.p_assignee : request.assignee_id ?? null;
+      const state =
+        request.state === "needs_information" ? (assignee ? "in_review" : "submitted") : request.state;
+      if (assignee !== (request.assignee_id ?? null))
+        event(memory, { request_id: request.id, kind: "assign", automated: true, assignee_id: assignee, to_state: state });
+      Object.assign(request, { clarify_stage: null, assignee_id: assignee, state });
+      return { data: true, error: null };
+    },
+    intake_reply_automated: (args, memory) => {
+      const inbound = memory.rows("intake_inbound").find((i) => i.id === args.p_inbound && i.org_id === args.p_org);
+      if (!inbound || inbound.kind !== "reply") return { data: null, error: { code: "P0002" } };
+      const request = findRequest(memory, args.p_org, inbound.request_id);
+      if (!request) return { data: null, error: null };
+      if (!memory.rows("intake_messages").some((m) => m.id === args.p_message)) {
+        memory.rows("intake_messages").push({
+          id: args.p_message,
+          org_id: args.p_org,
+          request_id: request.id,
+          author_id: null,
+          kind: "reply",
+          body: args.p_body,
+          external_author: copy(args.p_author),
+          automated: false,
+          created_at: new Date().toISOString(),
+        });
+        if (request.state === "needs_information" && !request.clarify_stage)
+          request.state = request.assignee_id ? "in_review" : "submitted";
+        request.last_reply_at = new Date().toISOString();
+      }
+      return {
+        data: {
+          request_id: request.id,
+          message_id: args.p_message,
+          state: request.state,
+          assignee_id: request.assignee_id ?? null,
+          clarify_stage: request.clarify_stage ?? null,
+          clarify_rounds: request.clarify_rounds ?? 0,
+          clarify_stopped: request.clarify_stopped ?? false,
+          clarify_preprocess: request.clarify_preprocess ?? null,
+        },
+        error: null,
+      };
+    },
+    intake_record_delivery: (args, memory) => {
+      const row = memory.rows("intake_outbound").find((o) => o.id === args.p_outbound && o.org_id === args.p_org);
+      if (!row) return { data: false, error: null };
+      Object.assign(row, {
+        status: args.p_status,
+        external_id: args.p_external_id ?? row.external_id ?? null,
+        error: args.p_status === "failed" ? args.p_error : null,
+        documents: args.p_documents ?? row.documents,
+        attempted_at: row.attempted_at ?? new Date().toISOString(),
+        ...(args.p_status === "sent" ? { sent_at: new Date().toISOString() } : {}),
+      });
+      return { data: true, error: null };
+    },
+  };
+}

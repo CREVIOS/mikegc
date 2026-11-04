@@ -1,14 +1,20 @@
-import express, { Router, type RequestHandler } from "express";
+import express, { Router } from "express";
 import { asyncRoute, routerErrorHandler } from "../../middleware/asyncRoute";
 import { createServerSupabase } from "../../lib/supabase";
 import { sendServiceFailure } from "../../lib/serviceResult";
-import { receiveInboundEmail, receiveSlackEvent } from "./intake.service";
+import {
+  receiveGraphNotification,
+  receiveInboundEmail,
+  receiveSlackEvent,
+  receiveTeamsActivity,
+} from "./intake.service";
 import { intakeId } from "./intake.validation";
 
 /**
- * Where Slack and Postmark deliver messages for automated intake. Mounted
- * outside the signed-in /intake API and ahead of the global JSON parser:
- * these callers authenticate with a signature or a secret URL, not a session.
+ * Where Slack, Teams and Microsoft Graph deliver what automated intake
+ * reads. Mounted outside the signed-in /intake API and ahead of the global
+ * JSON parser: these callers authenticate with a signature, a token or a
+ * client state, not a session.
  */
 export const intakeWebhooksRouter = Router();
 
@@ -35,29 +41,63 @@ intakeWebhooksRouter.post(
   }),
 );
 
-// The URL's token is the credential, so it is taken out of the URL that error
-// logs record before anything else can fail.
-const takeEmailToken: RequestHandler = (req, res, next) => {
-  const token = String(req.params.token ?? "");
-  res.locals.intakeEmailToken = token;
-  // The path's own segment, however it was percent-encoded, not the decoded token.
-  req.originalUrl = req.originalUrl.replace(/(\/email\/)[^/?#]*/, "$1:token");
-  next();
-};
-
-// Postmark posts each email, attachments included, as one JSON document.
+// The organization's Teams bot: each activity carries a Bot Connector token.
 intakeWebhooksRouter.post(
-  "/email/:token",
-  takeEmailToken,
-  express.json({ limit: "50mb" }),
+  "/teams/:webhookId",
+  express.json({ limit: "1mb" }),
   asyncRoute(async (req, res) => {
-    const result = await receiveInboundEmail(
+    if (!intakeId.safeParse(req.params.webhookId).success)
+      return void res.status(404).json({ detail: "Not found." });
+    const result = await receiveTeamsActivity(
       createServerSupabase(),
-      res.locals.intakeEmailToken,
+      req.params.webhookId,
+      req.get("authorization"),
       req.body,
     );
     if (!result.ok) return void sendServiceFailure(res, result);
-    res.json(result.data);
+    res.status(200).json({});
+  }),
+);
+
+// Microsoft Graph's new-mail notifications for an Outlook intake mailbox.
+// Creating a subscription first asks this URL to echo a validation token
+// as plain text.
+intakeWebhooksRouter.post(
+  "/graph/:webhookId",
+  express.json({ limit: "1mb" }),
+  asyncRoute(async (req, res) => {
+    if (!intakeId.safeParse(req.params.webhookId).success)
+      return void res.status(404).json({ detail: "Not found." });
+    const validationToken =
+      typeof req.query.validationToken === "string" ? req.query.validationToken : undefined;
+    const result = await receiveGraphNotification(
+      createServerSupabase(),
+      req.params.webhookId,
+      validationToken,
+      req.body,
+    );
+    if (result.kind === "validation")
+      return void res
+        .status(200)
+        .type("text/plain")
+        .set("X-Content-Type-Options", "nosniff")
+        .send(result.token);
+    if (result.kind === "refused")
+      return void res.status(result.status).json({ detail: "Not accepted." });
+    res.status(202).end();
+  }),
+);
+
+// The retired Postmark webhook answers 403, which tells Postmark to stop
+// retrying. Its token is never read or logged.
+intakeWebhooksRouter.post(
+  "/email/:token",
+  (req, _res, next) => {
+    req.originalUrl = req.originalUrl.replace(/(\/email\/)[^/?#]*/, "$1:token");
+    next();
+  },
+  asyncRoute(async (_req, res) => {
+    sendServiceFailure(res, await receiveInboundEmail());
   }),
 );
 

@@ -1,4 +1,4 @@
-import {getIntakeMembers,getIntakeRequesters,getIntakeDashboard,getIntakeAutomation,updateIntakeAutomation,generateIntakeEmailWebhook,getIntakeDocuments,copyIntakeDocuments,listIntakeRequests,submitIntakeRequest,getIntakeRequest,editIntakeRequest,getIntakeMessages,getIntakeEvents,commandIntakeRequest} from "./mikeApi";
+import {getIntakeMembers,getIntakeRequesters,getIntakeDashboard,getIntakeAutomation,updateIntakeAutomation,connectIntakeMailbox,disconnectIntakeMailbox,sendIntakeMailboxTest,retryIntakeDelivery,markIntakeReplySeen,getIntakeDocuments,copyIntakeDocuments,listIntakeRequests,submitIntakeRequest,getIntakeRequest,editIntakeRequest,getIntakeMessages,getIntakeEvents,commandIntakeRequest} from "./mikeApi";
 import { listOrgPrivateContent, setOrgPrivateContentPermission, openOrgPrivateContent, closeOrgPrivateContent } from "./mikeApi";
 import { setUserProfilePhoto, listDeletedOrganizations, restoreOrganization } from "./mikeApi";
 import { listOrgDepartures, reassignOrgDepartureArchives, deleteOrgDepartureArchives } from "./mikeApi";
@@ -3684,6 +3684,10 @@ describe("intake API boundary", () => {
         const edit = { ...details, command_id: "edit", expected_version: 3 };
         const command = { command_id: "resolve", expected_version: 2, body: "Exact resolution.\n" };
         const note = { command_id: "note", body: "Called Jane." };
+        // A question or resolution sent to the requester's thread.
+        const ask = { command_id: "ask", expected_version: 2, body: "Which entity signs?", send_to_requester: true };
+        const reply = { command_id: "reply", expected_version: 3, send_to_requester: true, documents: ["doc-a"] };
+        const stop = { command_id: "stop", expected_version: 4 };
         const cases: [() => Promise<unknown>, string, string, unknown?][] = [
             [()=>getIntakeMembers(scope),"members","GET"],
             [()=>listIntakeRequests(scope),`requests?${zone}`,"GET"],
@@ -3703,6 +3707,12 @@ describe("intake API boundary", () => {
             [()=>getIntakeEvents(scope,id,100),"requests/request%2Fid/events?offset=100&limit=100","GET"],
             [()=>commandIntakeRequest(scope,id,"resolve",command),"requests/request%2Fid/resolve","POST",command],
             [()=>commandIntakeRequest(scope,id,"notes",note),"requests/request%2Fid/notes","POST",note],
+            [()=>commandIntakeRequest(scope,id,"wait",ask),"requests/request%2Fid/wait","POST",ask],
+            [()=>commandIntakeRequest(scope,id,"resolve",reply),"requests/request%2Fid/resolve","POST",reply],
+            [()=>commandIntakeRequest(scope,id,"stop_asking",stop),"requests/request%2Fid/stop_asking","POST",stop],
+            [()=>retryIntakeDelivery(scope,id,"out/1"),"requests/request%2Fid/outbound/out%2F1/retry","POST"],
+            [()=>markIntakeReplySeen(scope,id,"2026-11-03T10:00:00.123456+00:00"),"requests/request%2Fid/reply-seen","POST",{seen_at:"2026-11-03T10:00:00.123456+00:00"}],
+            [()=>listIntakeRequests(scope,{new_reply:true}),`requests?new_reply=true&${zone}`,"GET"],
         ];
         for(const [run,path,method,body] of cases) {
             await run(); const call=lastFetchCall();
@@ -3711,7 +3721,7 @@ describe("intake API boundary", () => {
             if(body)expect(JSON.parse(String(call.init.body))).toEqual(body);
         }
     });
-    it("reads, changes and generates automated intake under the same scope", async () => {
+    it("reads, changes and connects automated intake under the same scope", async () => {
         const settings = { email: { enabled: false }, recent: [] };
         fetchMock.mockImplementation(async () => jsonResponse(settings));
         await expect(getIntakeAutomation("org/id")).resolves.toEqual(settings);
@@ -3727,11 +3737,21 @@ describe("intake API boundary", () => {
         expect(call.init.method).toBe("PATCH");
         expect(JSON.parse(String(call.init.body))).toEqual(update);
 
-        const webhook = { webhook_url: "https://api.example.test/webhooks/intake/email/secret", token_hint: "cret" };
-        fetchMock.mockImplementation(async () => jsonResponse(webhook));
-        await expect(generateIntakeEmailWebhook("org/id")).resolves.toEqual(webhook);
+        // The intake mailbox is connected, disconnected and tested on its own.
+        const graph = { provider: "graph" as const, mailbox: "intake@example.com", tenant_id: "t1", client_id: "c1", client_secret: "s" };
+        await expect(connectIntakeMailbox("org/id", graph)).resolves.toEqual(settings);
         call = lastFetchCall();
-        expect(call.url).toBe("/api/intake/org%2Fid/automation/email-webhook");
+        expect(call.url).toBe("/api/intake/org%2Fid/automation/mailbox");
+        expect(call.init.method).toBe("POST");
+        expect(JSON.parse(String(call.init.body))).toEqual(graph);
+        await disconnectIntakeMailbox("org/id");
+        call = lastFetchCall();
+        expect(call.url).toBe("/api/intake/org%2Fid/automation/mailbox");
+        expect(call.init.method).toBe("DELETE");
+        fetchMock.mockImplementation(async () => jsonResponse({ sent_to: "admin@example.com" }));
+        await expect(sendIntakeMailboxTest("org/id")).resolves.toEqual({ sent_to: "admin@example.com" });
+        call = lastFetchCall();
+        expect(call.url).toBe("/api/intake/org%2Fid/automation/mailbox/test");
         expect(call.init.method).toBe("POST");
         expect(call.init.body).toBeUndefined();
     });

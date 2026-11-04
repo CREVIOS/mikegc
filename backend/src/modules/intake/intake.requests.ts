@@ -10,7 +10,10 @@ import type {
   IntakeRequestSummary,
 } from "@mike/contracts";
 import type { Db } from "../../lib/supabase";
+import { safeError } from "../../lib/safeError";
 import { failure, ok, type ServiceResult } from "../../lib/serviceResult";
+import { dispatchIntakeDeliverOrFail } from "./intake.deliver";
+import { queueNextIntakePreprocess } from "./intake.preprocess";
 import { intakeRpc } from "./intake.shared";
 import type {
   IntakeCommandAction,
@@ -84,6 +87,7 @@ export async function listIntakeRequests(
     scope?: "open" | "unassigned" | "overdue" | "recorded_30d" | "resolved_30d";
     requester?: string;
     timezone: string;
+    new_reply?: boolean;
     cursor?: string;
     limit: number;
   },
@@ -106,6 +110,7 @@ export async function listIntakeRequests(
     p_scope: filters.scope ?? null,
     p_requester: filters.requester ?? null,
     p_timezone: filters.timezone,
+    p_new_reply: filters.new_reply ?? false,
   });
   if (!result.ok) return result;
   return ok({
@@ -186,16 +191,46 @@ const COMMAND_RPC: Record<IntakeCommandAction, string> = {
   cancel: "intake_cancel_request",
   reopen: "intake_reopen_request",
   delete: "intake_delete_request",
+  stop_asking: "intake_stop_asking_request",
 };
 
+type CommandReceipt = IntakeReceipt & { preprocess?: boolean };
+
+/**
+ * What a committed command leaves to do outside its transaction: send the
+ * message it wrote for the requester, and run preprocessing that was waiting
+ * on MikeGC's questions when a lawyer stopped them. Both are safe to repeat
+ * on a replayed receipt. A failure here never fails the command: the outbox
+ * row stays pending and the request page offers Retry.
+ */
+async function afterCommand(
+  db: Db,
+  scope: IntakeScope,
+  requestId: string,
+  result: ServiceResult<CommandReceipt>,
+): Promise<ServiceResult<IntakeReceipt>> {
+  if (!result.ok) return result;
+  const { preprocess, ...receipt } = result.data;
+  // A message that can't be queued is marked failed, which offers Retry.
+  if (receipt.outbound_id)
+    await dispatchIntakeDeliverOrFail(db, scope.orgId, receipt.outbound_id).catch((error) =>
+      console.warn("[intake] delivery not queued", safeError(error)),
+    );
+  if (preprocess)
+    await queueNextIntakePreprocess(db, scope.orgId, requestId).catch((error) =>
+      console.warn("[intake] preprocessing not queued", safeError(error)),
+    );
+  return ok(receipt);
+}
+
 /** Run one request command; each SQL wrapper takes only the arguments it declares. */
-export function commandIntakeRequest(
+export async function commandIntakeRequest(
   db: Db,
   scope: IntakeScope,
   requestId: string,
   action: IntakeCommandAction,
   input: IntakeCommandInput,
-) {
+): Promise<ServiceResult<IntakeReceipt>> {
   const args: Record<string, unknown> = {
     ...scoped(scope),
     p_command: input.command_id,
@@ -209,20 +244,64 @@ export function commandIntakeRequest(
     args.p_body = input.body ?? null;
   if ((action === "wait" || action === "resume") && input.body !== undefined)
     args.p_body = input.body;
-  return intakeRpc<IntakeReceipt>(db, COMMAND_RPC[action], args);
+  // Only a message sent to the requester names p_send, so other calls match
+  // the wrappers' shorter signatures.
+  if ((action === "wait" || action === "resolve") && input.send_to_requester) {
+    args.p_send = true;
+    if (action === "resolve") args.p_documents = input.documents ?? [];
+  }
+  const result = await intakeRpc<CommandReceipt>(db, COMMAND_RPC[action], args);
+  return afterCommand(db, scope, requestId, result);
 }
 
-export function editIntakeRequest(
+export async function editIntakeRequest(
   db: Db,
   scope: IntakeScope,
   requestId: string,
   input: IntakeDetails & { command_id: string; expected_version: number },
-) {
-  return intakeRpc<IntakeReceipt>(db, "intake_edit_request", {
+): Promise<ServiceResult<IntakeReceipt>> {
+  const result = await intakeRpc<CommandReceipt>(db, "intake_edit_request", {
     ...scoped(scope),
     p_command: input.command_id,
     p_request: requestId,
     p_version: input.expected_version,
     ...detailArgs(input),
   });
+  return afterCommand(db, scope, requestId, result);
+}
+
+/** Send a message to the requester again, after it couldn't be sent. */
+export async function retryIntakeDelivery(
+  db: Db,
+  scope: IntakeScope,
+  requestId: string,
+  outboundId: string,
+): Promise<ServiceResult<{ retried: boolean }>> {
+  const result = await intakeRpc<boolean>(db, "intake_retry_delivery", {
+    ...scoped(scope),
+    p_request: requestId,
+    p_outbound: outboundId,
+  });
+  if (!result.ok) return result;
+  if (result.data) await dispatchIntakeDeliverOrFail(db, scope.orgId, outboundId);
+  return ok({ retried: result.data });
+}
+
+/**
+ * Opening a request clears its New reply flag in the queue. `seenAt` is the
+ * last reply the member was shown, so a reply that arrives while the page
+ * loads stays new; without it, every reply until now counts as seen.
+ */
+export async function markIntakeReplySeen(
+  db: Db,
+  scope: IntakeScope,
+  requestId: string,
+  seenAt: string | null = null,
+): Promise<ServiceResult<{ ok: true }>> {
+  const result = await intakeRpc<null>(db, "intake_mark_reply_seen", {
+    ...scoped(scope),
+    p_request: requestId,
+    p_seen: seenAt,
+  });
+  return result.ok ? ok({ ok: true }) : result;
 }

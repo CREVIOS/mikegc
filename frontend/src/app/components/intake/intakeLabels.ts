@@ -1,4 +1,8 @@
-import type { IntakeMessage, IntakeState } from "@mike/contracts";
+import type {
+  IntakeClarifyStage,
+  IntakeMessage,
+  IntakeState,
+} from "@mike/contracts";
 import { PERSONAL_WORKSPACE } from "@/app/contexts/WorkspaceContext";
 
 /** Stored states keep their original names; these are what Legal sees. */
@@ -19,15 +23,31 @@ export const INTAKE_STATE_DOT_CLASS: Record<IntakeState, string> = {
   cancelled: "bg-gray-400",
 };
 
-/** Legacy question, reply and answer messages read as notes. */
+/**
+ * A question is one sent to the requester and a reply is the requester's
+ * answer; legacy answer messages read as notes.
+ */
 export const INTAKE_MESSAGE_LABELS: Record<IntakeMessage["kind"], string> = {
   note: "Note",
   resolution: "Resolution",
   cancel_reason: "Cancellation reason",
-  question: "Note",
-  reply: "Note",
+  question: "Question",
+  reply: "Reply",
   answer: "Note",
 };
+
+/**
+ * A status as the queue and sidebar show it. Waiting on requester says so
+ * when MikeGC asked, rather than a member.
+ */
+export function intakeStateLabel(
+  state: IntakeState,
+  clarifyStage?: IntakeClarifyStage | null,
+) {
+  return state === "needs_information" && clarifyStage
+    ? `${INTAKE_STATE_LABELS[state]} (MikeGC asked)`
+    : INTAKE_STATE_LABELS[state];
+}
 
 export function isOpenIntakeState(state: IntakeState) {
   return state !== "resolved" && state !== "cancelled";

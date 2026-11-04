@@ -89,6 +89,10 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
       "create schema auth; create table auth.users(id uuid primary key,email text,raw_user_meta_data jsonb default '{}',created_at timestamptz default now());",
     );
     sql(readFileSync(resolve("schema.sql"), "utf8"));
+    // The requester loop's command boundary takes more arguments than the one
+    // the tracker migrations replayed below create, and their wrappers would
+    // match both. Its own migration replaces the older one again at the end.
+    sql("drop function public.intake_change_request(uuid,uuid,uuid,uuid,integer,text,text,uuid,boolean,uuid[])");
     // The tracker migrations are safe to re-run. Those before the type and
     // the timezone were removed expect their columns, so they come back for
     // them and go again.
@@ -131,7 +135,13 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
     sql(migration("20261102_05_intake_rule_preprocessing.sql"));
     sql(migration("20261103_04_intake_replace_rules.sql"));
     sql(migration("20261103_04_intake_replace_rules.sql"));
-  }, 60000);
+    sql(migration("20261103_05_intake_requester_loop.sql"));
+    sql(migration("20261103_05_intake_requester_loop.sql"));
+    sql(migration("20261103_06_intake_mailbox.sql"));
+    sql(migration("20261103_06_intake_mailbox.sql"));
+    sql(migration("20261103_07_intake_teams.sql"));
+    sql(migration("20261103_07_intake_teams.sql"));
+  }, 90000);
   afterAll(() => {
     execFileSync("docker", [
       "exec",
@@ -1028,7 +1038,17 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
       sql(`select public.intake_dashboard(${q(10)},${q(5)},'UTC',8,14);`),
     ).toThrow(/22023/);
   });
+  // Replaying older migrations recreates the command boundary they knew;
+  // the requester loop's migrations then bring this database back up to date.
+  const beforeReplay = () =>
+    sql("drop function if exists public.intake_change_request(uuid,uuid,uuid,uuid,integer,text,text,uuid,boolean,uuid[])");
+  const afterReplay = () => {
+    sql(migration("20261103_05_intake_requester_loop.sql"));
+    sql(migration("20261103_06_intake_mailbox.sql"));
+    sql(migration("20261103_07_intake_teams.sql"));
+  };
   it("backfills legacy requests from their creator's profile", () => {
+    beforeReplay();
     // Shape of a request recorded before the tracker migration.
     sql(`alter table public.intake_requests add column category text not null default 'general';
       alter table public.intake_requests add column timezone text;
@@ -1045,6 +1065,7 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
     sql(migration("20261102_02_intake_automation.sql"));
     sql(migration("20261102_04_intake_remove_timezone.sql"));
     sql(migration("20261102_05_intake_rule_preprocessing.sql"));
+    afterReplay();
     const profile = sql(
       `select coalesce(nullif(btrim(display_name),''),email) from public.user_profiles where user_id=${q(2)}`,
     );
@@ -1171,7 +1192,7 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
       ).toBe("f");
       expect(
         sql(
-          `select has_function_privilege('${role}','public.intake_attach_automated(uuid,uuid,uuid)','EXECUTE')`,
+          `select has_function_privilege('${role}','public.intake_attach_automated(uuid,uuid,uuid,uuid)','EXECUTE')`,
         ),
       ).toBe("f");
     }
@@ -1179,6 +1200,7 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
   it("carries each member's note of what they handle over as a rule", () => {
     // The table the rules replace, as an upgraded database still has it,
     // from when requests still had a timezone.
+    beforeReplay();
     sql("alter table public.intake_requests add column timezone text");
     sql(migration("20261102_02_intake_automation.sql"));
     sql(`insert into public.intake_member_focus(org_id,user_id,focus,updated_at)
@@ -1187,6 +1209,7 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
     sql(migration("20261102_03_intake_assignment_rules.sql"));
     sql(migration("20261102_04_intake_remove_timezone.sql"));
     sql(migration("20261102_05_intake_rule_preprocessing.sql"));
+    afterReplay();
     expect(
       json(`select jsonb_agg(jsonb_build_object('position',position,'condition',condition,'assignee',assignee_id) order by position)
         from public.intake_assignment_rules where org_id=${q(10)}`),
@@ -1262,5 +1285,278 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
       values(${q(10)},0,'The request is about an NDA',${q(3)})`);
     sql(`delete from public.org_members where org_id=${q(10)} and user_id=${q(3)}`);
     expect(sql("select count(*) from public.intake_assignment_rules")).toBe("0");
+  });
+  // The requester loop: a request MikeGC recorded from a Slack thread.
+  const thread = (request = 21, message = 70, reviewer = "null") => {
+    inbound(message, "slack");
+    sql(automated(message, request, reviewer));
+    return sql(
+      `select public.intake_link_thread(${q(10)},${q(request)},'slack','T1:C1:${message}',` +
+        `'{"channel":"C1","thread_ts":"1.${message}","channel_name":"legal-requests"}'::jsonb)`,
+    );
+  };
+  const ask = (n: number, stage = "rule", request = 21, acknowledge = false) =>
+    sql(
+      `select public.intake_ask_automated(${q(10)},${q(request)},${q(n)},${q(n + 1)},` +
+        `'Before Legal starts, MikeGC needs:\n1. Is Acme a customer or a supplier?','${stage}',${acknowledge})`,
+    );
+  const reply = (inboundId: number, message: number, request = 21, body = "Acme is a customer.") => {
+    sql(`insert into public.intake_inbound(id,org_id,source,kind,external_id,payload,request_id)
+      values(${q(inboundId)},${q(10)},'slack','reply','C1:${inboundId}','{}',${q(request)}) on conflict do nothing`);
+    return json(
+      `select public.intake_reply_automated(${q(10)},${q(inboundId)},${q(message)},'${body}',` +
+        `'{"name":"Jane Business","email":"jane@acme.test","source":"slack"}'::jsonb);`,
+    );
+  };
+  const clarify = (request = 21) =>
+    sql(
+      `select coalesce(clarify_stage,'-')||':'||clarify_rounds||':'||clarify_stopped from public.intake_requests where id=${q(request)}`,
+    );
+  const view = (request = 21) =>
+    json(`select public.intake_get_request(${q(10)},${q(2)},${q(request)});`);
+  const outbox = (request = 21) =>
+    json(`select coalesce(jsonb_agg(jsonb_build_object('kind',kind,'message_id',message_id,'author_id',author_id,
+      'documents',documents,'status',status) order by created_at, id),'[]') from public.intake_outbound where request_id=${q(request)}`);
+  const orgDocument = (document: number, request = 21) =>
+    sql(`insert into public.documents(id,org_id,user_id,library_kind,status)
+        values(${q(document)},${q(10)},null,'intake_attachment','ready');
+      insert into public.document_versions(id,document_id,storage_path,version_number,filename,file_type,size_bytes)
+        values(${q(document + 1000)},${q(document)},'documents/intake-${uid(10)}/${uid(document)}/nda.docx',1,'Supplier NDA.docx','docx',1234);
+      update public.documents set current_version_id=${q(document + 1000)} where id=${q(document)};
+      select public.intake_attach_automated(${q(10)},${q(request)},${q(document)});`);
+  it("links a request to its thread once, and leaves a thread another request has alone", () => {
+    const link = thread();
+    expect(link).toMatch(/^[0-9a-f-]{36}$/);
+    expect(
+      sql(`select public.intake_link_thread(${q(10)},${q(21)},'slack','T1:C1:70','{}'::jsonb)`),
+    ).toBe(link);
+    inbound(71, "slack");
+    sql(automated(71, 22));
+    expect(
+      sql(`select public.intake_link_thread(${q(10)},${q(22)},'slack','T1:C1:70','{}'::jsonb)`),
+    ).toBe("");
+    expect(view()).toMatchObject({
+      source: "slack",
+      conversation: { source: "slack", channel_name: "legal-requests", documents: true },
+      capabilities: { send_to_requester: true, stop_asking: false },
+    });
+    expect(view(22)).toMatchObject({ conversation: null, capabilities: { send_to_requester: false } });
+  });
+  it("asks the requester in the acknowledgement, records the answer and settles on the rule", () => {
+    thread();
+    expect(ask(300, "rule", 21, true)).toBe("t");
+    // Asked again with the same names, nothing is added.
+    expect(ask(300, "rule", 21, true)).toBe("t");
+    expect(state(21)).toBe("needs_information:2:-");
+    expect(clarify()).toBe("rule:1:false");
+    expect(outbox()).toEqual([
+      expect.objectContaining({ kind: "acknowledgement", message_id: uid(301), author_id: null, status: "pending" }),
+    ]);
+    expect(view()).toMatchObject({ clarify_stage: "rule", clarify_rounds: 1, clarify_max_rounds: 2, capabilities: { stop_asking: true } });
+    expect(
+      json(`select public.intake_read_history(${q(10)},${q(2)},${q(21)},false);`),
+    ).toEqual([
+      expect.objectContaining({
+        kind: "question",
+        automated: true,
+        author_name: "MikeGC",
+        delivery: expect.objectContaining({ kind: "acknowledgement", status: "pending" }),
+      }),
+    ]);
+    expect(
+      json(`select public.intake_read_history(${q(10)},${q(2)},${q(21)},true);`).map((e: { kind: string }) => e.kind),
+    ).toEqual(["submitted", "wait"]);
+    // The answer is recorded once; the stage that asked decides what next.
+    expect(reply(400, 410)).toMatchObject({ clarify_stage: "rule", clarify_rounds: 1, state: "needs_information" });
+    expect(reply(400, 410)).toMatchObject({ clarify_stage: "rule" });
+    expect(sql(`select count(*) from public.intake_messages where kind='reply'`)).toBe("1");
+    expect(
+      json(`select public.intake_read_history(${q(10)},${q(2)},${q(21)},false);`)[1],
+    ).toMatchObject({ kind: "reply", author_id: null, author_name: "Jane Business", external_author: { source: "slack" } });
+    expect(view()).toMatchObject({ new_reply: true });
+    expect(list(2, ",p_new_reply=>true").requests.map((r: { id: string }) => r.id)).toEqual([uid(21)]);
+    // A member who saw only an earlier reply leaves the latest one new.
+    const last = sql(`select last_reply_at from public.intake_requests where id=${q(21)}`);
+    sql(`select public.intake_mark_reply_seen(${q(10)},${q(4)},${q(21)},'${last}'::timestamptz - interval '1 second')`);
+    expect(view()).toMatchObject({ new_reply: true });
+    // A time in the future counts only up to now.
+    sql(`select public.intake_mark_reply_seen(${q(10)},${q(4)},${q(21)},now() + interval '1 day')`);
+    expect(
+      sql(`select reply_seen_at <= now() from public.intake_requests where id=${q(21)}`),
+    ).toBe("t");
+    expect(view()).toMatchObject({ new_reply: false });
+    sql(`select public.intake_mark_reply_seen(${q(10)},${q(4)},${q(21)})`);
+    expect(view()).toMatchObject({ new_reply: false, last_reply_at: expect.any(String) });
+    expect(list(2, ",p_new_reply=>true").requests).toEqual([]);
+    // Settled on the rule's member: back to work, assigned.
+    expect(
+      sql(`select public.intake_settle_clarify_automated(${q(10)},${q(21)},'rule',true,${q(3)})`),
+    ).toBe("t");
+    expect(state(21)).toBe(`in_review:3:${uid(3)}`);
+    expect(clarify()).toBe("-:1:false");
+    expect(
+      sql(`select public.intake_settle_clarify_automated(${q(10)},${q(21)},'rule',true,${q(3)})`),
+    ).toBe("f");
+    // The acknowledgement goes once, with the questions.
+    expect(sql(`select public.intake_acknowledge_automated(${q(10)},${q(21)},${q(320)})`)).toBe(uid(300));
+  });
+  it("asks at most two rounds, and never once a lawyer has acted", () => {
+    thread();
+    expect(ask(300)).toBe("t");
+    expect(ask(302)).toBe("t");
+    expect(clarify()).toBe("rule:2:false");
+    expect(ask(304)).toBe("f");
+    thread(22, 71, q(3));
+    expect(ask(310, "readiness", 22)).toBe("t");
+    // A lawyer's command stops MikeGC asking, and asks for preprocessing to run now.
+    const assigned = json(cmd("assign", 2, 120, 2, `,${q(2)}`, 22));
+    expect(assigned).toMatchObject({ preprocess: true, outbound_id: null });
+    expect(clarify(22)).toBe("-:1:true");
+    expect(ask(312, "readiness", 22)).toBe("f");
+    // A reply then runs nothing: it moves the request back to work.
+    expect(reply(401, 411, 22)).toMatchObject({ clarify_stage: null, clarify_stopped: true, state: "in_review" });
+  });
+  it("posts a lawyer's question in the thread, and the answer puts the request back to work", () => {
+    thread(21, 70, q(3));
+    const asked = json(
+      `select public.intake_wait_request(${q(10)},${q(3)},${q(120)},${q(21)},1,'Which entity is signing?',true);`,
+    );
+    expect(asked.outbound_id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(state(21)).toBe(`needs_information:2:${uid(3)}`);
+    // A follow-up while waiting; without sending, waiting twice still conflicts.
+    expect(
+      json(`select public.intake_wait_request(${q(10)},${q(3)},${q(121)},${q(21)},2,'And by when?',true);`).applied_version,
+    ).toBe(3);
+    expect(() => sql(cmd("wait", 3, 122, 3, ",'Internal'", 21))).toThrow(/P0001/);
+    expect(outbox()).toEqual([
+      expect.objectContaining({ kind: "question", author_id: uid(3), status: "pending" }),
+      expect.objectContaining({ kind: "question", author_id: uid(3) }),
+    ]);
+    expect(
+      json(`select public.intake_read_history(${q(10)},${q(2)},${q(21)},false);`)[0],
+    ).toMatchObject({ kind: "question", author_name: "person3@example.test", delivery: { kind: "question" } });
+    expect(reply(400, 410)).toMatchObject({ state: "in_review", clarify_stage: null });
+    expect(state(21)).toBe(`in_review:4:${uid(3)}`);
+    // A request with no thread has nowhere to send.
+    inbound(71);
+    sql(automated(71, 22));
+    expect(() =>
+      sql(`select public.intake_wait_request(${q(10)},${q(3)},${q(123)},${q(22)},1,'Hello?',true);`),
+    ).toThrow(/22023/);
+    // A question sent needs its text.
+    expect(() =>
+      sql(`select public.intake_wait_request(${q(10)},${q(3)},${q(124)},${q(21)},4,null,true);`),
+    ).toThrow(/22023/);
+  });
+  it("sends the resolution with the request's chosen documents, and records a later reply without reopening", () => {
+    thread(21, 70, q(3));
+    orgDocument(60);
+    inbound(71);
+    sql(automated(71, 22));
+    orgDocument(62, 22);
+    // Only the request's own documents.
+    expect(() =>
+      sql(`select public.intake_resolve_request(${q(10)},${q(3)},${q(129)},${q(21)},1,'Approved.',true,array[${q(62)}]::uuid[]);`),
+    ).toThrow(/22023/);
+    const resolved = json(
+      `select public.intake_resolve_request(${q(10)},${q(3)},${q(130)},${q(21)},1,'Approved with edits.',true,array[${q(60)}]::uuid[]);`,
+    );
+    expect(resolved.outbound_id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(outbox()).toEqual([
+      expect.objectContaining({
+        kind: "answer",
+        author_id: uid(3),
+        documents: [{ document_id: uid(60), version_id: uid(1060) }],
+      }),
+    ]);
+    const events = json(`select public.intake_read_history(${q(10)},${q(2)},${q(21)},true);`);
+    expect(events[events.length - 1]).toMatchObject({
+      kind: "resolve",
+      delivery: {
+        kind: "answer",
+        status: "pending",
+        documents: [{ document_id: uid(60), filename: "Supplier NDA.docx", left_out: false }],
+      },
+    });
+    // The replay returns the same receipt and writes nothing more.
+    expect(
+      json(`select public.intake_resolve_request(${q(10)},${q(3)},${q(130)},${q(21)},1,'Approved with edits.',true,array[${q(60)}]::uuid[]);`),
+    ).toMatchObject({ replayed: true, outbound_id: resolved.outbound_id });
+    expect(outbox()).toHaveLength(1);
+    expect(reply(400, 410)).toMatchObject({ state: "resolved" });
+    expect(state(21)).toBe(`resolved:2:${uid(3)}`);
+    expect(view()).toMatchObject({ new_reply: true, capabilities: { send_to_requester: false } });
+  });
+  it("sends nothing for a resolution with no text and no documents", () => {
+    thread(21, 70, q(3));
+    expect(
+      json(`select public.intake_resolve_request(${q(10)},${q(3)},${q(130)},${q(21)},1,null,true,'{}'::uuid[]);`),
+    ).toMatchObject({ outbound_id: null, message_id: null });
+    expect(outbox()).toEqual([]);
+  });
+  it("records how a delivery went, and lets a member send a failed one again", () => {
+    thread(21, 70, q(3));
+    const { outbound_id: id } = json(
+      `select public.intake_wait_request(${q(10)},${q(3)},${q(120)},${q(21)},1,'Which entity?',true);`,
+    );
+    sql(`select public.intake_record_delivery(${q(10)},'${id}','failed',null,'MikeGC was removed from #legal-requests.')`);
+    expect(
+      json(`select public.intake_read_history(${q(10)},${q(2)},${q(21)},false);`)[0].delivery,
+    ).toMatchObject({ status: "failed", error: "MikeGC was removed from #legal-requests." });
+    expect(sql(`select public.intake_retry_delivery(${q(10)},${q(4)},${q(21)},'${id}')`)).toBe("t");
+    expect(sql(`select public.intake_retry_delivery(${q(10)},${q(4)},${q(21)},'${id}')`)).toBe("f");
+    expect(() => sql(`select public.intake_retry_delivery(${q(10)},${q(6)},${q(21)},'${id}')`)).toThrow(/P0002/);
+    sql(`select public.intake_record_delivery(${q(10)},'${id}','sent','C1:1.2',null)`);
+    expect(sql(`select status||':'||external_id||':'||(sent_at is not null) from public.intake_outbound where id='${id}'`)).toBe(
+      "sent:C1:1.2:true",
+    );
+  });
+  it("stops MikeGC asking only while it waits, putting the request back to work", () => {
+    thread(21, 70, q(3));
+    expect(() => sql(cmd("stop_asking", 3, 120, 1, "", 21))).toThrow(/P0001/);
+    expect(ask(300, "readiness")).toBe("t");
+    expect(json(cmd("stop_asking", 3, 121, 2, "", 21))).toMatchObject({ preprocess: true });
+    expect(state(21)).toBe(`in_review:3:${uid(3)}`);
+    expect(clarify()).toBe("-:1:true");
+    // An edit stops it too.
+    thread(22, 71, q(3));
+    expect(ask(310, "readiness", 22)).toBe("t");
+    expect(
+      json(`select public.intake_edit_request(${q(10)},${q(3)},${q(122)},${q(22)},2,'Supplier NDA','Summary','Jane Business',null,null,null);`),
+    ).toMatchObject({ preprocess: true });
+    expect(clarify(22)).toBe("-:1:true");
+    // It goes back to work as Stop asking would, and the history says so.
+    expect(state(22)).toBe(`in_review:3:${uid(3)}`);
+    expect(
+      sql(`select string_agg(kind||':'||from_state||'>'||to_state, ',' order by created_at, kind)
+        from public.intake_events where request_id=${q(22)} and kind in ('edited','stop_asking')`),
+    ).toBe("edited:needs_information>needs_information,stop_asking:needs_information>in_review");
+  });
+  it("deletes a request's thread, outbox and Message-IDs with it", () => {
+    const link = thread(21, 70, q(3));
+    expect(ask(300)).toBe("t");
+    sql(`insert into public.intake_email_message_ids(org_id,link_id,message_id) values(${q(10)},'${link}','abc@mail.test')`);
+    sql(cmd("delete", 3, 130, 2, "", 21));
+    for (const table of ["intake_channel_links", "intake_outbound", "intake_email_message_ids"])
+      expect(sql(`select count(*) from public.${table}`)).toBe("0");
+    // A reply arriving after has no request to land on.
+    sql(`insert into public.intake_inbound(id,org_id,source,kind,external_id,payload)
+      values(${q(402)},${q(10)},'slack','reply','C1:402','{}')`);
+    expect(
+      sql(`select public.intake_reply_automated(${q(10)},${q(402)},${q(412)},'Late','{}'::jsonb)`),
+    ).toBe("");
+  });
+  it("keeps the requester loop from browser roles", () => {
+    for (const role of ["anon", "authenticated"]) {
+      for (const table of ["intake_channel_links", "intake_outbound", "intake_email_message_ids"])
+        expect(sql(`select has_table_privilege('${role}','public.${table}','SELECT')`)).toBe("f");
+      for (const fn of [
+        "intake_ask_automated(uuid,uuid,uuid,uuid,text,text,boolean,jsonb)",
+        "intake_reply_automated(uuid,uuid,uuid,text,jsonb)",
+        "intake_record_delivery(uuid,uuid,text,text,text,jsonb)",
+        "intake_mark_reply_seen(uuid,uuid,uuid,timestamptz)",
+      ])
+        expect(sql(`select has_function_privilege('${role}','public.${fn}','EXECUTE')`)).toBe("f");
+    }
   });
 });

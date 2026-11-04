@@ -74,13 +74,22 @@ export function newIntakeRule(
  * themselves. Secrets start empty, and empty keeps the saved one.
  */
 export type IntakeAutomationDraft = {
+  /** Ask requesters for missing details before Legal starts. */
+  clarifyEnabled: boolean;
   emailEnabled: boolean;
   domains: string[];
   /** A domain typed but not yet added, which is not saved until it is. */
   domainInput: string;
+  /** The sender name on MikeGC's own emails. */
+  fromName: string;
   slackEnabled: boolean;
   signingSecret: string;
   botToken: string;
+  teamsEnabled: boolean;
+  /** The Teams app's IDs, saved once typed in full, as secrets are. */
+  teamsAppId: string;
+  teamsTenantId: string;
+  teamsSecret: string;
   /** The models triage and preprocessing run with; null stops either. */
   triageModel: string | null;
   preprocessingModel: string | null;
@@ -92,12 +101,18 @@ export function intakeAutomationDraft(
   settings: IntakeAutomationSettings,
 ): IntakeAutomationDraft {
   return {
+    clarifyEnabled: settings.clarify_enabled,
     emailEnabled: settings.email.enabled,
     domains: [...settings.email.allowed_domains],
     domainInput: "",
+    fromName: settings.email.from_name,
     slackEnabled: settings.slack.enabled,
     signingSecret: "",
     botToken: "",
+    teamsEnabled: settings.teams.enabled,
+    teamsAppId: settings.teams.app_id ?? "",
+    teamsTenantId: settings.teams.tenant_id ?? "",
+    teamsSecret: "",
     triageModel: settings.models.triage,
     preprocessingModel: settings.models.preprocessing,
     rules: settings.rules.map((rule) =>
@@ -206,16 +221,32 @@ export function intakeAutomationChanges(
   draft: IntakeAutomationDraft,
 ): IntakeAutomationUpdate {
   const update: IntakeAutomationUpdate = {};
+  if (draft.clarifyEnabled !== settings.clarify_enabled)
+    update.clarify_enabled = draft.clarifyEnabled;
   if (draft.emailEnabled !== settings.email.enabled)
     update.email_enabled = draft.emailEnabled;
   if (!sameList(draft.domains, settings.email.allowed_domains))
     update.email_allowed_domains = draft.domains;
+  // An empty name is left for its field to correct: MikeGC always signs as someone.
+  const fromName = draft.fromName.trim();
+  if (fromName && fromName !== settings.email.from_name)
+    update.email_from_name = fromName;
   if (draft.slackEnabled !== settings.slack.enabled)
     update.slack_enabled = draft.slackEnabled;
   const signingSecret = draft.signingSecret.trim();
   if (signingSecret) update.slack_signing_secret = signingSecret;
   const botToken = draft.botToken.trim();
   if (botToken) update.slack_bot_token = botToken;
+  if (draft.teamsEnabled !== settings.teams.enabled)
+    update.teams_enabled = draft.teamsEnabled;
+  const teamsAppId = draft.teamsAppId.trim();
+  if (teamsAppId && teamsAppId !== (settings.teams.app_id ?? ""))
+    update.teams_app_id = teamsAppId;
+  const teamsTenantId = draft.teamsTenantId.trim();
+  if (teamsTenantId && teamsTenantId !== (settings.teams.tenant_id ?? ""))
+    update.teams_tenant_id = teamsTenantId;
+  const teamsSecret = draft.teamsSecret.trim();
+  if (teamsSecret) update.teams_client_secret = teamsSecret;
   if (draft.triageModel !== settings.models.triage)
     update.triage_model = draft.triageModel;
   if (draft.preprocessingModel !== settings.models.preprocessing)
@@ -238,8 +269,29 @@ export function intakeDraftAfterSave(
 ): IntakeAutomationDraft {
   const fresh = intakeAutomationDraft(saved);
   const next = { ...draft };
+  if (draft.clarifyEnabled === sent.clarify_enabled)
+    next.clarifyEnabled = fresh.clarifyEnabled;
   if (draft.emailEnabled === sent.email_enabled)
     next.emailEnabled = fresh.emailEnabled;
+  if (
+    sent.email_from_name !== undefined &&
+    draft.fromName.trim() === sent.email_from_name
+  )
+    next.fromName = fresh.fromName;
+  if (draft.teamsEnabled === sent.teams_enabled)
+    next.teamsEnabled = fresh.teamsEnabled;
+  if (
+    sent.teams_app_id !== undefined &&
+    draft.teamsAppId.trim() === sent.teams_app_id
+  )
+    next.teamsAppId = fresh.teamsAppId;
+  if (
+    sent.teams_tenant_id !== undefined &&
+    draft.teamsTenantId.trim() === sent.teams_tenant_id
+  )
+    next.teamsTenantId = fresh.teamsTenantId;
+  if (draft.teamsSecret.trim() === sent.teams_client_secret)
+    next.teamsSecret = "";
   if (
     sent.email_allowed_domains &&
     sameList(draft.domains, sent.email_allowed_domains)
@@ -304,10 +356,14 @@ export function intakeDraftAfterFailure(
   saved: IntakeAutomationSettings,
 ): IntakeAutomationDraft {
   const next = { ...draft };
+  if (draft.clarifyEnabled === sent.clarify_enabled)
+    next.clarifyEnabled = saved.clarify_enabled;
   if (draft.emailEnabled === sent.email_enabled)
     next.emailEnabled = saved.email.enabled;
   if (draft.slackEnabled === sent.slack_enabled)
     next.slackEnabled = saved.slack.enabled;
+  if (draft.teamsEnabled === sent.teams_enabled)
+    next.teamsEnabled = saved.teams.enabled;
   if (
     sent.triage_model !== undefined &&
     draft.triageModel === sent.triage_model
@@ -335,6 +391,11 @@ export function intakeDraftWithSwitches(
     sentValue !== undefined && current === savedValue ? sentValue : current;
   return {
     ...draft,
+    clarifyEnabled: again(
+      sent.clarify_enabled,
+      draft.clarifyEnabled,
+      saved.clarify_enabled,
+    ),
     emailEnabled: again(
       sent.email_enabled,
       draft.emailEnabled,
@@ -344,6 +405,11 @@ export function intakeDraftWithSwitches(
       sent.slack_enabled,
       draft.slackEnabled,
       saved.slack.enabled,
+    ),
+    teamsEnabled: again(
+      sent.teams_enabled,
+      draft.teamsEnabled,
+      saved.teams.enabled,
     ),
     triageModel: again(
       sent.triage_model,
@@ -358,33 +424,68 @@ export function intakeDraftWithSwitches(
   };
 }
 
+/** Fields typed in full before they save: secrets, and the Teams app's IDs. */
+export type IntakeCommitKey =
+  | "signingSecret"
+  | "botToken"
+  | "teamsAppId"
+  | "teamsTenantId"
+  | "teamsSecret";
+export type IntakeCommitted = Record<IntakeCommitKey, boolean>;
+export const NOTHING_COMMITTED: IntakeCommitted = {
+  signingSecret: false,
+  botToken: false,
+  teamsAppId: false,
+  teamsTenantId: false,
+  teamsSecret: false,
+};
+
 /**
- * The draft as autosave sends it. A typed secret goes only once committed,
- * never part-typed. A channel turned on goes only once it can run, as the API
- * refuses it before: email once its webhook URL exists, Slack once both its
- * secrets are saved or are being sent. Until then the switch shows on and
- * the channel's setup stays open.
+ * The draft as autosave sends it. A typed secret or Teams ID goes only once
+ * committed, never part-typed. A channel turned on goes only once it can
+ * run, as the API refuses it before: email once its mailbox is connected,
+ * Slack once both its secrets are saved or are being sent, Teams once its
+ * app ID, tenant ID and secret are. Until then the switch shows on and the
+ * channel's setup stays open.
  */
 export function intakeAutosaveDraft(
   settings: IntakeAutomationSettings,
   draft: IntakeAutomationDraft,
-  committed: { signingSecret: boolean; botToken: boolean },
+  committed: Partial<IntakeCommitted>,
 ): IntakeAutomationDraft {
   const signingSecret = committed.signingSecret ? draft.signingSecret : "";
   const botToken = committed.botToken ? draft.botToken : "";
+  const teamsSecret = committed.teamsSecret ? draft.teamsSecret : "";
+  // An ID not yet typed in full stays as saved.
+  const teamsAppId = committed.teamsAppId
+    ? draft.teamsAppId
+    : (settings.teams.app_id ?? "");
+  const teamsTenantId = committed.teamsTenantId
+    ? draft.teamsTenantId
+    : (settings.teams.tenant_id ?? "");
   const slackReady =
     settings.slack.configured || (!!signingSecret.trim() && !!botToken.trim());
+  const teamsReady =
+    settings.teams.configured ||
+    (!!teamsAppId.trim() && !!teamsTenantId.trim() && !!teamsSecret.trim());
   return {
     ...draft,
     signingSecret,
     botToken,
+    teamsSecret,
+    teamsAppId,
+    teamsTenantId,
     emailEnabled:
-      draft.emailEnabled && !settings.email.configured
+      draft.emailEnabled && !settings.email.provider
         ? settings.email.enabled
         : draft.emailEnabled,
     slackEnabled:
       draft.slackEnabled && !slackReady
         ? settings.slack.enabled
         : draft.slackEnabled,
+    teamsEnabled:
+      draft.teamsEnabled && !teamsReady
+        ? settings.teams.enabled
+        : draft.teamsEnabled,
   };
 }

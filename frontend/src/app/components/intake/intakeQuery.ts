@@ -42,6 +42,7 @@ export type IntakeSort = "updated" | "updated_asc" | "target";
  *   status    one open status, e.g. in_review
  *   assignee  a member's user ID
  *   requester one requester's name
+ *   reply     new: only requests with a reply nobody has opened yet
  *   sort      updated_asc or target (most recently updated first when absent)
  *   q         the search text
  */
@@ -51,6 +52,8 @@ export type IntakeFilters = {
   status: IntakeOpenState | null;
   assignee: string | null;
   requester: string | null;
+  /** Only requests with a requester's reply nobody has opened yet. */
+  newReply: boolean;
   sort: IntakeSort;
   q: string;
 };
@@ -61,6 +64,7 @@ export const DEFAULT_INTAKE_FILTERS: IntakeFilters = {
   status: null,
   assignee: null,
   requester: null,
+  newReply: false,
   sort: "updated",
   q: "",
 };
@@ -99,6 +103,7 @@ export function parseIntakeFilters(params: {
     status: pick(params.get("status"), STATES),
     assignee: assignee && UUID.test(assignee) ? assignee : null,
     requester: params.get("requester")?.trim().slice(0, 200) || null,
+    newReply: params.get("reply") === "new",
     sort: pick(params.get("sort"), SORTS) ?? DEFAULT_INTAKE_FILTERS.sort,
     q: (params.get("q") ?? "").slice(0, 200),
   };
@@ -112,6 +117,7 @@ export function intakeFiltersQuery(filters: IntakeFilters): string {
   if (filters.status) params.set("status", filters.status);
   if (filters.assignee) params.set("assignee", filters.assignee);
   if (filters.requester) params.set("requester", filters.requester);
+  if (filters.newReply) params.set("reply", "new");
   if (filters.sort !== "updated") params.set("sort", filters.sort);
   if (filters.q) params.set("q", filters.q);
   return params.toString();

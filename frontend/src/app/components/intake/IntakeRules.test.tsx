@@ -72,11 +72,18 @@ const rule = (
   ...extra,
 });
 const settings = (rules: IntakeAssignmentRule[]): IntakeAutomationSettings => ({
+  clarify_enabled: true,
   email: {
     enabled: false,
-    configured: false,
-    token_hint: null,
+    provider: null,
+    mailbox: null,
     allowed_domains: [],
+    from_name: "Legal",
+    graph: { tenant_id: null, client_id: null, secret_set: false },
+    notification_url: "https://api.example.test/webhooks/intake/graph/1",
+    gmail_client_id: null,
+    status: { subscription_expires_at: null, last_read_at: null, error: null },
+    needs_reconnect: false,
   },
   slack: {
     enabled: false,
@@ -85,6 +92,16 @@ const settings = (rules: IntakeAssignmentRule[]): IntakeAutomationSettings => ({
     team_id: null,
     team_name: null,
     bot_user_id: null,
+    missing_scopes: [],
+    message_events_seen: false,
+  },
+  teams: {
+    enabled: false,
+    events_url: "https://api.example.test/webhooks/intake/teams/1",
+    configured: false,
+    app_id: null,
+    tenant_id: null,
+    files_access: null,
   },
   models: {
     available: ["claude-haiku-4-5", "claude-sonnet-5-5", "gpt-6-luna"],

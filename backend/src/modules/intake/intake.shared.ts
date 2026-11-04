@@ -1,3 +1,10 @@
+const { jsonrepair } = require("jsonrepair") as {
+  jsonrepair: (text: string) => string;
+};
+import { enqueueDbJob } from "../../lib/dbq/enqueue";
+import { dbJobsEnabled } from "../../lib/dbq/runner";
+import type { DbJob } from "../../lib/dbq/types";
+import { safeError } from "../../lib/safeError";
 import type { Db } from "../../lib/supabase";
 import {
   failure,
@@ -52,4 +59,75 @@ export async function intakeRpc<T>(
       ),
     );
   }
+}
+
+/** The model's JSON object: fences stripped, the outer braces, repaired. */
+export function parseModelJson(raw: string): Record<string, unknown> | null {
+  const cleaned = raw
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/i, "");
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+  if (start < 0 || end <= start) return null;
+  const slice = cleaned.slice(start, end + 1);
+  for (const attempt of [() => JSON.parse(slice), () => JSON.parse(jsonrepair(slice))]) {
+    try {
+      const value: unknown = attempt();
+      if (value && typeof value === "object" && !Array.isArray(value))
+        return value as Record<string, unknown>;
+    } catch {
+      // Try the next, more forgiving reading.
+    }
+  }
+  return null;
+}
+
+/**
+ * Queue one of intake's jobs. With the job runner switched off
+ * (DB_JOBS_ENABLED=false) nothing would claim it, so it runs here, detached
+ * from the caller, without retries, and its failure hook runs if it fails.
+ */
+export async function dispatchIntakeJob(
+  db: Db,
+  args: {
+    kind: string;
+    payload: Record<string, unknown>;
+    dedupeKey: string;
+    maxAttempts: number;
+    runAt?: string;
+    handler: (db: Db, job: DbJob) => Promise<unknown>;
+    onFailure?: (db: Db, job: DbJob) => Promise<void>;
+  },
+): Promise<void> {
+  if (!dbJobsEnabled()) {
+    const now = new Date().toISOString();
+    const job: DbJob = {
+      id: `inline:${args.dedupeKey}`,
+      kind: args.kind,
+      payload: args.payload,
+      status: "running",
+      attempts: 1,
+      max_attempts: 1,
+      run_at: now,
+      claimed_at: now,
+      finished_at: null,
+      last_error: null,
+      dedupe_key: args.dedupeKey,
+      result: null,
+      created_at: now,
+    };
+    void args.handler(db, job).catch(async (error) => {
+      console.warn(`[${args.kind}] inline job failed`, safeError(error));
+      await args.onFailure?.(db, job).catch(() => undefined);
+    });
+    return;
+  }
+  await enqueueDbJob(db, {
+    kind: args.kind,
+    payload: args.payload,
+    dedupeKey: args.dedupeKey,
+    maxAttempts: args.maxAttempts,
+    ...(args.runAt ? { runAt: args.runAt } : {}),
+  });
 }

@@ -1,4 +1,5 @@
 import type { IntakeEvent, IntakeMessage } from "@mike/contracts";
+import { INTAKE_CHANNEL_LABELS } from "./intakeConversation";
 
 /**
  * One line of the activity timeline, read as "<actor> <action>", such as
@@ -36,6 +37,8 @@ function eventAction(event: IntakeEvent): string {
       return "cancelled this";
     case "reopen":
       return "reopened this";
+    case "stop_asking":
+      return "stopped MikeGC asking the requester";
     case "edited":
       return "edited the details";
     case "document_added":
@@ -60,15 +63,30 @@ const MESSAGE_ACTIONS: Record<IntakeMessage["kind"], string> = {
   note: "commented",
   resolution: "recorded the resolution",
   cancel_reason: "gave the reason for cancelling",
-  // Legacy question, reply and answer messages read as comments.
-  question: "commented",
-  reply: "commented",
+  // A member's question, or MikeGC's own, sent to the requester.
+  question: "asked the requester",
+  reply: "replied",
+  // Legacy answer messages read as comments.
   answer: "commented",
 };
 
-/** A message's line; its text is shown below it. */
+/**
+ * A message's line; its text is shown below it. A requester's reply names
+ * them and the channel it came in: "Ana Ruiz replied in Slack".
+ */
 export function describeIntakeMessage(
   message: IntakeMessage,
 ): IntakeActivityLine {
+  const channel = message.external_author?.source;
+  if (message.kind === "reply" && channel)
+    return {
+      actor: message.author_name,
+      action: `replied in ${INTAKE_CHANNEL_LABELS[channel]}`,
+    };
   return { actor: message.author_name, action: MESSAGE_ACTIONS[message.kind] };
+}
+
+/** What a message sent to the requester is called, to name it in a control. */
+export function intakeOutgoingName(kind: "question" | "resolution") {
+  return kind === "question" ? "the question" : "the resolution reply";
 }

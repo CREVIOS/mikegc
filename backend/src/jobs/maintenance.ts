@@ -5,6 +5,10 @@ import { backfillDocumentText, sweepStaleProcessingDocuments } from "../modules/
 import { sweepStaleGeneratingCells } from "../modules/tabular/tabular.service";
 import { expireDepartureArchives, purgeExpiredOrganizations } from "../modules/orgs/orgs.service";
 import { purgeExpiredSubagentRuns } from "../modules/chat/chat.service";
+import {
+    ensureIntakeMailboxPolls,
+    requeueStalledIntakeDeliveries,
+} from "../modules/intake/intake.service";
 
 /** Run recovery/expiry sweeps; errors are contained per sweep. */
 export async function runStaleWorkSweep(
@@ -29,6 +33,15 @@ export async function runStaleWorkSweep(
     });
     await purgeExpiredSubagentRuns(db).catch((err) => {
         logError("stale-sweep", err, { sweep: "subagent-runs" });
+    });
+    // A connected intake mailbox is read by a self-rescheduling job; this
+    // starts one again after a deploy or a job that stopped for good.
+    await ensureIntakeMailboxPolls(db).catch((err) => {
+        logError("stale-sweep", safeError(err), { sweep: "intake-mailbox" });
+    });
+    // A message to a requester whose delivery job was never queued.
+    await requeueStalledIntakeDeliveries(db).catch((err) => {
+        logError("stale-sweep", safeError(err), { sweep: "intake-deliveries" });
     });
     return { documents, cells };
 }

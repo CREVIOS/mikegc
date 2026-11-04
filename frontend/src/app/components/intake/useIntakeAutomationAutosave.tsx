@@ -16,7 +16,9 @@ import {
   intakeDraftAfterFailure,
   intakeDraftAfterSave,
   intakeDraftWithSwitches,
+  NOTHING_COMMITTED,
   type IntakeAutomationDraft,
+  type IntakeCommitted,
 } from "./intakeAutomation";
 
 type SaveError = {
@@ -36,15 +38,15 @@ export function useIntakeAutomationAutosave({
   orgId,
   settings,
   draft,
-  committed = { signingSecret: false, botToken: false },
+  committed = NOTHING_COMMITTED,
   onSettings,
   onDraft,
 }: {
   orgId: string;
   settings: IntakeAutomationSettings | null;
   draft: IntakeAutomationDraft | null;
-  /** Which typed secrets are complete, and so may be sent. */
-  committed?: { signingSecret: boolean; botToken: boolean };
+  /** Which typed secrets and IDs are complete, and so may be sent. */
+  committed?: Partial<IntakeCommitted>;
   onSettings: (settings: IntakeAutomationSettings) => void;
   onDraft: (
     next: (current: IntakeAutomationDraft) => IntakeAutomationDraft,

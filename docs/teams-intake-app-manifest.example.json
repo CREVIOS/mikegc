@@ -1,0 +1,49 @@
+{
+    "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.17/MicrosoftTeams.schema.json",
+    "manifestVersion": "1.17",
+    "version": "1.0.0",
+    "id": "YOUR-ENTRA-APP-ID",
+    "developer": {
+        "name": "Your organization's Legal team",
+        "websiteUrl": "https://your-mikegc.example.com",
+        "privacyUrl": "https://your-mikegc.example.com/privacy",
+        "termsOfUseUrl": "https://your-mikegc.example.com/terms"
+    },
+    "name": {
+        "short": "MikeGC",
+        "full": "MikeGC intake for Legal"
+    },
+    "description": {
+        "short": "Mention @MikeGC to send a request to Legal.",
+        "full": "Mention @MikeGC in a channel thread to send it to the Legal team as an intake request. MikeGC answers in the thread, asks for missing details, and posts Legal's resolution there."
+    },
+    "icons": {
+        "outline": "outline.png",
+        "color": "color.png"
+    },
+    "accentColor": "#1F2937",
+    "bots": [
+        {
+            "botId": "YOUR-ENTRA-APP-ID",
+            "scopes": ["team"],
+            "supportsFiles": false,
+            "isNotificationOnly": false
+        }
+    ],
+    "permissions": ["identity", "messageTeamMembers"],
+    "validDomains": [],
+    "webApplicationInfo": {
+        "id": "YOUR-ENTRA-APP-ID",
+        "resource": "https://RscBasedStoreApp"
+    },
+    "authorization": {
+        "permissions": {
+            "resourceSpecific": [
+                {
+                    "name": "ChannelMessage.Read.Group",
+                    "type": "Application"
+                }
+            ]
+        }
+    }
+}

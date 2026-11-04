@@ -1,64 +1,68 @@
-import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
-import {
-  ALLOWED_DOCUMENT_TYPES,
-  contentTypeForDocumentType,
-  documentSuffix,
-} from "../../lib/documentTypes";
 import {
   failure,
   internalFailure,
   ok,
+  type ServiceFailure,
   type ServiceResult,
 } from "../../lib/serviceResult";
-import { deleteFileBestEffort, uploadFile } from "../../lib/storage";
 import type { Db } from "../../lib/supabase";
-import {
-  emailTokenHash,
-  slackSigningSecret,
-  type AutomationRow,
-} from "./intake.automation";
 import { dispatchIntakeInbound } from "./intake.automationJob";
+import { findThreadLink, routeThreadMessage } from "./intake.channels";
 import {
-  MAX_ATTACHMENT_BYTES,
-  MAX_ATTACHMENTS,
   MAX_MESSAGE_CHARS,
   cleanText,
   clip,
-  type EmailInboundPayload,
-  type SkippedAttachment,
   type SlackInboundPayload,
+  type TeamsInboundPayload,
 } from "./intake.inboundPayload";
+import { dispatchIntakeReply } from "./intake.reply";
+import { slackSigningSecret } from "./intake.secrets";
+import { automationByWebhook, type AutomationRow } from "./intake.settingsRow";
 import { verifySlackSignature } from "./intake.slack";
+import {
+  teamsActivity,
+  teamsActivityFiles,
+  teamsActivityText,
+  teamsMentionsBot,
+  verifyBotFrameworkToken,
+  type TeamsActivity,
+} from "./intake.teams";
+
+export {
+  htmlToText,
+  isAutomaticMail,
+  senderDomainAllowed,
+} from "./intake.mail";
 
 /**
- * The two ways a message reaches automated intake: a Slack event and a
- * Postmark inbound email. Each is checked, stored once in intake_inbound and
- * handed to the intake.inbound job, quickly enough for Slack's three-second
- * deadline. A delivery repeated by the sender finds its row and adds nothing.
+ * How a message reaches automated intake by webhook: a Slack event or a
+ * Teams activity (Outlook and Gmail are read from the mailbox, see
+ * intake.mailbox.ts). Each is checked, then either stored once in
+ * intake_inbound and handed to its job (a new request, or a message in a
+ * request's thread), or acknowledged and dropped without storing anything,
+ * quickly enough for Slack's three-second deadline. A delivery repeated by
+ * the sender finds its row and adds nothing.
  */
 
 const NOT_FOUND = failure("not_found", "Not found.");
-/**
- * An email webhook URL that is unknown, replaced or switched off. Postmark
- * stops retrying a delivery only on 403; on 404 it would keep retrying.
- */
-const EMAIL_REFUSED = failure("forbidden", "Email intake is not available here.");
 
 export type InboundReceipt = { status: "received" | "duplicate" | "ignored" };
 
 type InboundInsert = {
   id?: string;
   org_id: string;
-  source: "email" | "slack";
+  source: "email" | "slack" | "outlook" | "gmail" | "teams";
+  kind?: "request" | "reply";
   external_id: string;
   status: "pending" | "ignored";
   payload: Record<string, unknown> | null;
+  request_id?: string | null;
   error?: string | null;
 };
 
 /** Store a message once: the new row's id, or null if it was stored before. */
-async function insertInbound(
+export async function insertInbound(
   db: Db,
   row: InboundInsert,
 ): Promise<ServiceResult<string | null>> {
@@ -94,10 +98,10 @@ async function queue(
  * waiting is queued again (deduplicated while its job is live), in case the
  * first delivery stored it but could not queue it.
  */
-async function redelivered(
+export async function redelivered(
   db: Db,
   orgId: string,
-  source: "email" | "slack",
+  source: InboundInsert["source"],
   externalId: string,
 ): Promise<ServiceResult<InboundReceipt>> {
   const existing = await findInbound(db, orgId, source, externalId);
@@ -109,10 +113,10 @@ async function redelivered(
   return ok({ status: "duplicate" });
 }
 
-async function findInbound(
+export async function findInbound(
   db: Db,
   orgId: string,
-  source: "email" | "slack",
+  source: InboundInsert["source"],
   externalId: string,
 ): Promise<ServiceResult<{ id: string; status: string } | null>> {
   const { data, error } = await db
@@ -126,15 +130,37 @@ async function findInbound(
   return ok((data as { id: string; status: string } | null) ?? null);
 }
 
+/** Store a new request's message once and queue its job. */
+async function storeRequest(
+  db: Db,
+  orgId: string,
+  source: InboundInsert["source"],
+  externalId: string,
+  payload: Record<string, unknown>,
+): Promise<ServiceResult<InboundReceipt>> {
+  const stored = await insertInbound(db, {
+    org_id: orgId,
+    source,
+    external_id: externalId,
+    status: "pending",
+    payload,
+  });
+  if (!stored.ok) return stored;
+  if (stored.data === null) return redelivered(db, orgId, source, externalId);
+  const queued = await queue(db, orgId, stored.data);
+  return queued.ok ? ok({ status: "received" }) : queued;
+}
+
 const slackEnvelope = z.object({
   type: z.string(),
   challenge: z.string().max(500).optional(),
+  team_id: z.string().regex(/^[A-Z0-9]{1,40}$/).optional(),
   event: z.unknown().optional(),
 });
 const SLACK_ID = /^[A-Z0-9]{1,40}$/;
 const SLACK_TS = /^\d{1,12}\.\d{1,8}$/;
-const appMention = z.object({
-  type: z.literal("app_mention"),
+const slackMessageEvent = z.object({
+  type: z.enum(["app_mention", "message"]),
   user: z.string().regex(SLACK_ID).optional(),
   bot_id: z.string().optional(),
   subtype: z.string().optional(),
@@ -171,12 +197,29 @@ function slackFiles(files: unknown[] | undefined): SlackInboundPayload["files"] 
   });
 }
 
+/** How often settings learn that thread messages still arrive. */
+const MESSAGES_SEEN_EVERY_MS = 60 * 60 * 1000;
+
+async function noteMessagesSeen(db: Db, settings: AutomationRow) {
+  const seen = settings.slack_messages_seen_at
+    ? Date.parse(settings.slack_messages_seen_at)
+    : 0;
+  if (Date.now() - seen < MESSAGES_SEEN_EVERY_MS) return;
+  await db
+    .from("intake_automation")
+    .update({ slack_messages_seen_at: new Date().toISOString() })
+    .eq("org_id", settings.org_id)
+    .then(undefined, () => undefined);
+}
+
 /**
  * A request from the organization's Slack app. Signed requests only: a URL
  * verification challenge is answered as soon as a signing secret is saved,
- * so the URL can be verified before Slack is turned on; mentions of MikeGC
- * are stored and queued while Slack is on. Everything else is acknowledged
- * and dropped, so Slack does not retry it.
+ * so the URL can be verified before Slack is turned on. While Slack is on,
+ * any person's message in a thread linked to a request is that request's
+ * reply, and a mention of MikeGC anywhere else is a new request. Everything
+ * else (channel chatter, MikeGC's own and other bots' messages, edits and
+ * deletions) is acknowledged and dropped without storing its content.
  */
 export async function receiveSlackEvent(
   db: Db,
@@ -184,15 +227,12 @@ export async function receiveSlackEvent(
   rawBody: Buffer,
   headers: { timestamp: string | undefined; signature: string | undefined },
 ): Promise<ServiceResult<{ challenge?: string }>> {
-  const { data, error } = await db
-    .from("intake_automation")
-    .select(
-      "org_id, slack_enabled, slack_bot_user_id, slack_signing_secret_encrypted, slack_signing_secret_iv, slack_signing_secret_tag",
-    )
-    .eq("slack_webhook_id", webhookId)
-    .maybeSingle();
-  if (error) return internalFailure(error);
-  const settings = data as AutomationRow | null;
+  let settings: AutomationRow | null;
+  try {
+    settings = await automationByWebhook(db, "slack_webhook_id", webhookId);
+  } catch (error) {
+    return internalFailure(error);
+  }
   if (!settings) return NOT_FOUND;
   const secret = slackSigningSecret(settings);
   if (!secret) return NOT_FOUND;
@@ -213,350 +253,180 @@ export async function receiveSlackEvent(
       : failure("validation", "Invalid event.");
   if (envelope.data.type !== "event_callback" || !settings.slack_enabled)
     return ok({});
-  const event = appMention.safeParse(envelope.data.event);
+  const event = slackMessageEvent.safeParse(envelope.data.event);
   if (!event.success) return ok({});
-  const mention = event.data;
-  // Bots, including MikeGC's own replies, never file requests.
+  const message = event.data;
+  // Bots, including MikeGC's own posts, never file requests or reply; edits,
+  // deletions and joins are not messages a person sent.
   if (
-    mention.bot_id ||
-    mention.subtype === "bot_message" ||
-    !mention.user ||
-    mention.user === settings.slack_bot_user_id
+    message.bot_id ||
+    (message.subtype !== undefined && message.subtype !== "file_share") ||
+    !message.user ||
+    message.user === settings.slack_bot_user_id
   )
     return ok({});
+  const team = envelope.data.team_id ?? settings.slack_team_id ?? "";
+  const externalId = `${message.channel}:${message.ts}`;
+  const inThread = !!message.thread_ts && message.thread_ts !== message.ts;
+  if (inThread) {
+    let link;
+    try {
+      link = await findThreadLink(
+        db,
+        settings.org_id,
+        "slack",
+        `${team}:${message.channel}:${message.thread_ts}`,
+      );
+    } catch (error) {
+      return internalFailure(error);
+    }
+    if (link) {
+      if (message.type === "message") await noteMessagesSeen(db, settings);
+      // A mention fires app_mention and message alike; both name the same
+      // channel:ts, so it is recorded once, as a reply.
+      const routed = await routeThreadMessage(db, {
+        orgId: settings.org_id,
+        source: "slack",
+        externalId,
+        requestId: link.request_id,
+        payload: {
+          kind: "slack_reply",
+          channel: message.channel,
+          ts: message.ts,
+          thread_ts: message.thread_ts,
+          user: message.user,
+        },
+        dispatch: dispatchIntakeReply,
+      });
+      return routed.ok ? ok({}) : routed;
+    }
+  }
+  // Only a mention of MikeGC starts a request.
+  if (message.type !== "app_mention") return ok({});
   const payload: SlackInboundPayload = {
     kind: "slack",
-    channel: mention.channel,
-    ts: mention.ts,
-    thread_ts:
-      mention.thread_ts && mention.thread_ts !== mention.ts
-        ? mention.thread_ts
-        : null,
-    user: mention.user,
-    text: clip(cleanText(mention.text ?? ""), MAX_MESSAGE_CHARS),
-    files: slackFiles(mention.files),
+    team_id: team || null,
+    channel: message.channel,
+    ts: message.ts,
+    thread_ts: inThread ? message.thread_ts! : null,
+    user: message.user,
+    text: clip(cleanText(message.text ?? ""), MAX_MESSAGE_CHARS),
+    files: slackFiles(message.files),
   };
-  const externalId = `${mention.channel}:${mention.ts}`;
-  const stored = await insertInbound(db, {
-    org_id: settings.org_id,
-    source: "slack",
-    external_id: externalId,
-    status: "pending",
-    payload,
-  });
-  if (!stored.ok) return stored;
-  const queued =
-    stored.data === null
-      ? await redelivered(db, settings.org_id, "slack", externalId)
-      : await queue(db, settings.org_id, stored.data);
-  return queued.ok ? ok({}) : queued;
-}
-
-/** A token as generate-email-webhook makes it: 32 bytes, base64url. */
-const EMAIL_TOKEN = /^[A-Za-z0-9_-]{43}$/;
-const maybe = <T extends z.ZodTypeAny>(schema: T) =>
-  schema.optional().catch(undefined);
-/** Postmark's inbound JSON, read leniently: an odd field is dropped, not fatal. */
-const postmarkInbound = z.object({
-  From: maybe(z.string()),
-  FromName: maybe(z.string()),
-  FromFull: maybe(
-    z.object({ Email: maybe(z.string()), Name: maybe(z.string()) }),
-  ),
-  Subject: maybe(z.string()),
-  MessageID: maybe(z.string()),
-  Date: maybe(z.string()),
-  TextBody: maybe(z.string()),
-  HtmlBody: maybe(z.string()),
-  Headers: maybe(
-    z.array(z.object({ Name: z.string(), Value: z.string() })).max(1000),
-  ),
-  Attachments: maybe(
-    z.array(
-      z.object({
-        Name: maybe(z.string()),
-        Content: maybe(z.string()),
-        ContentType: maybe(z.string()),
-        ContentLength: maybe(z.number()),
-        ContentID: maybe(z.string()),
-      }),
-    ),
-  ),
-});
-type PostmarkInbound = z.infer<typeof postmarkInbound>;
-
-function headerOf(mail: PostmarkInbound, name: string): string | null {
-  const found = mail.Headers?.find(
-    (h) => h.Name.toLowerCase() === name.toLowerCase(),
-  );
-  return found ? found.Value.trim() : null;
-}
-
-/** Out-of-office answers, other automatic replies and bulk or list mail. */
-export function isAutomaticEmail(mail: PostmarkInbound): boolean {
-  const autoSubmitted = headerOf(mail, "Auto-Submitted")?.toLowerCase();
-  if (autoSubmitted && autoSubmitted !== "no") return true;
-  if (headerOf(mail, "X-Autoreply") !== null) return true;
-  if (headerOf(mail, "X-Autorespond") !== null) return true;
-  const precedence = headerOf(mail, "Precedence")?.toLowerCase();
-  return ["bulk", "auto_reply", "list", "junk"].includes(precedence ?? "");
-}
-
-/** The message's identity: its Message-ID header, else Postmark's ID. */
-function emailExternalId(mail: PostmarkInbound): string | null {
-  const id = headerOf(mail, "Message-ID") || mail.MessageID?.trim() || null;
-  if (!id) return null;
-  return id.length <= 300
-    ? id
-    : `sha256:${createHash("sha256").update(id).digest("hex")}`;
-}
-
-function sender(mail: PostmarkInbound): EmailInboundPayload["from"] {
-  const fromHeader = mail.From?.match(/<([^<>\s]+@[^<>\s]+)>/)?.[1] ?? mail.From;
-  const email = (mail.FromFull?.Email || fromHeader || "").trim().toLowerCase();
-  const name = (mail.FromFull?.Name || mail.FromName || "").trim();
-  return {
-    email: /^[^@\s]+@[^@\s]+$/.test(email) && email.length <= 320 ? email : null,
-    name: name ? clip(cleanText(name), 200) : null,
-  };
+  const stored = await storeRequest(db, settings.org_id, "slack", externalId, payload);
+  return stored.ok ? ok({}) : stored;
 }
 
 /**
- * Whether the sender's domain, or a parent domain, is on the list. An empty
- * list accepts no one: mail is recorded only from domains an admin named.
+ * A Teams activity from the organization's own bot. It must carry a Bot
+ * Connector token for the bot's app ID, from the configured tenant. While
+ * Teams is on, a person's message in a thread linked to a request is its
+ * reply, and a message that mentions MikeGC in any other channel thread is
+ * a new request; everything else is acknowledged and dropped.
  */
-export function senderDomainAllowed(
-  email: string | null,
-  allowed: string[],
-): boolean {
-  const domain = email?.split("@").pop()?.toLowerCase();
-  if (!domain) return false;
-  return allowed.some((d) => domain === d || domain.endsWith(`.${d}`));
-}
-
-const HIDDEN_ELEMENTS = new Set(["script", "style", "head"]);
-const LINE_ENDING_ELEMENTS = /^(p|div|li|tr|h[1-6])$/;
-
-/**
- * Readable text from an HTML-only email. Read in one pass from each "<" to
- * the next ">", so every tag goes, nested or broken ones such as
- * "<scr<b>ipt>" included, and what a script, style or head holds is dropped.
- */
-export function htmlToText(html: string): string {
-  const out: string[] = [];
-  // The element whose content is being dropped, until it closes.
-  let hidden: string | null = null;
-  let at = 0;
-  while (at < html.length) {
-    const open = html.indexOf("<", at);
-    if (!hidden) out.push(open === -1 ? html.slice(at) : html.slice(at, open));
-    if (open === -1) break;
-    const close = html.indexOf(">", open + 1);
-    // A tag that never ends: the rest is markup.
-    if (close === -1) break;
-    const tag = html.slice(open + 1, close).trim().toLowerCase();
-    const closing = tag.startsWith("/");
-    const name = (closing ? tag.slice(1) : tag).split(/[\s/]/)[0] ?? "";
-    if (hidden) {
-      if (closing && name === hidden) hidden = null;
-    } else if (!closing && HIDDEN_ELEMENTS.has(name)) hidden = name;
-    else if (name === "br" || (closing && LINE_ENDING_ELEMENTS.test(name)))
-      out.push("\n");
-    else if (!closing && name === "li") out.push("- ");
-    at = close + 1;
-  }
-  return out
-    .join("")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/&amp;/gi, "&")
-    .replace(/[ \t]+\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
-function fileName(value: string | undefined, index: number): string {
-  const base = (value ?? "").split(/[\\/]/).pop() ?? "";
-  const clean = cleanText(base)
-    .replace(/[\u0000-\u001f\u007f]/g, "")
-    .trim()
-    .slice(-255);
-  return clean || `attachment-${index + 1}`;
-}
-
-/**
- * Stage the attachments MikeGC will add: PDF, Word, Excel and PowerPoint,
- * up to 10 of 25 MB each. They wait in storage under the message's row until
- * it is handled, since the job runs later. The rest are listed as skipped,
- * except images embedded in the email's body, such as signature logos.
- */
-async function stageAttachments(
-  orgId: string,
-  inboundId: string,
-  attachments: NonNullable<PostmarkInbound["Attachments"]>,
-): Promise<Pick<EmailInboundPayload, "attachments" | "skipped">> {
-  const accepted: EmailInboundPayload["attachments"] = [];
-  const skipped: SkippedAttachment[] = [];
-  try {
-    for (const [index, attachment] of attachments.entries()) {
-      const name = fileName(attachment.Name, index);
-      const fileType = documentSuffix(name);
-      if (!ALLOWED_DOCUMENT_TYPES.has(fileType)) {
-        const inline =
-          !!attachment.ContentID &&
-          (attachment.ContentType ?? "").toLowerCase().startsWith("image/");
-        if (!inline) skipped.push({ name, reason: "type" });
-        continue;
-      }
-      const content = attachment.Content ?? "";
-      // Base64 is 4 characters per 3 bytes: refuse before decoding.
-      if (Math.floor((content.length * 3) / 4) > MAX_ATTACHMENT_BYTES + 3) {
-        skipped.push({ name, reason: "size" });
-        continue;
-      }
-      const bytes = Buffer.from(content, "base64");
-      if (bytes.length === 0) {
-        skipped.push({ name, reason: "unreadable" });
-        continue;
-      }
-      if (bytes.length > MAX_ATTACHMENT_BYTES) {
-        skipped.push({ name, reason: "size" });
-        continue;
-      }
-      if (accepted.length >= MAX_ATTACHMENTS) {
-        skipped.push({ name, reason: "count" });
-        continue;
-      }
-      const key = `intake-inbound/${orgId}/${inboundId}/${accepted.length}`;
-      await uploadFile(
-        key,
-        bytes.buffer.slice(
-          bytes.byteOffset,
-          bytes.byteOffset + bytes.byteLength,
-        ) as ArrayBuffer,
-        contentTypeForDocumentType(fileType),
-      );
-      accepted.push({ name, file_type: fileType, size: bytes.length, key });
-    }
-  } catch (error) {
-    await discardStaged(accepted.map((a) => a.key));
-    throw error;
-  }
-  return { attachments: accepted, skipped };
-}
-
-async function discardStaged(keys: string[]) {
-  await Promise.all(
-    keys.map((key) => deleteFileBestEffort(key, "intake-inbound-discard")),
-  );
-}
-
-const AUTOMATIC_EMAIL = "An automatic reply or bulk email, so no request was recorded.";
-
-/**
- * An email Postmark received at the organization's intake address. The URL's
- * token names the organization; an unknown token, or email turned off,
- * answers not found. Automatic mail and senders outside the accepted domains
- * are recorded as ignored, without content, so admins can see them.
- */
-export async function receiveInboundEmail(
+export async function receiveTeamsActivity(
   db: Db,
-  token: string,
+  webhookId: string,
+  authorization: string | undefined,
   body: unknown,
 ): Promise<ServiceResult<InboundReceipt>> {
-  if (!EMAIL_TOKEN.test(token)) return EMAIL_REFUSED;
-  const { data, error } = await db
-    .from("intake_automation")
-    .select("org_id, email_enabled, email_allowed_domains")
-    .eq("email_token_hash", emailTokenHash(token))
-    .maybeSingle();
-  if (error) return internalFailure(error);
-  const settings = data as Pick<
-    AutomationRow,
-    "org_id" | "email_enabled" | "email_allowed_domains"
-  > | null;
-  if (!settings?.email_enabled) return EMAIL_REFUSED;
-  const parsed = postmarkInbound.safeParse(body);
-  if (!parsed.success || !body || typeof body !== "object")
-    return failure("validation", "Not a Postmark inbound message.");
-  const mail = parsed.data;
-  const externalId = emailExternalId(mail);
-  if (!externalId) return failure("validation", "Not a Postmark inbound message.");
-  const orgId = settings.org_id;
-
-  // A repeated delivery: nothing to stage again.
-  const existing = await findInbound(db, orgId, "email", externalId);
-  if (!existing.ok) return existing;
-  if (existing.data) return redelivered(db, orgId, "email", externalId);
-
-  const from = sender(mail);
-  const ignored = async (
-    reason: string,
-  ): Promise<ServiceResult<InboundReceipt>> => {
-    const stored = await insertInbound(db, {
-      org_id: orgId,
-      source: "email",
-      external_id: externalId,
-      status: "ignored",
-      payload: null,
-      error: clip(reason, 200),
-    });
-    if (!stored.ok) return stored;
-    return ok({ status: stored.data === null ? "duplicate" : "ignored" });
-  };
-  if (isAutomaticEmail(mail)) return ignored(AUTOMATIC_EMAIL);
-  const allowed = settings.email_allowed_domains ?? [];
-  if (allowed.length === 0)
-    return ignored(
-      "No sender domains are accepted yet. Add one in Intake settings.",
-    );
-  if (!senderDomainAllowed(from.email, allowed)) {
-    const domain = from.email?.split("@").pop()?.slice(0, 60);
-    return ignored(
-      domain
-        ? `The sender's domain, ${domain}, isn't one of the accepted domains.`
-        : "The sender's address couldn't be read, and only accepted domains are recorded.",
-    );
-  }
-
-  const inboundId = randomUUID();
-  let staged: Pick<EmailInboundPayload, "attachments" | "skipped">;
+  let settings: AutomationRow | null;
   try {
-    staged = await stageAttachments(orgId, inboundId, mail.Attachments ?? []);
-  } catch (cause) {
-    return internalFailure(cause);
+    settings = await automationByWebhook(db, "teams_webhook_id", webhookId);
+  } catch (error) {
+    return internalFailure(error);
   }
-  const text = mail.TextBody?.trim()
-    ? mail.TextBody
-    : mail.HtmlBody
-      ? htmlToText(mail.HtmlBody)
-      : "";
-  const sent = mail.Date ? new Date(mail.Date) : new Date();
-  const payload: EmailInboundPayload = {
-    kind: "email",
-    from,
-    subject: mail.Subject?.trim() ? clip(cleanText(mail.Subject.trim()), 1000) : null,
-    date: (Number.isNaN(sent.getTime()) ? new Date() : sent).toISOString(),
-    text: clip(cleanText(text), MAX_MESSAGE_CHARS),
-    ...staged,
-  };
-  const stored = await insertInbound(db, {
-    id: inboundId,
-    org_id: orgId,
-    source: "email",
-    external_id: externalId,
-    status: "pending",
-    payload,
+  if (!settings?.teams_app_id || !settings.teams_tenant_id) return NOT_FOUND;
+  const parsed = teamsActivity.safeParse(body);
+  if (!parsed.success) return failure("validation", "Invalid activity.");
+  const activity: TeamsActivity = parsed.data;
+  const verified = await verifyBotFrameworkToken(authorization, {
+    appId: settings.teams_app_id,
+    serviceUrl: activity.serviceUrl,
   });
-  // Not stored, or another delivery of the same message stored it first:
-  // nothing will read these copies.
-  if (!stored.ok || stored.data === null)
-    await discardStaged(staged.attachments.map((a) => a.key));
-  if (!stored.ok) return stored;
-  if (stored.data === null) return redelivered(db, orgId, "email", externalId);
-  const queued = await queue(db, orgId, stored.data);
-  return queued.ok ? ok({ status: "received" }) : queued;
+  if (!verified) return failure("forbidden", "Invalid token.");
+  if (activity.channelData?.tenant?.id !== settings.teams_tenant_id)
+    return failure("forbidden", "Invalid tenant.");
+  if (!settings.teams_enabled) return ok({ status: "ignored" });
+  // Edits, deletions, reactions, membership changes and the bot's own posts.
+  if (
+    activity.type !== "message" ||
+    activity.channelData?.eventType ||
+    activity.from.id === `28:${settings.teams_app_id}` ||
+    activity.conversation.conversationType !== "channel"
+  )
+    return ok({ status: "ignored" });
+  const conversationId = activity.conversation.id;
+  const root = conversationId.match(/;messageid=(\d{1,30})$/)?.[1];
+  if (!root) return ok({ status: "ignored" });
+  const tenant = settings.teams_tenant_id;
+  const text = teamsActivityText(activity, settings.teams_app_id);
+  const files = teamsActivityFiles(activity);
+  const date = activity.timestamp && !Number.isNaN(Date.parse(activity.timestamp))
+    ? new Date(activity.timestamp).toISOString()
+    : new Date().toISOString();
+  const from = {
+    id: activity.from.id,
+    aad_object_id: activity.from.aadObjectId ?? null,
+    name: activity.from.name ? clip(cleanText(activity.from.name), 200) : null,
+  };
+  let link;
+  try {
+    link = await findThreadLink(db, settings.org_id, "teams", `${tenant}:${conversationId}`);
+  } catch (error) {
+    return internalFailure(error);
+  }
+  if (link) {
+    const routed = await routeThreadMessage(db, {
+      orgId: settings.org_id,
+      source: "teams",
+      externalId: activity.id,
+      requestId: link.request_id,
+      payload: {
+        kind: "teams_reply",
+        activity_id: activity.id,
+        service_url: activity.serviceUrl,
+        from,
+        date,
+        text: clip(text, MAX_MESSAGE_CHARS),
+        files,
+      },
+      dispatch: dispatchIntakeReply,
+    });
+    return routed.ok ? ok({ status: routed.data }) : routed;
+  }
+  if (!teamsMentionsBot(activity, settings.teams_app_id)) return ok({ status: "ignored" });
+  const channelData = activity.channelData ?? {};
+  const payload: TeamsInboundPayload = {
+    kind: "teams",
+    tenant_id: tenant,
+    service_url: activity.serviceUrl,
+    conversation_id: conversationId,
+    team_id: channelData.team?.id ?? null,
+    aad_group_id: channelData.team?.aadGroupId ?? null,
+    channel_id: channelData.channel?.id ?? null,
+    root_message_id: root,
+    team_name: channelData.team?.name ? clip(cleanText(channelData.team.name), 200) : null,
+    channel_name: channelData.channel?.name
+      ? clip(cleanText(channelData.channel.name), 200)
+      : null,
+    activity_id: activity.id,
+    from,
+    date,
+    text: clip(text, MAX_MESSAGE_CHARS),
+    files,
+  };
+  return storeRequest(db, settings.org_id, "teams", activity.id, payload);
+}
+
+/**
+ * The retired Postmark webhook. Email is read from the intake mailbox now;
+ * 403 tells Postmark to stop retrying, so a forwarding rule left in place
+ * fails fast. Mail Postmark delivered earlier is still processed.
+ */
+export async function receiveInboundEmail(): Promise<ServiceFailure> {
+  return failure(
+    "forbidden",
+    "Email intake reads the organization's mailbox now. Connect it in Intake settings.",
+  );
 }

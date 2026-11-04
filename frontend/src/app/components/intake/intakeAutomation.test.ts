@@ -7,6 +7,7 @@ vi.mock("@/app/contexts/WorkspaceContext", () => ({
 
 import {
   MAX_INTAKE_DOMAINS,
+  NOTHING_COMMITTED,
   intakeAutomationChanges,
   intakeAutomationDraft,
   intakeDomainInputError,
@@ -20,11 +21,18 @@ import {
 } from "./intakeAutomation";
 
 const saved: IntakeAutomationSettings = {
+  clarify_enabled: true,
   email: {
     enabled: true,
-    configured: true,
-    token_hint: "9f3c",
+    provider: "graph",
+    mailbox: "intake@example.com",
     allowed_domains: ["example.com"],
+    from_name: "Legal",
+    graph: { tenant_id: "t1", client_id: "c1", secret_set: true },
+    notification_url: "https://api.example.test/webhooks/intake/graph/1",
+    gmail_client_id: null,
+    status: { subscription_expires_at: null, last_read_at: null, error: null },
+    needs_reconnect: false,
   },
   slack: {
     enabled: false,
@@ -33,6 +41,16 @@ const saved: IntakeAutomationSettings = {
     team_id: "T1",
     team_name: "Acme",
     bot_user_id: "U1",
+    missing_scopes: [],
+    message_events_seen: true,
+  },
+  teams: {
+    enabled: false,
+    events_url: "https://api.example.test/webhooks/intake/teams/1",
+    configured: false,
+    app_id: null,
+    tenant_id: null,
+    files_access: null,
   },
   models: {
     available: ["claude-haiku-4-5", "claude-sonnet-5-5"],
@@ -418,10 +436,10 @@ describe("a saved rule being retyped", () => {
 });
 
 describe("intakeAutosaveDraft", () => {
-  const none = { signingSecret: false, botToken: false };
+  const none = NOTHING_COMMITTED;
   const unset: IntakeAutomationSettings = {
     ...saved,
-    email: { ...saved.email, enabled: false, configured: false },
+    email: { ...saved.email, enabled: false, provider: null, mailbox: null },
     slack: { ...saved.slack, enabled: false, configured: false },
   };
 
@@ -447,8 +465,8 @@ describe("intakeAutosaveDraft", () => {
       intakeAutomationChanges(
         unset,
         intakeAutosaveDraft(unset, draft, {
+          ...none,
           signingSecret: true,
-          botToken: false,
         }),
       ),
     ).toEqual({ slack_signing_secret: "s3cret" });
@@ -456,6 +474,7 @@ describe("intakeAutosaveDraft", () => {
       intakeAutomationChanges(
         unset,
         intakeAutosaveDraft(unset, draft, {
+          ...none,
           signingSecret: true,
           botToken: true,
         }),
@@ -476,5 +495,110 @@ describe("intakeAutosaveDraft", () => {
     expect(
       intakeAutomationChanges(saved, intakeAutosaveDraft(saved, draft, none)),
     ).toEqual({ email_enabled: false, slack_enabled: true });
+  });
+});
+
+describe("the requester loop's settings", () => {
+  it("sends asking for missing details, and turns it back on failure", () => {
+    const draft = { ...intakeAutomationDraft(saved), clarifyEnabled: false };
+    const sent = intakeAutomationChanges(saved, draft);
+    expect(sent).toEqual({ clarify_enabled: false });
+    expect(intakeDraftAfterFailure(draft, sent, saved).clarifyEnabled).toBe(
+      true,
+    );
+    expect(
+      intakeDraftWithSwitches(
+        intakeDraftAfterFailure(draft, sent, saved),
+        sent,
+        saved,
+      ).clarifyEnabled,
+    ).toBe(false);
+    expect(
+      intakeDraftAfterSave(draft, sent, { ...saved, clarify_enabled: false })
+        .clarifyEnabled,
+    ).toBe(false);
+  });
+
+  it("sends the sender name trimmed, and never an empty one", () => {
+    const draft = intakeAutomationDraft(saved);
+    expect(
+      intakeAutomationChanges(saved, { ...draft, fromName: " Legal team " }),
+    ).toEqual({ email_from_name: "Legal team" });
+    expect(intakeAutomationChanges(saved, { ...draft, fromName: "  " })).toEqual(
+      {},
+    );
+  });
+
+  it("holds email turned on until a mailbox is connected", () => {
+    const unconnected: IntakeAutomationSettings = {
+      ...saved,
+      email: { ...saved.email, enabled: false, provider: null },
+    };
+    const draft = { ...intakeAutomationDraft(unconnected), emailEnabled: true };
+    expect(
+      intakeAutomationChanges(
+        unconnected,
+        intakeAutosaveDraft(unconnected, draft, NOTHING_COMMITTED),
+      ),
+    ).toEqual({});
+  });
+
+  it("saves Teams IDs once typed in full, and turns Teams on with all three", () => {
+    const draft = {
+      ...intakeAutomationDraft(saved),
+      teamsEnabled: true,
+      teamsAppId: "app-1",
+      teamsTenantId: "tenant-1",
+      teamsSecret: "s3cret",
+    };
+    // Part-typed: nothing goes, and the switch waits.
+    expect(
+      intakeAutomationChanges(
+        saved,
+        intakeAutosaveDraft(saved, draft, NOTHING_COMMITTED),
+      ),
+    ).toEqual({});
+    expect(
+      intakeAutomationChanges(
+        saved,
+        intakeAutosaveDraft(saved, draft, {
+          ...NOTHING_COMMITTED,
+          teamsAppId: true,
+        }),
+      ),
+    ).toEqual({ teams_app_id: "app-1" });
+    const all = {
+      ...NOTHING_COMMITTED,
+      teamsAppId: true,
+      teamsTenantId: true,
+      teamsSecret: true,
+    };
+    const sent = intakeAutomationChanges(
+      saved,
+      intakeAutosaveDraft(saved, draft, all),
+    );
+    expect(sent).toEqual({
+      teams_enabled: true,
+      teams_app_id: "app-1",
+      teams_tenant_id: "tenant-1",
+      teams_client_secret: "s3cret",
+    });
+    const after = intakeDraftAfterSave(draft, sent, {
+      ...saved,
+      teams: {
+        ...saved.teams,
+        enabled: true,
+        configured: true,
+        app_id: "app-1",
+        tenant_id: "tenant-1",
+      },
+    });
+    // The secret is never shown again; the IDs show as saved.
+    expect(after).toMatchObject({
+      teamsEnabled: true,
+      teamsAppId: "app-1",
+      teamsTenantId: "tenant-1",
+      teamsSecret: "",
+    });
   });
 });

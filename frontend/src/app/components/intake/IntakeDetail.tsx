@@ -13,6 +13,7 @@ import { useIntakeMemory, useIntakeDraft } from "./useIntakeMemory";
 import type {
   IntakeAction,
   IntakeCommand,
+  IntakeDelivery,
   IntakeDetails,
   IntakeDocument,
   IntakeEdit,
@@ -35,6 +36,8 @@ import {
   getIntakeMembers,
   getIntakeMessages,
   getIntakeRequest,
+  markIntakeReplySeen,
+  retryIntakeDelivery,
 } from "@/app/lib/mikeApi";
 import { notifyError, notifyPartialFailure } from "@/app/lib/userFacingError";
 import { notifySuccess } from "@/shared/lib/errorNotifier";
@@ -77,15 +80,29 @@ import {
   IntakeNoteForm,
   NOTE_TITLE_CLASS,
   NOTE_TITLE_ICON_CLASS,
+  type IntakeNoteMode,
 } from "./IntakeNoteForm";
 import { IntakeReasonModal } from "./IntakeReasonModal";
+import {
+  IntakeResolveDialog,
+  defaultIntakeReplyDocuments,
+} from "./IntakeResolveDialog";
+import { IntakeDeliveryStatus } from "./IntakeDeliveryStatus";
+import {
+  intakeAudience,
+  intakeDocumentsUnavailable,
+} from "./intakeConversation";
 import {
   IntakeDescription,
   IntakeDetailsPanel,
   IntakeSubjectInput,
 } from "./IntakeDetailsPanel";
 import { formatIntakeDateTime, intakeDeleteMessage } from "./intakeLabels";
-import { describeIntakeEvent, describeIntakeMessage } from "./intakeActivity";
+import {
+  describeIntakeEvent,
+  describeIntakeMessage,
+  intakeOutgoingName,
+} from "./intakeActivity";
 import { INTAKE_REQUESTS_PATH } from "./intakeQuery";
 import {
   IntakeDocumentPicker,
@@ -96,6 +113,8 @@ import {
 const SECTION_HEADING = "text-sm font-medium text-gray-900";
 /** Quiet refreshes when the window regains focus are at most this frequent. */
 const FOCUS_REFRESH_MS = 30_000;
+/** How often the page checks on a message to the requester still sending. */
+const DELIVERY_REFRESH_MS = 5_000;
 
 /** Scope a deep-linked request to its workspace before mounting retained drafts. */
 export function IntakeDetail({
@@ -129,6 +148,25 @@ export function IntakeDetail({
     />
   );
 }
+/**
+ * What to announce about messages to the requester that were still sending
+ * at the last load and have settled since, remembering each one's state.
+ */
+function settledDeliveryAnnouncement(
+  seen: Map<string, IntakeDelivery["status"]>,
+  deliveries: IntakeDelivery[],
+): string {
+  let said = "";
+  for (const delivery of deliveries) {
+    if (seen.get(delivery.outbound_id) === "pending" && delivery.status !== "pending")
+      said =
+        delivery.status === "sent"
+          ? "Message to the requester sent."
+          : `Couldn't send the message to the requester: ${delivery.error ?? "try again"}.`;
+    seen.set(delivery.outbound_id, delivery.status);
+  }
+  return said;
+}
 /** Read the complete note or event history using the API's 100-row pages. */
 async function allPages<T>(read: (offset: number) => Promise<T[]>) {
   const rows: T[] = [];
@@ -158,9 +196,13 @@ function detailsOf(request: IntakeDetails): IntakeDetails {
   };
 }
 type Closing = "resolve" | "cancel";
-/** Which retained draft a successful command has consumed. */
-/** "request" means the request itself is gone, so the page leaves it. */
-type Consumed = "note" | "reason" | "request" | null;
+/**
+ * Which retained draft a successful command has consumed: the note and its
+ * documents, only the note's text (a message to the requester, which sends
+ * no documents), or the cancel reason. "request" means the request itself
+ * is gone, so the page leaves it.
+ */
+type Consumed = "note" | "message" | "reason" | "request" | null;
 /** Show the current request and gate commands on its server-provided capabilities. */
 export function Detail({
   orgId,
@@ -207,6 +249,29 @@ export function Detail({
     "consumes",
     null,
   );
+  // An internal note, or a message to the requester in the request's thread.
+  const [noteMode, setNoteMode] = useIntakeDraft<IntakeNoteMode>(
+    memory,
+    "noteMode",
+    "note",
+  );
+  // The resolve dialog's reply: whether it goes, and its documents in the
+  // order they were ticked.
+  const [resolveReply, setResolveReply] = useIntakeDraft(
+    memory,
+    "resolveReply",
+    true,
+  );
+  const [resolveDocuments, setResolveDocuments] = useIntakeDraft<string[]>(
+    memory,
+    "resolveDocuments",
+    [],
+  );
+  // Messages to the requester being sent again.
+  const [retrying, setRetrying] = useState<string[]>([]);
+  // Said politely when a message to the requester is sent or fails.
+  const [announcement, setAnnouncement] = useState("");
+  const deliveryStates = useRef(new Map<string, IntakeDelivery["status"]>());
   const epoch = useRef(0);
   const refresh = useCallback(async () => {
     const generation = ++epoch.current;
@@ -230,6 +295,17 @@ export function Detail({
       setDocuments(d);
       setMembers(roster);
       setError(null);
+      // A message to the requester that settled since the last load is said once.
+      const said = settledDeliveryAnnouncement(deliveryStates.current, [
+        ...m.flatMap((message) => (message.delivery ? [message.delivery] : [])),
+        ...e.flatMap((event) => (event.delivery ? [event.delivery] : [])),
+      ]);
+      if (said) setAnnouncement(said);
+      // Opening the request clears its New reply flag in the queue.
+      if (r.new_reply)
+        void markIntakeReplySeen(orgId, requestId, r.last_reply_at).catch(() => {
+          // Only the queue's marker stays; the request itself is on screen.
+        });
     } catch (e) {
       if (generation === epoch.current) {
         setRequest(null);
@@ -325,6 +401,12 @@ export function Detail({
         setNotePicked([]);
         setNoteWarning(null);
       }
+      if (consumes === "note" && closing === "resolve") {
+        setClosing(null);
+        setResolveDocuments([]);
+        setResolveReply(true);
+      }
+      if (consumes === "message") setNote("");
       if (consumes === "reason") {
         setReason("");
         setClosing(null);
@@ -374,7 +456,10 @@ export function Detail({
   function command(
     action: IntakeAction,
     label: string,
-    fields: Pick<IntakeCommand, "body" | "assignee_id"> = {},
+    fields: Pick<
+      IntakeCommand,
+      "body" | "assignee_id" | "send_to_requester" | "documents"
+    > = {},
     consumed: Consumed = null,
   ) {
     // A command that would not start must not claim a draft either: its
@@ -440,6 +525,71 @@ export function Detail({
     sendDetails(queued);
   });
   const caps = request?.capabilities;
+  const conversation = request?.conversation ?? null;
+  // The note form can message the requester while the request has a thread.
+  const audience =
+    conversation && caps?.send_to_requester
+      ? intakeAudience(conversation)
+      : null;
+  /** Resolve: with a thread, the dialog that also replies; else at once. */
+  function startResolving() {
+    if (!request) return;
+    if (conversation) {
+      setResolveReply(true);
+      setResolveDocuments(defaultIntakeReplyDocuments(documents));
+      setClosing("resolve");
+    } else
+      command(
+        "resolve",
+        "resolve the request",
+        // The comment, if any, is the resolution.
+        note.trim() ? { body: note } : {},
+        "note",
+      );
+  }
+  function confirmResolving() {
+    const sendDocuments =
+      resolveReply &&
+      conversation &&
+      !intakeDocumentsUnavailable(conversation) &&
+      resolveDocuments.length > 0;
+    command(
+      "resolve",
+      "resolve the request",
+      {
+        ...(note.trim() ? { body: note } : {}),
+        ...(resolveReply ? { send_to_requester: true } : {}),
+        ...(sendDocuments ? { documents: resolveDocuments } : {}),
+      },
+      "note",
+    );
+  }
+  // Messages to the requester still sending are checked on until they settle.
+  const deliveries = [
+    ...messages.flatMap((m) => (m.delivery ? [m.delivery] : [])),
+    ...events.flatMap((e) => (e.delivery ? [e.delivery] : [])),
+  ];
+  const sending = deliveries.some((d) => d.status === "pending");
+  useEffect(() => {
+    if (!sending) return;
+    const timer = setInterval(() => void refresh(), DELIVERY_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [sending, refresh]);
+  function retryDelivery(outboundId: string) {
+    setRetrying((current) => [...current, outboundId]);
+    // Settled either way: the timeline then shows how it is going.
+    const settled = () => {
+      setRetrying((current) => current.filter((id) => id !== outboundId));
+      void refresh();
+    };
+    retryIntakeDelivery(orgId, requestId, outboundId).then(settled, (e) => {
+      notifyError(e, {
+        action: "send the message again",
+        onRetry: () => retryDelivery(outboundId),
+      });
+      settled();
+    });
+  }
   // Files dropped anywhere on the page are added to the request; dropped on
   // the note form, they wait to be added with the note.
   const dragDepth = useRef(0);
@@ -493,7 +643,9 @@ export function Detail({
     command("assignment", "assign the request", { assignee_id: assigneeId });
   // An unresolved save stays retryable even while the request is hidden. The
   // cancel dialog offers its own Check again, but only while the request shows.
-  const cancelRechecks = closing === "cancel" && !!request;
+  const cancelRechecks =
+    (closing === "cancel" || (closing === "resolve" && !!conversation)) &&
+    !!request;
   const recheck = operation.uncertain && !cancelRechecks && (
     <div className="flex flex-wrap items-center gap-3" role="status">
       <span className="text-sm text-gray-500">
@@ -672,12 +824,19 @@ export function Detail({
                 locked={operation.locked}
                 onSave={saveDetails}
                 onAssign={assign}
-                onStatusMenuClosed={focusNote}
+                // The resolve dialog takes focus itself.
+                onStatusMenuClosed={conversation ? undefined : focusNote}
+                onStopAsking={() =>
+                  command("stop_asking", "stop MikeGC asking the requester")
+                }
                 onStatus={(action) => {
                   // Resolving is written as a note: open the note form and
                   // bring it into view; "Resolve request" there saves it.
-                  if (action === "resolve") openNoteForResolution();
-                  else if (action === "cancel") setClosing(action);
+                  // With a thread, the resolve dialog also replies there.
+                  if (action === "resolve") {
+                    if (conversation) startResolving();
+                    else openNoteForResolution();
+                  } else if (action === "cancel") setClosing(action);
                   else
                     command(
                       action,
@@ -720,6 +879,9 @@ export function Detail({
                 >
                   Activity
                 </h2>
+                <p aria-live="polite" className="sr-only">
+                  {announcement}
+                </p>
                 <ol className="relative space-y-4 px-5 pb-4 pt-3 before:absolute before:bottom-6 before:left-[31px] before:top-6 before:w-px before:bg-gray-200">
                   {timeline.map((entry) => {
                     const line =
@@ -783,6 +945,36 @@ export function Detail({
                               </>
                             );
                           })()}
+                          {(() => {
+                            // A question, or a resolution reply, sent to the requester.
+                            const delivery =
+                              "message" in entry
+                                ? entry.message.delivery
+                                : entry.event.delivery;
+                            if (!delivery) return null;
+                            const question =
+                              "message" in entry ||
+                              delivery.kind === "question";
+                            return (
+                              <IntakeDeliveryStatus
+                                delivery={delivery}
+                                name={intakeOutgoingName(
+                                  question ? "question" : "resolution",
+                                )}
+                                text={
+                                  "message" in entry
+                                    ? entry.message.body
+                                    : entry.text?.body
+                                }
+                                retrying={retrying.includes(
+                                  delivery.outbound_id,
+                                )}
+                                onRetry={() =>
+                                  retryDelivery(delivery.outbound_id)
+                                }
+                              />
+                            );
+                          })()}
                         </div>
                       </li>
                     );
@@ -833,20 +1025,19 @@ export function Detail({
                         current.filter((document) => document.id !== id),
                       )
                     }
-                    onResolve={
-                      caps.resolve
-                        ? () =>
-                            command(
-                              "resolve",
-                              "resolve the request",
-                              // The comment, if any, is the resolution.
-                              note.trim() ? { body: note } : {},
-                              "note",
-                            )
-                        : undefined
-                    }
+                    onResolve={caps.resolve ? startResolving : undefined}
+                    audience={audience}
+                    mode={audience ? noteMode : "note"}
+                    onModeChange={setNoteMode}
                     onSubmit={() =>
-                      command("notes", "add the note", { body: note }, "note")
+                      audience && noteMode === "message"
+                        ? command(
+                            "wait",
+                            "send the question to the requester",
+                            { body: note, send_to_requester: true },
+                            "message",
+                          )
+                        : command("notes", "add the note", { body: note }, "note")
                     }
                   />
                 )}
@@ -883,7 +1074,41 @@ export function Detail({
           command("delete", "delete the request", {}, "request");
         }}
       />
-      {/* Resolving happens in the note form; only cancelling asks here. */}
+      {/* With a thread, resolving asks what to send the requester. */}
+      {closing === "resolve" && request && conversation && (
+        <IntakeResolveDialog
+          value={note}
+          onChange={setNote}
+          conversation={conversation}
+          documents={documents}
+          reply={resolveReply}
+          onReplyChange={setResolveReply}
+          ticked={resolveDocuments}
+          onTickedChange={setResolveDocuments}
+          busy={operation.busy}
+          locked={operation.locked}
+          status={
+            operation.uncertain ? (
+              <span role="status">Checking whether it was saved.</span>
+            ) : undefined
+          }
+          secondaryAction={
+            operation.uncertain
+              ? {
+                  label: "Check again",
+                  onClick: () => void operation.execute(),
+                  disabled: operation.busy,
+                }
+              : undefined
+          }
+          onConfirm={confirmResolving}
+          onClose={() => {
+            // The resolution is the note's text, which stays as a draft.
+            setClosing(null);
+          }}
+        />
+      )}
+      {/* Without a thread, resolving happens in the note form; cancelling asks here. */}
       {closing === "cancel" && request && (
         <IntakeReasonModal
           title="Cancel request"

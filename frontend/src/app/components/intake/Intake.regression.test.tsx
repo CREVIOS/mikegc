@@ -33,6 +33,8 @@ const mocks = vi.hoisted(() => ({
   messages: vi.fn(),
   events: vi.fn(),
   command: vi.fn(),
+  retry: vi.fn(),
+  replySeen: vi.fn(),
   documents: vi.fn(),
   upload: vi.fn(),
   document: vi.fn(),
@@ -66,6 +68,8 @@ vi.mock("@/app/lib/mikeApi", () => ({
   getIntakeMessages: mocks.messages,
   getIntakeEvents: mocks.events,
   commandIntakeRequest: mocks.command,
+  retryIntakeDelivery: mocks.retry,
+  markIntakeReplySeen: mocks.replySeen,
   getIntakeDashboard: mocks.dashboard,
   getIntakeDocuments: mocks.documents,
   uploadIntakeDocuments: mocks.upload,
@@ -222,6 +226,8 @@ const capabilities = {
   resolve: true,
   cancel: true,
   reopen: false,
+  send_to_requester: false,
+  stop_asking: false,
 };
 const request = (overrides: Partial<IntakeRequest> = {}): IntakeRequest => ({
   id: "request-a",
@@ -241,6 +247,12 @@ const request = (overrides: Partial<IntakeRequest> = {}): IntakeRequest => ({
   source: "manual",
   created_at: "2026-10-26T10:00:00Z",
   updated_at: "2026-10-26T10:00:00Z",
+  clarify_stage: null,
+  clarify_rounds: 0,
+  clarify_max_rounds: 2,
+  last_reply_at: null,
+  new_reply: false,
+  conversation: null,
   capabilities,
   ...overrides,
 });
@@ -261,6 +273,8 @@ const summary = (
     assignee_name: full.assignee_name,
     created_at: full.created_at,
     updated_at: full.updated_at,
+    clarify_stage: null,
+    new_reply: false,
     capabilities: { assign: true, cancel: true, delete: true },
     ...overrides,
   };
@@ -312,6 +326,8 @@ beforeEach(() => {
       })),
   );
   mocks.command.mockResolvedValue(receipt);
+  mocks.retry.mockResolvedValue({ retried: true });
+  mocks.replySeen.mockResolvedValue({ ok: true });
   vi.spyOn(window, "confirm").mockReturnValue(false);
   // jsdom does not scroll; choosing Resolved brings the comment box into view.
   Element.prototype.scrollIntoView = vi.fn();
@@ -2754,5 +2770,516 @@ describe("history navigation recovery", () => {
     mocks.workspace.accountId = "account-b";
     render(detail("org-a"));
     expect(await noteEditor()).toHaveValue("");
+  });
+});
+
+describe("requester loop", () => {
+  const slack = {
+    source: "slack" as const,
+    channel_name: "legal-requests",
+    team_name: null,
+    permalink: "https://acme.slack.com/archives/C1/p1700000000000100",
+    mailbox: null,
+    to: [],
+    cc: [],
+    max_attachment_bytes: null,
+    documents: true,
+  };
+  const gmail = {
+    source: "gmail" as const,
+    channel_name: null,
+    team_name: null,
+    permalink: null,
+    mailbox: "intake@acme.test",
+    to: ["ana@acme.test"],
+    cc: ["ben@acme.test"],
+    max_attachment_bytes: 25 * 1024 * 1024,
+    documents: true,
+  };
+  const MB = 1024 * 1024;
+  const doc = (
+    id: string,
+    filename: string,
+    size: number,
+    extra: Record<string, unknown> = {},
+  ) => ({
+    document_id: id,
+    filename,
+    file_type: "docx",
+    size_bytes: size,
+    status: "ready",
+    added_by_name: "MikeGC",
+    created_at: "2026-10-26T10:00:00Z",
+    message_id: null,
+    revised: false,
+    ...extra,
+  });
+  const threaded = (overrides: Partial<IntakeRequest> = {}) =>
+    request({
+      conversation: slack,
+      capabilities: { ...capabilities, send_to_requester: true },
+      ...overrides,
+    });
+
+  it("offers an internal note or a message to the requester on a request with a thread", async () => {
+    mocks.request.mockResolvedValue(threaded());
+    const user = userEvent.setup();
+    render(detail());
+    const modes = await screen.findByRole("group", {
+      name: "Who sees this comment",
+    });
+    const note = within(modes).getByRole("radio", { name: "Internal note" });
+    expect(note).toBeChecked();
+    await user.click(
+      within(modes).getByRole("radio", { name: "Message requester" }),
+    );
+    const box = screen.getByLabelText("Message the requester");
+    // Where it goes, and that only the text is sent.
+    expect(box).toHaveAccessibleDescription(
+      "Posts in the Slack thread in #legal-requests, visible to everyone in the channel. Only the text is sent.",
+    );
+    expect(
+      screen.queryByRole("button", { name: "Add documents" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Resolve request" }),
+    ).not.toBeInTheDocument();
+    fireEvent.change(box, { target: { value: "Which entity signs?" } });
+    await user.click(screen.getByRole("button", { name: "Ask requester" }));
+    await waitFor(() => expect(mocks.command).toHaveBeenCalledTimes(1));
+    expect(mocks.command.mock.calls[0]).toEqual([
+      "org-a",
+      "request-a",
+      "wait",
+      {
+        command_id: expect.any(String),
+        expected_version: 1,
+        body: "Which entity signs?",
+        send_to_requester: true,
+      },
+    ]);
+    await waitFor(() =>
+      expect(screen.getByLabelText("Message the requester")).toHaveValue(""),
+    );
+  });
+
+  it("writes notes only on a request with no thread", async () => {
+    render(detail());
+    await noteEditor();
+    expect(
+      screen.queryByRole("group", { name: "Who sees this comment" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("resolves with a reply: revised documents ticked by default, and the ones past the email limit named first", async () => {
+    mocks.request.mockResolvedValue(threaded({ conversation: gmail }));
+    mocks.documents.mockResolvedValue([
+      doc("redline", "NDA redline.docx", 20 * MB, { revised: true }),
+      doc("original", "Schedule.pdf", 1 * MB),
+      doc("second", "SOW redline.docx", 10 * MB, { revised: true }),
+    ]);
+    const user = userEvent.setup();
+    render(detail());
+    const editor = await noteEditor();
+    fireEvent.change(editor, { target: { value: "Approved with edits." } });
+    await user.click(screen.getByRole("button", { name: "Resolve request" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "Resolve request",
+    });
+    expect(within(dialog).getByLabelText("Resolution")).toHaveValue(
+      "Approved with edits.",
+    );
+    const reply = within(dialog).getByRole("switch", {
+      name: "Reply to requester",
+    });
+    expect(reply).toHaveAttribute("aria-checked", "true");
+    expect(reply).toHaveAccessibleDescription(
+      "Emails ana@acme.test, cc ben@acme.test.",
+    );
+    const box = (name: RegExp) => within(dialog).getByRole("checkbox", { name });
+    expect(box(/NDA redline/)).toBeChecked();
+    expect(box(/Schedule/)).not.toBeChecked();
+    expect(box(/SOW redline/)).toBeChecked();
+    // 20 MB then 10 MB passes 25 MB: the second is named, not attached.
+    expect(dialog).toHaveTextContent(
+      "1 document may be left out as too large to email",
+    );
+    expect(box(/SOW redline/).closest("label")).toHaveTextContent(
+      "May be too large to email",
+    );
+    // Tick order decides: the 1 MB schedule fits after the redline.
+    await user.click(box(/SOW redline/));
+    await user.click(box(/Schedule/));
+    expect(dialog).not.toHaveTextContent("may be left out");
+    await user.click(
+      within(dialog).getByRole("button", { name: "Resolve and reply" }),
+    );
+    await waitFor(() => expect(mocks.command).toHaveBeenCalledTimes(1));
+    expect(mocks.command.mock.calls[0]).toEqual([
+      "org-a",
+      "request-a",
+      "resolve",
+      {
+        command_id: expect.any(String),
+        expected_version: 1,
+        body: "Approved with edits.",
+        send_to_requester: true,
+        documents: ["redline", "original"],
+      },
+    ]);
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Resolve request" }),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  it("resolves without replying when the reply is switched off", async () => {
+    mocks.request.mockResolvedValue(threaded());
+    const user = userEvent.setup();
+    render(detail());
+    await user.click(await screen.findByRole("button", { name: /^Status:/ }));
+    await user.click(screen.getByRole("menuitemradio", { name: "Resolved" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "Resolve request",
+    });
+    await user.click(
+      within(dialog).getByRole("switch", { name: "Reply to requester" }),
+    );
+    expect(
+      within(dialog).queryByText("Documents to send"),
+    ).not.toBeInTheDocument();
+    await user.click(
+      within(dialog).getByRole("button", { name: "Resolve request" }),
+    );
+    await waitFor(() => expect(mocks.command).toHaveBeenCalledTimes(1));
+    expect(mocks.command.mock.calls[0][3]).toEqual({
+      command_id: expect.any(String),
+      expected_version: 1,
+    });
+  });
+
+  it("says a Slack app without files:write sends text only", async () => {
+    mocks.request.mockResolvedValue(
+      threaded({ conversation: { ...slack, documents: false } }),
+    );
+    mocks.documents.mockResolvedValue([
+      doc("redline", "NDA redline.docx", MB, { revised: true }),
+    ]);
+    const user = userEvent.setup();
+    render(detail());
+    const editor = await noteEditor();
+    fireEvent.change(editor, { target: { value: "Done." } });
+    await user.click(screen.getByRole("button", { name: "Resolve request" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "Resolve request",
+    });
+    expect(dialog).toHaveTextContent(
+      "Reinstall the Slack app to send documents.",
+    );
+    expect(within(dialog).queryByRole("checkbox")).not.toBeInTheDocument();
+    await user.click(
+      within(dialog).getByRole("button", { name: "Resolve and reply" }),
+    );
+    await waitFor(() => expect(mocks.command).toHaveBeenCalledTimes(1));
+    expect(mocks.command.mock.calls[0][3]).toEqual({
+      command_id: expect.any(String),
+      expected_version: 1,
+      body: "Done.",
+      send_to_requester: true,
+    });
+  });
+
+  it("shows questions, replies and the resolution reply with how each was sent, and retries one that failed", async () => {
+    mocks.request.mockResolvedValue(
+      threaded({
+        state: "resolved",
+        capabilities: {
+          ...capabilities,
+          resolve: false,
+          reopen: true,
+          send_to_requester: false,
+        },
+      }),
+    );
+    const delivery = (overrides: Record<string, unknown> = {}) => ({
+      outbound_id: "out-1",
+      kind: "question" as const,
+      status: "sent" as const,
+      error: null,
+      sent_at: "2026-10-27T10:00:05Z",
+      documents: [],
+      ...overrides,
+    });
+    mocks.messages.mockResolvedValue([
+      message({
+        id: "question-mikegc",
+        kind: "question",
+        automated: true,
+        author_id: null,
+        author_name: "MikeGC",
+        body: "Before Legal starts, MikeGC needs:\n1. Which entity signs?",
+        created_at: "2026-10-27T10:00:00Z",
+        delivery: delivery(),
+      }),
+      message({
+        id: "question-a",
+        kind: "question",
+        body: "Is Acme a customer?",
+        created_at: "2026-10-27T11:00:00Z",
+        delivery: delivery({
+          outbound_id: "out-2",
+          status: "failed",
+          error: "MikeGC was removed from #legal-requests.",
+        }),
+      }),
+      message({
+        id: "reply-a",
+        kind: "reply",
+        author_id: null,
+        author_name: "Ana Ruiz",
+        body: "Acme Ltd signs. It's a customer.",
+        created_at: "2026-10-27T12:00:00Z",
+        external_author: {
+          name: "Ana Ruiz",
+          email: "ana@acme.test",
+          source: "slack",
+        },
+      }),
+      message({
+        id: "resolution-a",
+        kind: "resolution",
+        body: "Approved.",
+        created_at: "2026-10-28T10:00:00Z",
+      }),
+    ]);
+    mocks.events.mockResolvedValue([
+      event({ id: 2, kind: "stop_asking", created_at: "2026-10-27T11:30:00Z" }),
+      event({
+        id: 3,
+        kind: "resolve",
+        to_state: "resolved",
+        created_at: "2026-10-28T10:00:00Z",
+        delivery: delivery({
+          outbound_id: "out-3",
+          kind: "answer",
+          documents: [
+            { document_id: "d1", filename: "NDA.docx", left_out: false },
+            { document_id: "d2", filename: "Big.pdf", left_out: true },
+          ],
+        }),
+      }),
+    ]);
+    mocks.documents.mockResolvedValue([
+      doc("d9", "Signed NDA.pdf", MB, { message_id: "reply-a" }),
+    ]);
+    const user = userEvent.setup();
+    // After userEvent's own clipboard stub, so this one is read.
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    render(detail());
+    const activity = await screen.findByRole("region", { name: "Activity" });
+    await waitFor(() =>
+      expect(activity).toHaveTextContent("MikeGC asked the requester"),
+    );
+    expect(activity).toHaveTextContent("Lawyer A asked the requester");
+    expect(activity).toHaveTextContent("Ana Ruiz replied in Slack");
+    expect(activity).toHaveTextContent("Signed NDA.pdf");
+    expect(activity).toHaveTextContent("stopped MikeGC asking the requester");
+    expect(activity).toHaveTextContent("Sent with NDA.docx");
+    expect(activity).toHaveTextContent("Not sent: Big.pdf");
+    expect(activity).toHaveTextContent(
+      "Couldn't send: MikeGC was removed from #legal-requests.",
+    );
+    // Only the failed one offers Retry and Copy text, naming what they act on.
+    expect(screen.getAllByRole("button", { name: /^Retry sending/ })).toHaveLength(
+      1,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Copy the text of the question" }),
+    );
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith("Is Acme a customer?"),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Retry sending the question" }),
+    );
+    await waitFor(() =>
+      expect(mocks.retry).toHaveBeenCalledWith("org-a", "request-a", "out-2"),
+    );
+    await waitFor(() => expect(mocks.request).toHaveBeenCalledTimes(2));
+  });
+
+  it("checks on a message still sending and says when it is sent", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const pending = message({
+        id: "question-a",
+        kind: "question",
+        body: "Which entity signs?",
+        delivery: {
+          outbound_id: "out-1",
+          kind: "question",
+          status: "pending",
+          error: null,
+          sent_at: null,
+          documents: [],
+        },
+      });
+      mocks.request.mockResolvedValue(threaded());
+      mocks.messages
+        .mockResolvedValueOnce([pending])
+        .mockResolvedValue([
+          { ...pending, delivery: { ...pending.delivery!, status: "sent" } },
+        ]);
+      render(detail());
+      const activity = await screen.findByRole("region", { name: "Activity" });
+      await waitFor(() => expect(activity).toHaveTextContent("Sending"));
+      await act(async () => {
+        vi.advanceTimersByTime(5_100);
+      });
+      await waitFor(() => expect(activity).toHaveTextContent("Sent"));
+      expect(activity).toHaveTextContent("Message to the requester sent.");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("says MikeGC is waiting on the requester, links the thread, and stops asking", async () => {
+    mocks.request.mockResolvedValue(
+      threaded({
+        state: "needs_information",
+        clarify_stage: "readiness",
+        clarify_rounds: 1,
+        capabilities: {
+          ...capabilities,
+          wait: false,
+          resume: true,
+          send_to_requester: true,
+          stop_asking: true,
+        },
+      }),
+    );
+    const user = userEvent.setup();
+    render(detail());
+    const details = await screen.findByRole("complementary", {
+      name: "Details",
+    });
+    expect(
+      within(details).getByRole("button", { name: /^Status:/ }),
+    ).toHaveAccessibleName("Status: Waiting on requester (MikeGC asked)");
+    expect(details).toHaveTextContent(
+      "MikeGC is waiting for the requester's answer (round 1 of 2).",
+    );
+    const thread = within(details).getByRole("link", {
+      name: /Slack thread in #legal-requests/,
+    });
+    expect(thread).toHaveAttribute("href", slack.permalink);
+    expect(thread).toHaveAttribute("target", "_blank");
+    await user.click(
+      within(details).getByRole("button", { name: "Stop asking" }),
+    );
+    await waitFor(() => expect(mocks.command).toHaveBeenCalledTimes(1));
+    expect(mocks.command.mock.calls[0]).toEqual([
+      "org-a",
+      "request-a",
+      "stop_asking",
+      { command_id: expect.any(String), expected_version: 1 },
+    ]);
+  });
+
+  it("names an email thread's recipients, each on its own line", async () => {
+    mocks.request.mockResolvedValue(threaded({ conversation: gmail }));
+    render(detail());
+    const details = await screen.findByRole("complementary", {
+      name: "Details",
+    });
+    expect(details).toHaveTextContent("Gmail email from intake@acme.test");
+    expect(within(details).getByText("To ana@acme.test")).toBeInTheDocument();
+    expect(within(details).getByText("Cc ben@acme.test")).toBeInTheDocument();
+  });
+
+  it("clears the New reply flag when a request with one opens", async () => {
+    mocks.request.mockResolvedValue(
+      threaded({ new_reply: true, last_reply_at: "2026-11-03T10:00:00.000Z" }),
+    );
+    const { unmount } = render(detail());
+    // Only the reply on screen is seen; a later one stays new.
+    await waitFor(() =>
+      expect(mocks.replySeen).toHaveBeenCalledWith(
+        "org-a",
+        "request-a",
+        "2026-11-03T10:00:00.000Z",
+      ),
+    );
+    unmount();
+    mocks.replySeen.mockClear();
+    mocks.request.mockResolvedValue(threaded());
+    render(detail());
+    await screen.findByRole("region", { name: "Activity" });
+    expect(mocks.replySeen).not.toHaveBeenCalled();
+  });
+
+  it("names where MikeGC recorded a request from Outlook, Gmail or Teams", async () => {
+    for (const [source, label] of [
+      ["outlook", "Outlook"],
+      ["gmail", "Gmail"],
+      ["teams", "Teams"],
+    ] as const) {
+      mocks.request.mockResolvedValue(
+        request({ created_by: null, created_by_name: "MikeGC", source }),
+      );
+      const { unmount } = render(detail());
+      const details = await screen.findByRole("complementary", {
+        name: "Details",
+      });
+      await waitFor(() =>
+        expect(details).toHaveTextContent(`Created byMikeGC from ${label}`),
+      );
+      unmount();
+    }
+  });
+
+  it("marks a new reply and MikeGC's question in the queue, and filters to new replies", async () => {
+    mocks.list.mockResolvedValue(
+      page([
+        summary({
+          state: "needs_information",
+          clarify_stage: "rule",
+          new_reply: true,
+        }),
+      ]),
+    );
+    const user = userEvent.setup();
+    render(<Inbox orgId="org-a" accountId="account-a" />);
+    await screen.findByRole("link", { name: "Confidential request A" });
+    expect(screen.getByText("Waiting on requester")).toBeInTheDocument();
+    expect(screen.getByText("(MikeGC asked)")).toBeInTheDocument();
+    expect(screen.getByText("New reply")).toBeInTheDocument();
+    const filter = screen.getByRole("button", { name: "Has new reply" });
+    expect(filter).toHaveAttribute("aria-pressed", "false");
+    await user.click(filter);
+    await waitFor(() =>
+      expect(mocks.list).toHaveBeenLastCalledWith(
+        "org-a",
+        expect.objectContaining({ new_reply: true }),
+      ),
+    );
+    expect(filter).toHaveAttribute("aria-pressed", "true");
+    expect(window.location.search).toBe("?reply=new");
+    await user.click(filter);
+    await waitFor(() =>
+      expect(mocks.list.mock.calls.at(-1)?.[1].new_reply).toBeUndefined(),
+    );
+  });
+
+  it("keeps a line for the New reply marker in the loading rows", () => {
+    mocks.list.mockReturnValue(new Promise(() => {}));
+    const { container } = render(<Inbox orgId="org-a" accountId="account-a" />);
+    expect(screen.getByRole("status")).toHaveTextContent("Loading requests…");
+    expect(container.querySelectorAll(".ml-4.w-14").length).toBeGreaterThan(0);
   });
 });
