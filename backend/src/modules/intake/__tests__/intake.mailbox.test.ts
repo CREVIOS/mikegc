@@ -159,6 +159,29 @@ describe("recording email from the intake mailbox", () => {
       expect.objectContaining({ kind: "intake.inbound", dedupeKey: "intake.inbound:other-poll" }),
     );
   });
+  it("queues mail another poll stored first even when this poll would ignore it", async () => {
+    const db = Object.assign(Object.create(memory.db), {
+      from: (name: string) => {
+        const query = memory.db.from(name);
+        if (name !== "intake_inbound") return query;
+        const insert = query.insert.bind(query);
+        return Object.assign(query, {
+          insert: (values: { external_id: string }) => {
+            if (!inbound().length)
+              inbound().push({ id: "other-poll", org_id: org, source: "gmail", kind: "request", external_id: values.external_id, status: "pending", payload: {} });
+            return insert(values);
+          },
+        });
+      },
+    }) as typeof memory.db;
+    // From a domain this poll doesn't accept, as when settings changed between polls.
+    const other = mail({ from: { name: "Eve", email: "eve@elsewhere.test" } });
+    expect(await recordMail(db, settings(), other)).toBe("duplicate");
+    expect(mocks.enqueueDbJob).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ kind: "intake.inbound", dedupeKey: "intake.inbound:other-poll" }),
+    );
+  });
   it("ignores automatic mail, mail not to the intake address, other domains and an unauthenticated sender", async () => {
     const cases: [Partial<ReadMail>, RegExp][] = [
       [{ headers: [{ name: "Auto-Submitted", value: "auto-replied" }] }, /automatic reply/],
@@ -312,6 +335,32 @@ describe("reading the mailbox", () => {
       email_error: null,
     });
   });
+  it("carries on a long Outlook read from where it stopped", async () => {
+    Object.assign(memory.rows("intake_automation")[0]!, {
+      email_provider: "graph",
+      graph_subscription_id: "sub-1",
+      graph_subscription_expires_at: new Date(Date.now() + 2 * 86_400_000).toISOString(),
+      graph_delta_link: "https://graph.microsoft.com/v1.0/delta?page=0",
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL) => {
+        const target = String(url);
+        if (target.startsWith("https://login.microsoftonline.com/"))
+          return Response.json({ access_token: "h.e30.s", expires_in: 3600 });
+        const page = Number(new URL(target).searchParams.get("page") ?? NaN);
+        if (Number.isFinite(page))
+          return Response.json({ value: [], "@odata.nextLink": `https://graph.microsoft.com/v1.0/delta?page=${page + 1}` });
+        return Response.json({}, { status: 404 });
+      }),
+    );
+    await expect(handleIntakeMailboxPoll(memory.db, poll())).rejects.toBeInstanceOf(DbJobDeferredError);
+    // Fifty pages in, the next read starts at the fifty-first.
+    expect(settings()).toMatchObject({
+      graph_delta_link: "https://graph.microsoft.com/v1.0/delta?page=50",
+      email_error: null,
+    });
+  });
   it("keeps one subscription's ID and secret together when it makes a new one", async () => {
     Object.assign(memory.rows("intake_automation")[0]!, {
       email_provider: "graph",
@@ -352,6 +401,7 @@ describe("reading the mailbox", () => {
     });
     it("starts the next read after the last record when the history is too long for one", async () => {
       let page = 0;
+      const reads: string[] = [];
       vi.stubGlobal(
         "fetch",
         vi.fn(async (url: string | URL) => {
@@ -359,14 +409,39 @@ describe("reading the mailbox", () => {
           if (target.startsWith(`${gmail}/history`)) {
             page += 1;
             // Every page has more after it; the mailbox itself is far ahead.
-            return Response.json({ history: [{ id: String(100 + page * 500) }], historyId: "999999", nextPageToken: `p${page}` });
+            return Response.json({
+              history: [{ id: String(100 + page * 500), messagesAdded: [{ message: { id: `h${page}` } }] }],
+              historyId: "999999",
+              nextPageToken: `p${page}`,
+            });
           }
+          const read = target.match(/\/messages\/(h\d+)/);
+          if (read) reads.push(read[1]!);
           return Response.json({}, { status: 404 });
         }),
       );
       await expect(handleIntakeMailboxPoll(memory.db, poll())).rejects.toBeInstanceOf(DbJobDeferredError);
       expect(page).toBe(20);
+      // Every page's messages are read, and the next read starts after them.
+      expect(reads).toEqual(Array.from({ length: 20 }, (_, i) => `h${i + 1}`));
       expect(settings().gmail_history_id).toBe(String(100 + 20 * 500));
+    });
+    it("stays put, and says so, when twenty pages of history hold no record", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string | URL) =>
+          String(url).startsWith(`${gmail}/history`)
+            ? Response.json({ historyId: "999999", nextPageToken: "more" })
+            : Response.json({}, { status: 404 }),
+        ),
+      );
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      await expect(handleIntakeMailboxPoll(memory.db, poll())).rejects.toBeInstanceOf(DbJobDeferredError);
+      warn.mockRestore();
+      expect(settings()).toMatchObject({
+        gmail_history_id: "100",
+        email_error: "MikeGC couldn't finish reading the mailbox. It will try again.",
+      });
     });
     it("reads every page of the Inbox when the history has expired, after taking the history ID", async () => {
       const calls: string[] = [];

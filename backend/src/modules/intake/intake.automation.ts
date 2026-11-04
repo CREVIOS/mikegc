@@ -622,6 +622,8 @@ export async function connectIntakeMailbox(
     configured_by: scope.actorId,
     updated_at: new Date().toISOString(),
   };
+  // An Outlook subscription the new connection replaces, ended once it's saved.
+  let replaced: { credentials: GraphCredentials; subscriptionId: string } | null = null;
   const domain = mailbox.split("@").pop()!;
   if (!(row.email_allowed_domains ?? []).length) patch.email_allowed_domains = [domain];
   if (input.provider === "graph") {
@@ -691,13 +693,14 @@ export async function connectIntakeMailbox(
     } catch (error) {
       return mailboxFailure(error, "Couldn't reach Gmail to check the mailbox. Try again.");
     }
-    // An Outlook mailbox it replaces stops sending notifications, as on disconnect.
+    // An Outlook mailbox it replaces stops sending notifications, as on
+    // disconnect, once the switch is saved.
     const old = graphClientSecret(row);
     if (row.graph_subscription_id && row.graph_tenant_id && row.graph_client_id && old && row.email_mailbox)
-      await graphUnsubscribe(
-        { tenantId: row.graph_tenant_id, clientId: row.graph_client_id, clientSecret: old, mailbox: row.email_mailbox },
-        row.graph_subscription_id,
-      );
+      replaced = {
+        credentials: { tenantId: row.graph_tenant_id, clientId: row.graph_client_id, clientSecret: old, mailbox: row.email_mailbox },
+        subscriptionId: row.graph_subscription_id,
+      };
     Object.assign(patch, {
       graph_delta_link: null,
       graph_subscription_id: null,
@@ -707,6 +710,7 @@ export async function connectIntakeMailbox(
   }
   const { error } = await db.from("intake_automation").update(patch).eq("org_id", scope.orgId);
   if (error) return internalFailure(error);
+  if (replaced) await graphUnsubscribe(replaced.credentials, replaced.subscriptionId);
   try {
     await startMailboxPolling(db, scope.orgId);
   } catch (cause) {

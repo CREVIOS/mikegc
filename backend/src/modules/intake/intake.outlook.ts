@@ -230,6 +230,9 @@ export async function graphDelta(
     const link = data["@odata.nextLink"];
     next = typeof link === "string" && link.startsWith(GRAPH_API) ? link : null;
   }
+  // More than one read holds: the next one carries on from this page's link,
+  // which Graph accepts as a delta link, so a long backlog still finishes.
+  if (next) return { ids: [...new Set(ids)], deltaLink: next };
   throw new MicrosoftApiError({
     status: 0,
     code: "delta_incomplete",

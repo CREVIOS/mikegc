@@ -520,6 +520,14 @@ describe("the intake mailbox", () => {
           : new Response(null, { status: 204 });
       }),
     );
+    // A switch that isn't saved leaves the Outlook subscription running.
+    memory.intercept = ({ table, op }) =>
+      table === "intake_automation" && op === "update" ? { code: "08006", message: "connection lost" } : null;
+    expect(
+      await connectIntakeMailbox(memory.db, scope(owner), { provider: "gmail", mailbox: "intake@firm.test" }),
+    ).toMatchObject({ ok: false });
+    memory.intercept = undefined;
+    expect(calls.some((c) => c.method === "DELETE")).toBe(false);
     const result = await connectIntakeMailbox(memory.db, scope(owner), { provider: "gmail", mailbox: "intake@firm.test" });
     expect(result).toMatchObject({ ok: true, data: { email: { provider: "gmail" } } });
     expect(calls).toContainEqual({ url: "https://graph.microsoft.com/v1.0/subscriptions/sub-1", method: "DELETE" });

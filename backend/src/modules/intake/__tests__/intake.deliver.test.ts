@@ -280,6 +280,27 @@ describe("sending a message to the requester", () => {
     process.env.DB_JOBS_ENABLED = "false";
     expect(await requeueStalledIntakeDeliveries(memory.db)).toBe(0);
   });
+  it("queues at most a hundred stalled messages a sweep, and the rest on the next", async () => {
+    setup();
+    process.env.DB_JOBS_ENABLED = "true";
+    const old = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+    memory.tables.intake_outbound = Array.from({ length: 101 }, (_, i) => ({
+      ...outbox(),
+      id: `stalled-${String(i).padStart(3, "0")}`,
+      created_at: old(200 - i),
+    }));
+    mocks.enqueueDbJob.mockResolvedValue({ id: "job", deduped: false });
+    expect(await requeueStalledIntakeDeliveries(memory.db)).toBe(100);
+    expect(mocks.enqueueDbJob).toHaveBeenCalledTimes(100);
+    // The oldest go first; once they're sent, the last one is queued.
+    for (const row of memory.rows("intake_outbound").slice(0, 100)) row.status = "sent";
+    mocks.enqueueDbJob.mockClear();
+    expect(await requeueStalledIntakeDeliveries(memory.db)).toBe(1);
+    expect(mocks.enqueueDbJob).toHaveBeenCalledWith(
+      memory.db,
+      expect.objectContaining({ dedupeKey: "intake.deliver:stalled-100" }),
+    );
+  });
   it("posts nothing on a retry it can't tell landed, and says to check the thread", async () => {
     setup();
     memory.rows("intake_outbound")[0]!.attempted_at = new Date(Date.now() - 60_000).toISOString();

@@ -152,7 +152,8 @@ export async function recordMail(
       error: clip(reason, 200),
     });
     if (!stored.ok) throw failureError(stored);
-    return stored.data === null ? "duplicate" : "ignored";
+    // Stored first by another poll, perhaps as a request still to be queued.
+    return stored.data === null ? requeue(await lookup()) : "ignored";
   };
   if (isAutomaticMail(mail.headers)) return ignored(AUTOMATIC);
   const authenticated = senderAuthenticated(mail.headers, mail.from.email);
@@ -400,10 +401,17 @@ export async function handleIntakeMailboxPoll(
     problem = mailboxSentence(error);
     const permanent =
       (error instanceof MicrosoftApiError || error instanceof GmailApiError) && error.permanent;
-    if (problem && permanent)
+    // A read that keeps stopping short is shown too: it may not get past
+    // what it is reading until someone looks at the mailbox.
+    const stalled = error instanceof GmailApiError && error.code.endsWith("_incomplete");
+    if (problem && (permanent || stalled))
       await saveMailbox(db, settings.org_id, { email_error: problem }).catch(() => undefined);
-    else if (ids.data.once) throw error;
-    else console.warn("[intake-mailbox] read failed", safeError(error));
+    // One an admin must fix is shown, and the job keeps coming back; any
+    // other failure is retried.
+    if (!(problem && permanent)) {
+      if (ids.data.once) throw error;
+      console.warn("[intake-mailbox] read failed", safeError(error));
+    }
   }
   if (ids.data.once) return { read: !problem };
   throw new DbJobDeferredError(

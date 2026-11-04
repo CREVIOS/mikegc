@@ -201,8 +201,10 @@ export async function gmailHistory(
     if (!pageToken) return { ids: [...new Set(ids)], historyId: String(data.historyId ?? lastRecord ?? startHistoryId) };
   }
   // More than one read holds: the next one starts after the last record read,
-  // so nothing past it is skipped.
-  return { ids: [...new Set(ids)], historyId: lastRecord ?? startHistoryId };
+  // so nothing past it is skipped. With no record read, there is nowhere safe
+  // to move on to: the read fails, and Intake settings says so.
+  if (lastRecord === null) throw incomplete("history_incomplete");
+  return { ids: [...new Set(ids)], historyId: lastRecord };
 }
 
 /** At most this many pages of 500 messages in one fallback read. */
@@ -223,13 +225,12 @@ export async function gmailListSince(mailbox: string, after: Date): Promise<stri
     if (!pageToken) return [...new Set(ids)];
   }
   // Not read to the end: fail rather than move the cursor past mail unread.
-  throw new GmailApiError(
-    0,
-    "list_incomplete",
-    false,
-    "MikeGC couldn't finish reading the mailbox. It will try again.",
-  );
+  throw incomplete("list_incomplete");
 }
+
+/** A read that couldn't finish; it is tried again, and settings show it. */
+const incomplete = (code: "history_incomplete" | "list_incomplete") =>
+  new GmailApiError(0, code, false, "MikeGC couldn't finish reading the mailbox. It will try again.");
 
 type GmailPart = {
   partId?: string;
