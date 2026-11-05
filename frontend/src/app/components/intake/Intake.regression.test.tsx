@@ -3264,9 +3264,7 @@ describe("requester loop", () => {
           error: "MikeGC was removed from #legal-requests.",
           message_id: null,
           sent_at: null,
-          documents: [
-            { document_id: "d1", filename: "NDA.docx", left_out: false },
-          ],
+          documents: [{ document_id: "d1", filename: "NDA.docx", left_out: false }],
         },
       }),
     ]);
@@ -3286,13 +3284,9 @@ describe("requester loop", () => {
     const toggle = screen.getByRole("button", { name: /^Messages/ });
     expect(toggle).toHaveTextContent("1 not sent");
     await user.click(toggle);
-    const log = screen.getByRole("list", {
-      name: "Messages with the requester",
-    });
+    const log = screen.getByRole("list", { name: "Messages with the requester" });
     expect(log).toHaveTextContent("Resolution");
-    expect(log).toHaveTextContent(
-      "Couldn't send: MikeGC was removed from #legal-requests.",
-    );
+    expect(log).toHaveTextContent("Couldn't send: MikeGC was removed from #legal-requests.");
     // The requester never saw the comment.
     expect(log).not.toHaveTextContent("Internal only");
     // No text was sent, so there is none to copy.
@@ -3300,9 +3294,7 @@ describe("requester loop", () => {
       screen.queryByRole("button", { name: /^Copy the text/ }),
     ).not.toBeInTheDocument();
     await user.click(
-      within(log).getByRole("button", {
-        name: "Retry sending the resolution reply",
-      }),
+      within(log).getByRole("button", { name: "Retry sending the resolution reply" }),
     );
     await waitFor(() =>
       expect(mocks.retry).toHaveBeenCalledWith("org-a", "request-a", "out-3"),
@@ -3320,19 +3312,12 @@ describe("requester loop", () => {
       }),
     ]);
     mocks.events.mockResolvedValue([
-      event({
-        id: 3,
-        kind: "resolve",
-        to_state: "resolved",
-        created_at: "2026-10-28T10:00:00Z",
-      }),
+      event({ id: 3, kind: "resolve", to_state: "resolved", created_at: "2026-10-28T10:00:00Z" }),
     ]);
     render(detail());
     const activity = await screen.findByRole("region", { name: "Activity" });
     await waitFor(() =>
-      expect(activity).toHaveTextContent(
-        "Internal commentClosed after a call.",
-      ),
+      expect(activity).toHaveTextContent("Internal commentClosed after a call."),
     );
     expect(activity).not.toHaveTextContent("Reply to the requester");
   });
@@ -3493,9 +3478,7 @@ describe("requester loop", () => {
     await screen.findByRole("link", { name: "Confidential request A" });
     expect(screen.getByText("Waiting on requester")).toBeInTheDocument();
     expect(screen.queryByText("New reply")).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("img", { name: "3 unread replies" }),
-    ).toHaveTextContent("3");
+    expect(screen.getByRole("img", { name: "3 unread replies" })).toHaveTextContent("3");
     await user.click(screen.getByRole("button", { name: "Filter by replies" }));
     await user.click(await screen.findByText("Unread replies"));
     await waitFor(() =>
@@ -3506,4 +3489,5 @@ describe("requester loop", () => {
     );
     expect(window.location.search).toBe("?reply=new");
   });
+
 });
