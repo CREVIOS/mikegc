@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { IntakeActionEvent, IntakeState } from "@mike/contracts";
@@ -112,7 +112,7 @@ describe("IntakeActionCard", () => {
         expect(
             latestIntakeActionCardId([
                 { events: [{ ...event("wait"), card_id: "card-1" }] },
-                { events: [] },
+                {},
                 {
                     events: [
                         { ...event("resume"), card_id: "card-2" },
@@ -121,7 +121,8 @@ describe("IntakeActionCard", () => {
                 },
             ]),
         ).toBe("card-2");
-        expect(latestIntakeActionCardId([{ events: [] }])).toBeNull();
+        // A message still without events, such as one streaming, is skipped.
+        expect(latestIntakeActionCardId([{ events: [] }, {}])).toBeNull();
     });
 
     it("rereads the request on returning to the tab", async () => {
@@ -137,6 +138,50 @@ describe("IntakeActionCard", () => {
             ),
         ).toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "Resolve" })).toBeNull();
+    });
+
+    it.each([
+        ["wait", "needs_information", "Waiting on requester"],
+        ["resume", "in_review", "In progress"],
+        ["reopen", "in_review", "In progress"],
+    ] as const)(
+        "says a %s proposal is already in place when the request is %s",
+        async (action, state, label) => {
+            getIntakeRequest.mockResolvedValue(request(state));
+            render(<IntakeActionCard event={event(action)} />);
+            expect(await screen.findByRole("status")).toHaveTextContent(
+                `The request is ${label}.`,
+            );
+            expect(screen.queryByRole("button")).toBeNull();
+        },
+    );
+
+    it("says so when the request can't be read", async () => {
+        getIntakeRequest.mockRejectedValue(new Error("not found"));
+        render(<IntakeActionCard event={event("resolve")} />);
+        expect(
+            await screen.findByText(/This request can’t be opened/),
+        ).toBeInTheDocument();
+        expect(screen.queryByRole("button")).toBeNull();
+    });
+
+    it("keeps what it shows when a recheck fails or the tab is hidden", async () => {
+        getIntakeRequest.mockResolvedValueOnce(
+            request("in_review", { resolve: true }),
+        );
+        render(<IntakeActionCard event={event("resolve")} />);
+        await screen.findByRole("button", { name: "Resolve" });
+        getIntakeRequest.mockRejectedValueOnce(new Error("offline"));
+        window.dispatchEvent(new Event("focus"));
+        await waitFor(() => expect(getIntakeRequest).toHaveBeenCalledTimes(2));
+        expect(screen.getByRole("button", { name: "Resolve" })).toBeEnabled();
+
+        const visibility = vi
+            .spyOn(document, "visibilityState", "get")
+            .mockReturnValue("hidden");
+        document.dispatchEvent(new Event("visibilitychange"));
+        expect(getIntakeRequest).toHaveBeenCalledTimes(2);
+        visibility.mockRestore();
     });
 
     it("shows a failure without claiming the change was made", async () => {

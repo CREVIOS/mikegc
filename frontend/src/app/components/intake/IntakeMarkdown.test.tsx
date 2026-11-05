@@ -29,6 +29,41 @@ describe("IntakeMarkdown", () => {
     expect(container.querySelector("h2")).toBeNull();
   });
 
+  it("renders the rest of a report's Markdown at the note's scale", () => {
+    const { container } = render(
+      <IntakeMarkdown
+        text={[
+          "# Review",
+          "### Term",
+          "#### Survival",
+          "> Quoted clause",
+          "",
+          "Use `governing law` here.",
+          "",
+          "```",
+          "clause 4.2",
+          "```",
+          "",
+          "---",
+          "",
+          "![](https://tracker.test/blank.png)",
+        ].join("\n")}
+      />,
+    );
+    expect(screen.getByRole("heading", { name: "Review" }).tagName).toBe("H3");
+    expect(screen.getByRole("heading", { name: "Term" }).tagName).toBe("H4");
+    expect(screen.getByRole("heading", { name: "Survival" }).tagName).toBe(
+      "H4",
+    );
+    expect(container.querySelector("blockquote")).toHaveTextContent(
+      "Quoted clause",
+    );
+    expect(screen.getByText("governing law").tagName).toBe("CODE");
+    expect(container.querySelector("pre")).toHaveTextContent("clause 4.2");
+    expect(container.querySelector("hr")).not.toBeNull();
+    expect(container.querySelector("img")).toBeNull();
+  });
+
   it("keeps the numbering of a list that starts past 1", () => {
     render(<IntakeMarkdown text={"3. Third\n4. Fourth"} />);
     expect(screen.getByRole("list")).toHaveAttribute("start", "3");

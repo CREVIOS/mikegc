@@ -150,8 +150,8 @@ export function IntakeActionCard({
         };
     }, [event.org_id, event.request_id]);
 
-    async function confirm() {
-        if (loaded.status !== "ready") return;
+    /** Confirm shows only for a request on screen, at the version shown. */
+    async function confirm(current: IntakeRequest) {
         setBusy(true);
         try {
             await commandIntakeRequest(
@@ -160,7 +160,7 @@ export function IntakeActionCard({
                 event.action,
                 {
                     command_id: crypto.randomUUID(),
-                    expected_version: loaded.request.version,
+                    expected_version: current.version,
                     ...(change.note && note.trim() ? { body: note.trim() } : {}),
                 },
             );
@@ -272,7 +272,7 @@ export function IntakeActionCard({
                                 size="sm"
                                 loading={busy}
                                 disabled={missingNote}
-                                onClick={() => void confirm()}
+                                onClick={() => void confirm(request!)}
                             >
                                 {change.confirm}
                             </PillButtonUI>

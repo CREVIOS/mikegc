@@ -1,8 +1,9 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { IntakeRequestPickerModal } from "./IntakeRequestPickerModal";
 import { AddDocButton } from "../assistant/AddDocButton";
+import { notifyError } from "@/app/lib/userFacingError";
 
 const { listIntakeRequests } = vi.hoisted(() => ({
   listIntakeRequests: vi.fn(),
@@ -120,6 +121,120 @@ describe("IntakeRequestPickerModal", () => {
     expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
   });
 
+  it("ignores a Load more retry once a new search has replaced the list", async () => {
+    listIntakeRequests
+      .mockResolvedValueOnce({
+        requests: [summary("request-1", "Supplier NDA - Kestrel Components")],
+        next_cursor: "cursor-2",
+      })
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce({
+        requests: [summary("request-5", "Atlas reseller NDA")],
+        next_cursor: null,
+      });
+    render(
+      <IntakeRequestPickerModal
+        open
+        onClose={vi.fn()}
+        onSelect={vi.fn()}
+        breadcrumbs={[]}
+      />,
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Load more" }),
+    );
+    await waitFor(() => expect(notifyError).toHaveBeenCalledTimes(1));
+    const retry = vi.mocked(notifyError).mock.calls[0][1]!.onRetry!;
+    await userEvent.type(
+      screen.getByPlaceholderText("Search open requests..."),
+      "atlas",
+    );
+    await screen.findByRole("button", { name: /Atlas reseller NDA/ });
+    const calls = listIntakeRequests.mock.calls.length;
+    retry();
+    expect(listIntakeRequests).toHaveBeenCalledTimes(calls);
+    expect(
+      screen.queryByRole("button", {
+        name: /Supplier NDA - Kestrel Components/,
+      }),
+    ).toBeNull();
+  });
+
+  it("drops a Load more page that arrives after a new search", async () => {
+    let finishOld!: (page: unknown) => void;
+    listIntakeRequests
+      .mockResolvedValueOnce({
+        requests: [summary("request-1", "Supplier NDA - Kestrel Components")],
+        next_cursor: "cursor-2",
+      })
+      .mockReturnValueOnce(new Promise((resolve) => (finishOld = resolve)))
+      .mockResolvedValueOnce({
+        requests: [summary("request-5", "Atlas reseller NDA")],
+        next_cursor: null,
+      });
+    render(
+      <IntakeRequestPickerModal
+        open
+        onClose={vi.fn()}
+        onSelect={vi.fn()}
+        breadcrumbs={[]}
+      />,
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Load more" }),
+    );
+    await userEvent.type(
+      screen.getByPlaceholderText("Search open requests..."),
+      "atlas",
+    );
+    await screen.findByRole("button", { name: /Atlas reseller NDA/ });
+    await act(async () => {
+      finishOld({
+        requests: [summary("request-9", "Older open request")],
+        next_cursor: "cursor-3",
+      });
+    });
+    expect(
+      screen.queryByRole("button", { name: /Older open request/ }),
+    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+  });
+
+  it("retries a failed Load more for the same list", async () => {
+    listIntakeRequests
+      .mockResolvedValueOnce({
+        requests: [summary("request-1", "Supplier NDA - Kestrel Components")],
+        next_cursor: "cursor-2",
+      })
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce({
+        requests: [summary("request-9", "Older open request")],
+        next_cursor: null,
+      });
+    render(
+      <IntakeRequestPickerModal
+        open
+        onClose={vi.fn()}
+        onSelect={vi.fn()}
+        breadcrumbs={[]}
+      />,
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Load more" }),
+    );
+    await waitFor(() => expect(notifyError).toHaveBeenCalledTimes(1));
+    const retry = vi.mocked(notifyError).mock.calls[0][1]!.onRetry!;
+    retry();
+    expect(
+      await screen.findByRole("button", { name: /Older open request/ }),
+    ).toBeInTheDocument();
+    expect(listIntakeRequests).toHaveBeenLastCalledWith("org-1", {
+      scope: "open",
+      search: undefined,
+      cursor: "cursor-2",
+    });
+  });
+
   it("forgets the pick when a new search fails, so Use can't attach it", async () => {
     render(
       <IntakeRequestPickerModal
@@ -144,6 +259,124 @@ describe("IntakeRequestPickerModal", () => {
       await screen.findByText("Requests couldn’t be loaded. Try again later."),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Use" })).toBeDisabled();
+  });
+
+  it("asks for nothing while closed", () => {
+    const { container } = render(
+      <IntakeRequestPickerModal
+        open={false}
+        onClose={vi.fn()}
+        onSelect={vi.fn()}
+        breadcrumbs={[]}
+      />,
+    );
+    expect(container).toBeEmptyDOMElement();
+    expect(listIntakeRequests).not.toHaveBeenCalled();
+  });
+
+  it("keeps a pick the new search still lists, and lets it be unpicked", async () => {
+    render(
+      <IntakeRequestPickerModal
+        open
+        onClose={vi.fn()}
+        onSelect={vi.fn()}
+        breadcrumbs={[]}
+      />,
+    );
+    const pick = () =>
+      screen.findByRole("button", {
+        name: /Supplier NDA - Kestrel Components/,
+      });
+    await userEvent.click(await pick());
+    await userEvent.type(
+      screen.getByPlaceholderText("Search open requests..."),
+      "nda",
+    );
+    await waitFor(() =>
+      expect(listIntakeRequests).toHaveBeenLastCalledWith("org-1", {
+        scope: "open",
+        search: "nda",
+      }),
+    );
+    expect(await pick()).toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(await pick());
+    expect(await pick()).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "Use" })).toBeDisabled();
+  });
+
+  it("shows loading rows first, then says when a search matches nothing", async () => {
+    let finish!: (page: unknown) => void;
+    listIntakeRequests
+      .mockReturnValueOnce(new Promise((resolve) => (finish = resolve)))
+      .mockResolvedValueOnce({ requests: [], next_cursor: null });
+    const { container } = render(
+      <IntakeRequestPickerModal
+        open
+        onClose={vi.fn()}
+        onSelect={vi.fn()}
+        breadcrumbs={[]}
+      />,
+    );
+    await waitFor(() =>
+      expect(
+        container.ownerDocument.querySelector(".animate-pulse"),
+      ).not.toBeNull(),
+    );
+    await userEvent.type(
+      screen.getByPlaceholderText("Search open requests..."),
+      "zzz",
+    );
+    expect(await screen.findByText("No matches found")).toBeInTheDocument();
+    // The first page, now stale, changes nothing when it finally arrives.
+    await act(async () => {
+      finish({
+        requests: [summary("request-1", "Supplier NDA - Kestrel Components")],
+        next_cursor: null,
+      });
+    });
+    expect(screen.getByText("No matches found")).toBeInTheDocument();
+  });
+
+  it("says nothing of failures from a list a newer search replaced", async () => {
+    let failFirst!: (error: Error) => void;
+    let failMore!: (error: Error) => void;
+    listIntakeRequests
+      .mockReturnValueOnce(new Promise((_, reject) => (failFirst = reject)))
+      .mockResolvedValueOnce({
+        requests: [summary("request-1", "Supplier NDA - Kestrel Components")],
+        next_cursor: "cursor-2",
+      })
+      .mockReturnValueOnce(new Promise((_, reject) => (failMore = reject)))
+      .mockResolvedValueOnce({
+        requests: [summary("request-5", "Atlas reseller NDA")],
+        next_cursor: null,
+      });
+    render(
+      <IntakeRequestPickerModal
+        open
+        onClose={vi.fn()}
+        onSelect={vi.fn()}
+        breadcrumbs={[]}
+      />,
+    );
+    const search = screen.getByPlaceholderText("Search open requests...");
+    await userEvent.type(search, "nda");
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Load more" }),
+    );
+    await userEvent.type(search, " atlas");
+    await screen.findByRole("button", { name: /Atlas reseller NDA/ });
+    await act(async () => {
+      failFirst(new Error("offline"));
+      failMore(new Error("offline"));
+    });
+    expect(
+      screen.queryByText("Requests couldn’t be loaded. Try again later."),
+    ).toBeNull();
+    expect(notifyError).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("button", { name: /Atlas reseller NDA/ }),
+    ).toBeInTheDocument();
   });
 
   it("says when the requests can't be loaded", async () => {

@@ -92,9 +92,15 @@ export function IntakeRequestPickerModal({
 
   if (!open) return null;
 
-  function loadMore() {
-    if (!workspaceId || !nextCursor || loadingMore) return;
-    const current = listing.current;
+  /**
+   * Reads the next page of the listing `generation` names. A retry keeps the
+   * failed page's generation, so once another search has replaced that
+   * listing, its old cursor and results can't be mixed into the new one.
+   */
+  function loadMore(generation = listing.current) {
+    // The button is disabled while a page loads; a retry comes after one failed.
+    if (generation !== listing.current || !workspaceId || !nextCursor) return;
+    const current = generation;
     setLoadingMore(true);
     listIntakeRequests(workspaceId, {
       scope: "open",
@@ -113,7 +119,7 @@ export function IntakeRequestPickerModal({
         if (current === listing.current)
           notifyError(error, {
             action: "load more requests",
-            onRetry: loadMore,
+            onRetry: () => loadMore(current),
           });
       })
       .finally(() => {
@@ -137,11 +143,11 @@ export function IntakeRequestPickerModal({
         label: "Use",
         disabled: !selected || !workspaceId,
         onClick: () => {
-          if (!selected || !workspaceId) return;
+          // Enabled only with a pick in a workspace.
           onSelect({
-            id: selected.id,
-            title: selected.subject,
-            orgId: workspaceId,
+            id: selected!.id,
+            title: selected!.subject,
+            orgId: workspaceId!,
           });
           close();
         },
@@ -220,7 +226,7 @@ export function IntakeRequestPickerModal({
                   <TextButtonUI
                     size="xs"
                     loading={loadingMore}
-                    onClick={loadMore}
+                    onClick={() => loadMore()}
                   >
                     Load more
                   </TextButtonUI>
