@@ -742,7 +742,7 @@ export function Detail({
                 [
                   {
                     title: "Process this request in a new Assistant chat",
-                    label: "Process in Assistant",
+                    label: "Assistant",
                     icon: (
                       <MessageSquare aria-hidden="true" className="h-4 w-4" />
                     ),
@@ -1321,7 +1321,7 @@ function DetailSkeleton({ children }: { children?: ReactNode }) {
           </div>
           <div className="space-y-2 border-t border-gray-100 px-5 py-4">
             <SkeletonLine className="w-20" />
-            <SkeletonLine className="h-[5.25rem] w-full rounded-xl" />
+            <SkeletonLine className="h-[6.75rem] w-full rounded-xl" />
           </div>
         </GlassCardUI>
         <IntakeMessagesSkeleton />

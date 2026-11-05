@@ -2311,13 +2311,28 @@ describe("request detail", () => {
       },
     ]);
     finish();
-    expect(
-      await within(documents).findByRole("button", {
-        name: "Drop more documents here, or click to add more.",
-      }),
-    ).toBeInTheDocument();
+    // With documents, the grey field gives way to an Add menu by the heading.
+    const add = await within(documents).findByRole("button", {
+      name: "Add documents",
+    });
     expect(
       within(documents).getByRole("button", { name: "Open Supplier NDA.docx" }),
+    ).toBeInTheDocument();
+    expect(
+      within(documents).queryByRole("button", { name: /click to/ }),
+    ).not.toBeInTheDocument();
+    browse.mockClear();
+    await userEvent.click(add);
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "Upload Documents" }),
+    );
+    expect(browse).toHaveBeenCalledTimes(1);
+    await userEvent.click(add);
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "Saved Documents" }),
+    );
+    expect(
+      await screen.findByRole("dialog", { name: "Add documents" }),
     ).toBeInTheDocument();
   });
 
