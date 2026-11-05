@@ -28,7 +28,7 @@ describe("assistantHistoryContent", () => {
     expect(assistantHistoryContent({ content: "Confirm it below.", events: [
       { type: "content", text: "Confirm it below." },
       { type: "intake_action", card_id: "card-1", org_id: "org-1", request_id: "request-1", action: "cancel", note: "Duplicate" },
-    ] })).toBe("Confirm it below.\n\n[Proposed intake status change: cancel. The request's current status shows whether the user confirmed it.]");
+    ] })).toBe("Confirm it below.\n\n[Proposed intake status change: cancel, with note \"Duplicate\". Whether the user confirmed it is not recorded.]");
   });
 
   it("keeps content that is already present", () => {

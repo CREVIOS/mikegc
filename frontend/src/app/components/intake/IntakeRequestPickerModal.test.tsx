@@ -8,6 +8,7 @@ const { listIntakeRequests } = vi.hoisted(() => ({
   listIntakeRequests: vi.fn(),
 }));
 vi.mock("@/app/lib/mikeApi", () => ({ listIntakeRequests }));
+vi.mock("@/app/lib/userFacingError", () => ({ notifyError: vi.fn() }));
 vi.mock("@/app/contexts/WorkspaceContext", () => ({
   useWorkspace: () => ({ workspaceId: "org-1" }),
 }));
@@ -87,6 +88,64 @@ describe("IntakeRequestPickerModal", () => {
     );
   });
 
+  it("loads the queue's next page on request", async () => {
+    listIntakeRequests
+      .mockResolvedValueOnce({
+        requests: [summary("request-1", "Supplier NDA - Kestrel Components")],
+        next_cursor: "cursor-2",
+      })
+      .mockResolvedValueOnce({
+        requests: [summary("request-9", "Older open request")],
+        next_cursor: null,
+      });
+    render(
+      <IntakeRequestPickerModal
+        open
+        onClose={vi.fn()}
+        onSelect={vi.fn()}
+        breadcrumbs={[]}
+      />,
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Load more" }),
+    );
+    expect(listIntakeRequests).toHaveBeenLastCalledWith("org-1", {
+      scope: "open",
+      search: undefined,
+      cursor: "cursor-2",
+    });
+    expect(
+      await screen.findByRole("button", { name: /Older open request/ }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+  });
+
+  it("forgets the pick when a new search fails, so Use can't attach it", async () => {
+    render(
+      <IntakeRequestPickerModal
+        open
+        onClose={vi.fn()}
+        onSelect={vi.fn()}
+        breadcrumbs={[]}
+      />,
+    );
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: /Supplier NDA - Kestrel Components/,
+      }),
+    );
+    expect(screen.getByRole("button", { name: "Use" })).toBeEnabled();
+    listIntakeRequests.mockRejectedValue(new Error("offline"));
+    await userEvent.type(
+      screen.getByPlaceholderText("Search open requests..."),
+      "x",
+    );
+    expect(
+      await screen.findByText("Requests couldn’t be loaded. Try again later."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Use" })).toBeDisabled();
+  });
+
   it("says when the requests can't be loaded", async () => {
     listIntakeRequests.mockRejectedValue(new Error("offline"));
     render(
@@ -108,7 +167,9 @@ describe("AddDocButton intake requests", () => {
     render(
       <AddDocButton onBrowseAll={vi.fn()} onLocalFiles={vi.fn()} {...props} />,
     );
-    await userEvent.click(screen.getByRole("button", { name: "Add to message" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Add to message" }),
+    );
     return (await screen.findAllByRole("menuitem")).map(
       (item) => item.textContent,
     );
@@ -117,7 +178,9 @@ describe("AddDocButton intake requests", () => {
   it("offers intake requests only where the composer asks for them", async () => {
     const onIntakeRequests = vi.fn();
     expect(await menuItems({ onIntakeRequests })).toContain("Intake Requests");
-    await userEvent.click(screen.getByRole("menuitem", { name: "Intake Requests" }));
+    await userEvent.click(
+      screen.getByRole("menuitem", { name: "Intake Requests" }),
+    );
     expect(onIntakeRequests).toHaveBeenCalled();
   });
 

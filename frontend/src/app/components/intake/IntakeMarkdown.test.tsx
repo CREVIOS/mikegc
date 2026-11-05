@@ -29,6 +29,11 @@ describe("IntakeMarkdown", () => {
     expect(container.querySelector("h2")).toBeNull();
   });
 
+  it("keeps the numbering of a list that starts past 1", () => {
+    render(<IntakeMarkdown text={"3. Third\n4. Fourth"} />);
+    expect(screen.getByRole("list")).toHaveAttribute("start", "3");
+  });
+
   it("never renders raw HTML, images or unsafe links from the report", () => {
     const { container } = render(
       <IntakeMarkdown

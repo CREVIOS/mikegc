@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { IntakeRequestSummary } from "@mike/contracts";
 import { Modal } from "@/app/components/modals/Modal";
 import { SearchBar } from "@/app/components/ui/search-bar";
@@ -10,6 +10,8 @@ import {
 } from "@/app/components/ui/liquid-surface";
 import { useWorkspace } from "@/app/contexts/WorkspaceContext";
 import { listIntakeRequests } from "@/app/lib/mikeApi";
+import { notifyError } from "@/app/lib/userFacingError";
+import { TextButtonUI } from "@/shared/ui/TextButtonUI";
 import { intakeStateLabel } from "./intakeLabels";
 
 /** A request picked to process: `orgId` is its workspace, or "personal". */
@@ -25,7 +27,7 @@ type Props = {
 /**
  * Picks one of the active workspace's open intake requests to process in
  * the Assistant; laid out like the playbook picker. Search runs on the
- * server, so it reaches past the first page of the queue.
+ * server, and Load more reads the queue's next page.
  */
 export function IntakeRequestPickerModal({
   open,
@@ -39,6 +41,10 @@ export function IntakeRequestPickerModal({
   const [failed, setFailed] = useState(false);
   const [selected, setSelected] = useState<IntakeRequestSummary | null>(null);
   const [search, setSearch] = useState("");
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  // A new search or workspace makes a page still on its way stale.
+  const listing = useRef(0);
 
   useEffect(() => {
     if (!open || !workspaceId) return;
@@ -46,24 +52,30 @@ export function IntakeRequestPickerModal({
     // Wait for typing to pause before asking the server.
     const timer = setTimeout(
       () => {
+        const current = ++listing.current;
         setLoading(true);
         setFailed(false);
+        setLoadingMore(false);
         listIntakeRequests(workspaceId, {
           scope: "open",
           search: search.trim() || undefined,
         })
           .then((page) => {
-            if (cancelled) return;
+            if (cancelled || current !== listing.current) return;
             setRequests(page.requests);
-            setSelected((current) =>
-              current && page.requests.some((r) => r.id === current.id)
-                ? current
+            setNextCursor(page.next_cursor);
+            setSelected((selection) =>
+              selection && page.requests.some((r) => r.id === selection.id)
+                ? selection
                 : null,
             );
           })
           .catch(() => {
-            if (cancelled) return;
+            if (cancelled || current !== listing.current) return;
+            // Nothing on screen to use, so nothing stays picked either.
             setRequests([]);
+            setNextCursor(null);
+            setSelected(null);
             setFailed(true);
           })
           .finally(() => {
@@ -79,6 +91,35 @@ export function IntakeRequestPickerModal({
   }, [open, search, workspaceId]);
 
   if (!open) return null;
+
+  function loadMore() {
+    if (!workspaceId || !nextCursor || loadingMore) return;
+    const current = listing.current;
+    setLoadingMore(true);
+    listIntakeRequests(workspaceId, {
+      scope: "open",
+      search: search.trim() || undefined,
+      cursor: nextCursor,
+    })
+      .then((page) => {
+        if (current !== listing.current) return;
+        setRequests((shown) => [
+          ...shown,
+          ...page.requests.filter((r) => !shown.some((s) => s.id === r.id)),
+        ]);
+        setNextCursor(page.next_cursor);
+      })
+      .catch((error) => {
+        if (current === listing.current)
+          notifyError(error, {
+            action: "load more requests",
+            onRetry: loadMore,
+          });
+      })
+      .finally(() => {
+        if (current === listing.current) setLoadingMore(false);
+      });
+  }
 
   function close() {
     setSelected(null);
@@ -156,7 +197,9 @@ export function IntakeRequestPickerModal({
                   >
                     <span
                       className={`min-w-0 flex-1 basis-48 [overflow-wrap:anywhere] ${
-                        isSelected ? "font-medium text-gray-900" : "text-gray-700"
+                        isSelected
+                          ? "font-medium text-gray-900"
+                          : "text-gray-700"
                       }`}
                     >
                       {request.subject}
@@ -172,6 +215,17 @@ export function IntakeRequestPickerModal({
                   </button>
                 );
               })}
+              {nextCursor && (
+                <div className="flex justify-center pt-2">
+                  <TextButtonUI
+                    size="xs"
+                    loading={loadingMore}
+                    onClick={loadMore}
+                  >
+                    Load more
+                  </TextButtonUI>
+                </div>
+              )}
             </div>
           )}
         </div>

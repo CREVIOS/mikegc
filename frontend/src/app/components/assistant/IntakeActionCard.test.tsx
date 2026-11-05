@@ -124,6 +124,21 @@ describe("IntakeActionCard", () => {
         expect(latestIntakeActionCardId([{ events: [] }])).toBeNull();
     });
 
+    it("rereads the request on returning to the tab", async () => {
+        getIntakeRequest
+            .mockResolvedValueOnce(request("in_review", { resolve: true }))
+            .mockResolvedValueOnce(request("cancelled", { reopen: true }));
+        render(<IntakeActionCard event={event("resolve")} />);
+        await screen.findByRole("button", { name: "Resolve" });
+        window.dispatchEvent(new Event("focus"));
+        expect(
+            await screen.findByText(
+                "This change no longer applies. The request is Cancelled.",
+            ),
+        ).toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Resolve" })).toBeNull();
+    });
+
     it("shows a failure without claiming the change was made", async () => {
         getIntakeRequest.mockResolvedValue(request("in_review", { resolve: true }));
         commandIntakeRequest.mockRejectedValue(new Error("conflict"));

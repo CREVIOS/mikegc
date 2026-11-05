@@ -131,6 +131,24 @@ export function IntakeActionCard({
     useEffect(() => {
         void load();
     }, [load]);
+    // Someone else may change the request while the chat stays open: read
+    // it again on returning to the tab, so Confirm reflects it and carries
+    // its current version. A failed recheck keeps what is shown.
+    useEffect(() => {
+        const recheck = () => {
+            if (document.visibilityState !== "visible") return;
+            getIntakeRequest(event.org_id, event.request_id).then(
+                (request) => setLoaded({ status: "ready", request }),
+                () => {},
+            );
+        };
+        window.addEventListener("focus", recheck);
+        document.addEventListener("visibilitychange", recheck);
+        return () => {
+            window.removeEventListener("focus", recheck);
+            document.removeEventListener("visibilitychange", recheck);
+        };
+    }, [event.org_id, event.request_id]);
 
     async function confirm() {
         if (loaded.status !== "ready") return;

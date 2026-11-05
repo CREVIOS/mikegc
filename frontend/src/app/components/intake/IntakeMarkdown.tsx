@@ -32,8 +32,11 @@ const components: React.ComponentProps<typeof ReactMarkdown>["components"] = {
   ul: ({ children }) => (
     <ul className="mb-2 list-disc space-y-0.5 pl-5 last:mb-0">{children}</ul>
   ),
-  ol: ({ children }) => (
-    <ol className="mb-2 list-decimal space-y-0.5 pl-5 last:mb-0">{children}</ol>
+  // A list that picks up at "3." keeps its numbering.
+  ol: ({ start, children }) => (
+    <ol start={start} className="mb-2 list-decimal space-y-0.5 pl-5 last:mb-0">
+      {children}
+    </ol>
   ),
   strong: ({ children }) => (
     <strong className="font-semibold text-gray-900">{children}</strong>

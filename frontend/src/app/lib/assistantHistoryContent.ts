@@ -25,11 +25,11 @@ export function assistantHistoryContent(message: {
       .flatMap((event) => {
         if (event.type === "content") return [event.text];
         if (event.type === "text_card") return [`${event.title}\n${event.text}`];
-        // Whether the user confirmed it is in the request's current status,
-        // which the model reads afresh each turn.
+        // The note too, so the model can revise it. Whether the user
+        // confirmed is not recorded; a status change may be a teammate's.
         if (event.type === "intake_action")
           return [
-            `[Proposed intake status change: ${event.action}. The request's current status shows whether the user confirmed it.]`,
+            `[Proposed intake status change: ${event.action}${event.note ? `, with note ${JSON.stringify(event.note)}` : ""}. Whether the user confirmed it is not recorded.]`,
           ];
         return [];
       })

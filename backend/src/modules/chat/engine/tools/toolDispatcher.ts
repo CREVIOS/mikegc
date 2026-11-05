@@ -629,8 +629,11 @@ export async function runToolCalls(
     if (tc.function.name === INTAKE_ACTION_TOOL_NAME) {
       // Only a chat started from a request is offered the tool; a model
       // naming it anywhere else gets nothing to change.
+      // A card of its own: a provider's call IDs can repeat across turns
+      // (local models' recovered calls restart at the same one), and the
+      // chat offers only its newest card for confirmation.
       const proposed = options.intakeRequest
-        ? intakeActionEvent(tc.id, args, options.intakeRequest)
+        ? intakeActionEvent(crypto.randomUUID(), args, options.intakeRequest)
         : { error: "This chat was not started from an intake request." };
       if ("event" in proposed) {
         intakeActionEvents.push(proposed.event);

@@ -88,9 +88,12 @@ describe("propose_intake_status_change", () => {
       ...streamOptions(write),
       intakeRequest: request,
     });
+    const streamed = events.find(
+      (event): event is IntakeActionEvent => event.type === "intake_action",
+    );
     const card: IntakeActionEvent = {
       type: "intake_action",
-      card_id: "card-1",
+      card_id: streamed!.card_id,
       org_id: "org-1",
       request_id: "request-1",
       action: "resolve",
@@ -105,7 +108,7 @@ describe("propose_intake_status_change", () => {
 
   it("tells the model nothing changed until the user confirms", async () => {
     const result = await runToolCalls(
-      [call("card-1", { action: "wait" })],
+      [call("call-1", { action: "wait" })],
       new Map(),
       "user-1",
       {} as never,
@@ -118,7 +121,30 @@ describe("propose_intake_status_change", () => {
     const content = JSON.parse(
       (result.toolResults[0] as { content: string }).content,
     );
-    expect(content).toMatchObject({ card_id: "card-1", proposed: true });
+    expect(content).toMatchObject({
+      card_id: result.intakeActionEvents[0].card_id,
+      proposed: true,
+    });
+  });
+
+  it("gives every proposal its own card, even when call IDs repeat", async () => {
+    // Local models' recovered calls restart at the same ID each turn.
+    const propose = () =>
+      runToolCalls(
+        [call("call_0_0", { action: "wait" })],
+        new Map(),
+        "user-1",
+        {} as never,
+        vi.fn(),
+        undefined, undefined, undefined, undefined, undefined, undefined,
+        undefined, undefined, undefined,
+        { intakeRequest: request },
+      );
+    const [first, second] = [await propose(), await propose()];
+    expect(first.intakeActionEvents[0].card_id).not.toBe(
+      second.intakeActionEvents[0].card_id,
+    );
+    expect(first.intakeActionEvents[0].card_id).not.toBe("call_0_0");
   });
 
   it("refuses outside an intake chat and without a reason to cancel", async () => {
