@@ -110,7 +110,7 @@ import {
 import { formatIntakeDateTime, intakeDeleteMessage } from "./intakeLabels";
 import { describeIntakeEvent, describeIntakeMessage } from "./intakeActivity";
 import { INTAKE_REQUESTS_PATH } from "./intakeQuery";
-import { onIntakeNotified } from "./intakeNotifications";
+import { onIntakeNotified } from "./intakeNotificationToasts";
 import {
   IntakeDocumentPicker,
   type IntakePickedDocument,
