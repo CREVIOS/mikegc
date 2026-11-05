@@ -83,6 +83,7 @@ import {
   NOTE_TITLE_ICON_CLASS,
 } from "./IntakeNoteForm";
 import { IntakeReasonModal } from "./IntakeReasonModal";
+import { IntakeMarkdown } from "./IntakeMarkdown";
 import {
   IntakeResolveDialog,
   defaultIntakeReplyDocuments,
@@ -1063,9 +1064,15 @@ export function Detail({
                             const text = entry.message;
                             return (
                               <>
-                                <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700">
-                                  {text.body}
-                                </p>
+                                {/* MikeGC writes its report in Markdown;
+                                    people's notes read as typed. */}
+                                {text.purpose === "preprocessing" ? (
+                                  <IntakeMarkdown text={text.body} />
+                                ) : (
+                                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700">
+                                    {text.body}
+                                  </p>
+                                )}
                                 <IntakeNoteDocuments
                                   documents={documents.filter(
                                     (d) => d.message_id === text.id,
