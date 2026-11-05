@@ -146,6 +146,12 @@ describe("GitHub workflow catalog preparation", () => {
           .sort(),
       ).toEqual(["contract-intake", "contract-markup", "obligation-tracking"]);
       expect(
+        document.workflows
+          .filter((workflow) => workflow.word_quick_action)
+          .map((workflow) => workflow.workflow_key)
+          .sort(),
+      ).toEqual(["contract-intake", "contract-markup", "obligation-tracking"]);
+      expect(
         document.workflows.find(
           (workflow) => workflow.workflow_key === "proofread",
         ),
