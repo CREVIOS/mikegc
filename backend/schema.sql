@@ -11771,6 +11771,7 @@ begin
   delete from public.intake_requests where org_id=p_org;
   -- Messages received for intake hold request text too.
   delete from public.intake_inbound where org_id=p_org;
+  delete from public.intake_conversations where org_id=p_org;
   insert into public.intake_events(org_id,actor_id,kind)
     select p_org,p_actor,'requests_purged' where exists(select 1 from public.intake_settings where org_id=p_org);
 end $$;
@@ -12050,6 +12051,18 @@ create table if not exists public.intake_inbound (
   unique (org_id, source, external_id)
 );
 create index if not exists intake_inbound_request on public.intake_inbound(request_id) where request_id is not null;
+
+-- Chat threads where MikeGC answered instead of recording a request, so a
+-- reply there without a mention still reaches it. `rounds` counts its
+-- answers; after a few, the next message is recorded.
+create table if not exists public.intake_conversations (
+  org_id uuid not null references public.organizations(id) on delete cascade,
+  source text not null check (source in ('slack', 'teams', 'gmail', 'outlook')),
+  thread_key text not null check (char_length(thread_key) between 1 and 500),
+  rounds integer not null default 1 check (rounds >= 0),
+  updated_at timestamptz not null default now(),
+  primary key (org_id, source, thread_key)
+);
 
 -- An email's attachments wait in storage until it is handled. A message
 -- deleted first, including by an intake purge or an organization's purge,
@@ -12912,5 +12925,7 @@ insert into public.schema_migrations (filename) values
   ('20261104_05_intake_unread_reply_count.sql'),
   ('20261104_06_intake_always_clarify.sql'),
   ('20261104_07_intake_delivery_message.sql'),
-  ('20261104_08_intake_notifications.sql')
+  ('20261104_08_intake_notifications.sql'),
+  ('20261110_01_intake_conversations.sql'),
+  ('20261110_02_intake_conversations_email.sql')
 on conflict (filename) do nothing;

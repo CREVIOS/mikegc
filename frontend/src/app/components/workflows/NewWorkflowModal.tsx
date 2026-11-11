@@ -729,7 +729,7 @@ export function NewWorkflowModal({
                                   (isEditing && !hasChanges),
                           }
             }
-            secondaryAction={
+            backAction={
                 !isEditing && step === "assets"
                     ? {
                           label: "Back",
@@ -744,14 +744,17 @@ export function NewWorkflowModal({
                             onClick: () => setStep("details"),
                             disabled: loading,
                         }
-                      : !isEditing && step === "details" && type === "assistant"
-                        ? {
-                              label: importedSkillName ?? "Upload markdown",
-                              icon: <Upload className="h-3.5 w-3.5" />,
-                              onClick: () => markdownInputRef.current?.click(),
-                              disabled: loading,
-                          }
-                        : undefined
+                      : undefined
+            }
+            secondaryAction={
+                !isEditing && step === "details" && type === "assistant"
+                    ? {
+                          label: importedSkillName ?? "Upload markdown",
+                          icon: <Upload className="h-3.5 w-3.5" />,
+                          onClick: () => markdownInputRef.current?.click(),
+                          disabled: loading,
+                      }
+                    : undefined
             }
             cancelAction={
                 !isEditing && step === "access"

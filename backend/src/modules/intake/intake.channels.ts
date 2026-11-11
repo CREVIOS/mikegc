@@ -38,8 +38,12 @@ export type OutboundMessage = {
   text: string;
   /** The request's subject, which an email's subject and a Teams folder follow. */
   requestSubject: string;
-  /** An acknowledgement's link to the request and who it went to. */
-  acknowledgement?: { subject: string; link: string; assignee: string | null };
+  /**
+   * What an acknowledgement names: the request and who it went to. It carries
+   * no link to the request, whose page only the organization's members can
+   * open; the requester follows the request in its thread.
+   */
+  acknowledgement?: { subject: string; assignee: string | null };
   documents: OutboundDocument[];
 };
 
@@ -124,6 +128,28 @@ export function memberSender(name: string, fromName: string): string {
   return `${name} (${fromName})`.slice(0, 80);
 }
 
+/** What MikeGC says when a resolution sends documents without a message. */
+export const DOCUMENTS_ONLY_TEXT = "Here are the documents from Legal.";
+
+/**
+ * An acknowledgement as lines of text, each passed through the channel's
+ * `escape`: thanks, who will pick the request up, and any questions, whose
+ * framing follows on the first line. While MikeGC asks before choosing who
+ * gets the request, it doesn't promise that someone will.
+ */
+export function acknowledgementLines(
+  ack: NonNullable<OutboundMessage["acknowledgement"]>,
+  questions: string,
+  escape: (value: string) => string = (value) => value,
+): string[] {
+  let first = "Thanks, I've passed this to Legal.";
+  if (ack.assignee) first += ` ${escape(ack.assignee)} will pick it up.`;
+  else if (!questions) first += " Someone from the team will pick it up soon.";
+  if (!questions) return [first];
+  const [framing = "", ...rest] = questions.split("\n");
+  return [`${first} ${escape(framing)}`, ...rest.map(escape)];
+}
+
 /**
  * A message as plain text, for channels that cannot change the sender of
  * one message: a member's question reads "Emma Chen (Legal) asks: …".
@@ -133,17 +159,9 @@ export function plainMessageText(
   message: OutboundMessage,
   options: { fromName: string; signMember: boolean },
 ): string {
-  const lines: string[] = [];
-  if (message.acknowledgement) {
-    const ack = message.acknowledgement;
-    lines.push(
-      `Logged for Legal: ${ack.subject} (${ack.link}). ` +
-        (ack.assignee ? `Assigned to ${ack.assignee}.` : "Not assigned to a reviewer yet."),
-    );
-    if (message.text) lines.push("", message.text);
-    return lines.join("\n");
-  }
-  const text = message.text || (message.documents.length ? "Legal sent these documents." : "");
+  if (message.acknowledgement)
+    return acknowledgementLines(message.acknowledgement, message.text).join("\n");
+  const text = message.text || (message.documents.length ? DOCUMENTS_ONLY_TEXT : "");
   if (options.signMember && message.author.kind === "member") {
     const who = memberSender(message.author.name, options.fromName);
     return message.kind === "question" ? `${who} asks:\n${text}` : `${who}:\n${text}`;
@@ -304,4 +322,51 @@ export async function routeThreadMessage(
     }
   }
   return ok(status);
+}
+
+/** Where MikeGC can answer instead of recording: chats and email threads. */
+export type ConversationSource = "slack" | "teams" | "gmail" | "outlook";
+
+/**
+ * A chat or email thread where MikeGC answered instead of recording a
+ * request: how many times it has answered there, or null when it never has.
+ */
+export async function findConversation(
+  db: Db,
+  orgId: string,
+  source: ConversationSource,
+  threadKey: string,
+): Promise<{ rounds: number } | null> {
+  const { data, error } = await db
+    .from("intake_conversations")
+    .select("rounds")
+    .eq("org_id", orgId)
+    .eq("source", source)
+    .eq("thread_key", threadKey)
+    .maybeSingle();
+  if (error) throw error;
+  return (data as { rounds: number } | null) ?? null;
+}
+
+/** Count one more of MikeGC's answers in a chat or email thread. */
+export async function rememberConversation(
+  db: Db,
+  orgId: string,
+  source: ConversationSource,
+  threadKey: string,
+): Promise<void> {
+  const existing = await findConversation(db, orgId, source, threadKey);
+  const updated_at = new Date().toISOString();
+  const { error } = existing
+    ? await db
+        .from("intake_conversations")
+        .update({ rounds: existing.rounds + 1, updated_at })
+        .eq("org_id", orgId)
+        .eq("source", source)
+        .eq("thread_key", threadKey)
+    : await db
+        .from("intake_conversations")
+        .insert({ org_id: orgId, source, thread_key: threadKey, rounds: 1, updated_at });
+  // Two answers at once in a new thread: the other one remembered it.
+  if (error && (error as { code?: string }).code !== "23505") throw error;
 }

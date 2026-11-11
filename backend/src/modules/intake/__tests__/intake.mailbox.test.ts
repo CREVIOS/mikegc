@@ -487,7 +487,7 @@ describe("replying from Outlook", () => {
   it("replies to all on the newest message, attaches what fits and sends", async () => {
     Object.assign(memory.rows("intake_automation")[0]!, { email_provider: "graph" });
     memory.tables.intake_requests = [{ id: requestId, org_id: org, subject: "NDA", assignee_id: null }];
-    memory.tables.intake_messages = [{ id: "m1", org_id: org, request_id: requestId, kind: "question", body: "Before Legal starts, MikeGC needs:\n1. Which entity is signing?" }];
+    memory.tables.intake_messages = [{ id: "m1", org_id: org, request_id: requestId, kind: "question", body: "One thing Legal will need before they start:\nWhich entity is signing?" }];
     memory.rows("intake_channel_links").push({
       id: "link-1",
       org_id: org,
@@ -545,10 +545,13 @@ describe("replying from Outlook", () => {
         toRecipients: [{ emailAddress: { address: "jane@acme.test" } }],
         // Never the mailbox itself.
         ccRecipients: [{ emailAddress: { address: "ben@acme.test" } }],
+        // HTML, so every mail app reflows it: paragraphs, with line breaks kept.
         body: {
-          contentType: "Text",
-          content:
-            "Before Legal starts, MikeGC needs:\n1. Which entity is signing?\n\nReply to this email to answer. Your reply goes to the Legal team's request.",
+          contentType: "HTML",
+          content: expect.stringContaining(
+            '<p style="margin:0 0 1em">One thing Legal will need before they start:<br>Which entity is signing?</p>' +
+              '<p style="margin:0 0 1em">Just reply to this email and Legal will see your answer.</p>',
+          ),
         },
         singleValueExtendedProperties: [
           { id: "String {00020329-0000-0000-C000-000000000046} Name MikeGCOutboundId", value: "00000000-0000-4000-8000-0000000000f1" },

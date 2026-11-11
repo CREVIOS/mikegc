@@ -550,16 +550,9 @@ function NewTRModalForWorkspace({
                               ? "The review has been created — add documents from the review itself."
                               : undefined,
                       }
-                    : step === "access"
-                      ? {
-                            label: "Back",
-                            type: "button",
-                            onClick: () => setStep("details"),
-                            disabled: uploading,
-                        }
-                      : undefined
+                    : undefined
             }
-            cancelAction={
+            backAction={
                 step === "documents"
                     ? {
                           label: "Back",
@@ -570,6 +563,16 @@ function NewTRModalForWorkspace({
                               : undefined,
                       }
                     : step === "access"
+                      ? {
+                            label: "Back",
+                            type: "button",
+                            onClick: () => setStep("details"),
+                            disabled: uploading,
+                        }
+                      : undefined
+            }
+            cancelAction={
+                step === "access"
                       ? {
                             label: "Skip",
                             type: "button",

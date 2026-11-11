@@ -331,23 +331,23 @@ function UseWorkflowModalForWorkspace({ workflow, onClose, skipSelect = false }:
             onClose={handleClose}
             size={screen === "select" ? "xl" : "lg"}
             breadcrumbs={breadcrumbs}
+            backAction={
+                screen === "select"
+                    ? undefined
+                    : {
+                          label: "Back",
+                          onClick: () =>
+                              setScreen(screen === "details" ? "select" : "details"),
+                          disabled: saving,
+                      }
+            }
             secondaryAction={
                 screen === "select"
                     ? {
                           label: "Edit",
                           onClick: selectPageAction,
                       }
-                    : screen === "details"
-                      ? {
-                            label: "Back",
-                            onClick: () => setScreen("select"),
-                            disabled: saving,
-                        }
-                      : {
-                            label: "Back",
-                            onClick: () => setScreen("details"),
-                            disabled: saving,
-                        }
+                    : undefined
             }
             primaryAction={
                 screen === "select"

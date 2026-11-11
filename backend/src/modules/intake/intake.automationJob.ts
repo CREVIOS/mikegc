@@ -15,9 +15,13 @@ import {
   type CandidateDownloader,
 } from "./intake.attachments";
 import {
+  ChannelDeliveryError,
+  findConversation,
   linkThread,
+  rememberConversation,
   loadRequestLink,
   type ChannelSource,
+  type ConversationSource,
 } from "./intake.channels";
 import { MAX_CLARIFY_ROUNDS, stableId } from "./intake.clarify";
 import { requestLink } from "./intake.deliver";
@@ -34,7 +38,9 @@ import {
   type SlackInboundPayload,
   type TriagePlan,
 } from "./intake.inboundPayload";
+import { gmailAdapter } from "./intake.gmail";
 import { mailThread, recordEmailMessageIds } from "./intake.mail";
+import { outlookAdapter } from "./intake.outlook";
 import { queueIntakePreprocess } from "./intake.preprocess";
 import { slackBotToken } from "./intake.secrets";
 import { dispatchIntakeJob, intakeRpc } from "./intake.shared";
@@ -46,6 +52,7 @@ import {
   mentionedUsers,
   slackChannelName,
   slackPermalink,
+  slackEscape,
   slackPostMessage,
   slackTextToPlain,
   slackThreadMessages,
@@ -57,6 +64,7 @@ import {
   TeamsApiError,
   isPermanentTeamsError,
   teamsDownloadFile,
+  teamsAdapter,
   teamsInboundMessage,
   teamsThread,
 } from "./intake.teams";
@@ -512,6 +520,106 @@ async function noteRelated(
     throw note.kind === "error" ? note.error : new Error(note.detail);
 }
 
+/**
+ * How many times MikeGC answers in one chat thread before it records the
+ * next message there as a request, so a conversation always reaches Legal.
+ */
+export const MAX_CHAT_ROUNDS = 3;
+
+/**
+ * The thread a Slack, Teams or email message belongs to, as links key it,
+ * where MikeGC can answer instead of recording. Mail through Postmark has no
+ * thread to answer in.
+ */
+function conversationThread(
+  settings: AutomationRow | null,
+  payload: InboundPayload,
+): { source: ConversationSource; key: string } | null {
+  if (payload.kind === "slack")
+    return {
+      source: "slack",
+      key: `${payload.team_id ?? settings?.slack_team_id ?? ""}:${payload.channel}:${payload.thread_ts ?? payload.ts}`,
+    };
+  if (payload.kind === "teams") return { source: "teams", key: teamsThread(payload).key };
+  if (payload.kind === "mail" && settings) {
+    const thread = mailThread(settings, payload);
+    return thread ? { source: thread.source as ConversationSource, key: thread.key } : null;
+  }
+  return null;
+}
+
+/**
+ * MikeGC's own answer in the chat or email thread a message came from, when
+ * triage found no request in it. Nothing is recorded, so it goes out without
+ * a request or a link: an email replies to the message itself.
+ */
+export async function sendChatReply(
+  db: Db,
+  row: InboundRow,
+  settings: AutomationRow | null,
+  payload: InboundPayload,
+  text: string,
+) {
+  if (payload.kind === "slack") {
+    await slackPostMessage(requireSlackToken(settings), {
+      channel: payload.channel,
+      threadTs: payload.thread_ts ?? payload.ts,
+      text: slackEscape(text),
+    });
+    return;
+  }
+  if (!settings || (payload.kind !== "teams" && payload.kind !== "mail"))
+    throw new NonRetryableJobError(GENERIC_FAILURE);
+  let thread: { source: ChannelSource; key: string; address: Record<string, unknown> };
+  if (payload.kind === "teams") thread = teamsThread(payload);
+  else {
+    const mail = mailThread(settings, payload);
+    if (!mail) throw new NonRetryableJobError(GENERIC_FAILURE);
+    // No recorded thread to follow: reply to the message itself.
+    thread = { ...mail, address: { ...mail.address, references: [payload.message_id] } };
+  }
+  const adapter =
+    payload.kind === "teams"
+      ? teamsAdapter
+      : payload.provider === "gmail"
+        ? gmailAdapter
+        : outlookAdapter;
+  try {
+    await adapter.deliver(
+      {
+        db,
+        settings,
+        fromName: settings.email_from_name?.trim() || "Legal",
+        readDocument: () => Promise.reject(new Error("No documents to read.")),
+        saveProgress: () => Promise.resolve(),
+      },
+      {
+        // No request, so no link: Teams keys its post by the message, and
+        // email records no Message-IDs, which belong to a link.
+        id: payload.kind === "teams" ? row.id : "",
+        org_id: row.org_id,
+        request_id: "",
+        source: thread.source,
+        thread_key: thread.key,
+        address: thread.address,
+      },
+      {
+        id: row.id,
+        kind: "answer",
+        author: { kind: "mikegc" },
+        text,
+        requestSubject: "",
+        documents: [],
+      },
+      null,
+    );
+  } catch (error) {
+    if (error instanceof ChannelDeliveryError && error.permanent)
+      throw new NonRetryableJobError(error.sentence);
+    throw error;
+  }
+}
+
 async function processInbound(db: Db, row: InboundRow): Promise<Record<string, unknown>> {
   const parsed = inboundPayload.safeParse(row.payload);
   if (!parsed.success)
@@ -546,10 +654,37 @@ async function processInbound(db: Db, row: InboundRow): Promise<Record<string, u
       plan.assignee_id = null;
       plan.preprocess = null;
     } else plan.questions = [];
+    // Only a chat converses, and only for a few rounds in one thread. Mail
+    // in another request's thread is recorded apart, never answered there.
+    const thread = plan.reply && canAsk ? conversationThread(settings, payload) : null;
+    if (!thread) plan.reply = null;
+    else {
+      const conversation = await findConversation(db, row.org_id, thread.source, thread.key);
+      if ((conversation?.rounds ?? 0) >= MAX_CHAT_ROUNDS) plan.reply = null;
+    }
     payload.plan = plan;
     await save();
   }
   const plan = payload.plan;
+  // Nothing to record: MikeGC answers in the chat, and no request is made.
+  if (plan.reply && !row.request_id && !payload.recorded) {
+    // Saved straight after the send, and the round counted apart, so a
+    // retry neither answers twice nor counts the answer twice.
+    if (!payload.conversed) {
+      await sendChatReply(db, row, settings, payload, plan.reply);
+      payload.conversed = true;
+      await save();
+    }
+    if (!payload.remembered) {
+      // So a reply in the thread without a mention reaches MikeGC too.
+      const thread = conversationThread(settings, payload);
+      if (thread) await rememberConversation(db, row.org_id, thread.source, thread.key);
+      payload.remembered = true;
+      await save();
+    }
+    await settleInbound(db, row.id, "done", null, payload);
+    return { request_id: null, replied: true };
+  }
   // Recorded, then deleted before this run: it stays deleted.
   if (payload.recorded && !row.request_id) {
     await settleInbound(db, row.id, "done", null, payload);
@@ -681,7 +816,7 @@ export async function markIntakeInboundFailed(db: Db, job: DbJob): Promise<void>
   const parsed = inboundPayload.safeParse(row.payload);
   const payload = parsed.success ? parsed.data : null;
   const reason = row.request_id ? RECORDED_INCOMPLETE : row.error ?? GENERIC_FAILURE;
-  if (payload && !payload.acknowledged && !payload.replied) {
+  if (payload && !payload.acknowledged && !payload.replied && !payload.conversed) {
     try {
       if (row.request_id) {
         // Failed before its thread was linked: link it, so the thread hears.

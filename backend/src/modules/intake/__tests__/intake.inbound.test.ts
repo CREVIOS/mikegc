@@ -240,6 +240,32 @@ describe("Slack events", () => {
     await slack(threadMessage({ ts: "1762074901.000300", subtype: "file_share" }));
     expect(inbound()).toHaveLength(2);
   });
+  it("takes a reply without a mention in a thread where MikeGC chatted back, as a new message", async () => {
+    memory.rows("intake_conversations").push({
+      org_id: org,
+      source: "slack",
+      thread_key: "T1:C42:1762074000.000001",
+      rounds: 1,
+    });
+    expect((await slack(threadMessage({ text: "can you review our NDA?" }))).status).toBe(200);
+    // Its mention twin, if it had one, is the same message.
+    expect((await slack(threadMessage({ type: "app_mention", text: "can you review our NDA?" }))).status).toBe(200);
+    expect(inbound()).toEqual([
+      expect.objectContaining({
+        kind: "request",
+        source: "slack",
+        external_id: "C42:1762074900.000200",
+        payload: expect.objectContaining({
+          kind: "slack",
+          thread_ts: "1762074000.000001",
+          text: "can you review our NDA?",
+        }),
+      }),
+    ]);
+    // Another thread, where MikeGC never answered, still needs a mention.
+    await slack(threadMessage({ ts: "1762074999.000500", thread_ts: "1762070000.000009" }));
+    expect(inbound()).toHaveLength(1);
+  });
   it("drops chatter, edits and top-level messages without storing them", async () => {
     linkThread();
     for (const body of [

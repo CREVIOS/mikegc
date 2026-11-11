@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   enqueueDbJob: vi.fn(),
   deleteFile: vi.fn(),
   enqueueConversion: vi.fn(),
+  gmailDeliver: vi.fn(),
 }));
 vi.mock("../../../lib/llm", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../lib/llm")>()),
@@ -37,6 +38,11 @@ vi.mock("../../../lib/dbq/enqueue", () => ({
 vi.mock("../../../lib/queue/conversionQueue", () => ({
   enqueueConversion: mocks.enqueueConversion,
 }));
+// Gmail itself is tested in intake.gmailChatReply.test.ts; here, what it is asked to send.
+vi.mock("../intake.gmail", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../intake.gmail")>();
+  return { ...actual, gmailAdapter: { ...actual.gmailAdapter, deliver: mocks.gmailDeliver } };
+});
 import { NonRetryableJobError } from "../../../lib/dbq/runner";
 import type { DbJob } from "../../../lib/dbq/types";
 import { encryptString } from "../../../lib/mcp/client";
@@ -75,6 +81,23 @@ const job = (): DbJob => ({
   created_at: "",
 });
 const row = () => memory.rows("intake_inbound")[0]!;
+/** A new email to a Gmail intake mailbox, from an accepted sender. */
+const gmailPayload = () => ({
+  kind: "mail",
+  provider: "gmail",
+  mailbox: "intake@firm.test",
+  provider_id: "gm-9",
+  message_id: "<hello@firm.test>",
+  thread: "t-9",
+  from: { name: "Pat", email: "pat@firm.test" },
+  to: ["intake@firm.test"],
+  cc: [],
+  subject: "How are you",
+  date: "2026-11-02T09:14:00.000Z",
+  text: "How are you?",
+  attachments: [],
+  skipped: [],
+});
 const emailPayload = () => ({
   kind: "email",
   from: { name: "Jane Business", email: "jane@acme.test" },
@@ -100,7 +123,7 @@ const slackPayload = (overrides: Record<string, unknown> = {}) => ({
 
 function setup(options: {
   payload: Record<string, unknown>;
-  source?: "email" | "slack";
+  source?: "email" | "slack" | "gmail";
   /** False when no model key is available, so triage can't run. */
   model?: boolean;
   kind?: "team" | "personal";
@@ -523,7 +546,8 @@ describe("recording a Slack thread", () => {
     expect(slackReplies).toMatchObject({
       channel: "C42",
       thread_ts: "1793610840.000100",
-      text: `Logged for Legal: <https://mike.example.com/intake/${inboundId}?org=${org}|Need the Supplier Co NDA signed off>. Not assigned to a reviewer yet.`,
+      // No link: the request's page is for the organization's members only.
+      text: "Thanks, I've passed this to Legal. Someone from the team will pick it up soon.",
     });
     // Marked, so a retry can find it; MikeGC's own name, not a member's.
     expect(JSON.parse(String(slackReplies.metadata))).toEqual({
@@ -533,15 +557,105 @@ describe("recording a Slack thread", () => {
     expect(slackReplies.username).toBeUndefined();
     expect(memory.rows("intake_outbound")[0]).toMatchObject({ status: "sent", external_id: "1793610999.000900" });
   });
-  it("names the reviewer, and links Personal requests as personal", async () => {
+  it("names the reviewer who will pick the request up", async () => {
     setup({ payload: slackPayload({ thread_ts: null, ts: "1793610840.000100", user: "U1", text: "<@UBOT> NDA please" }), source: "slack", kind: "personal" });
     await handleIntakeInbound(memory.db, job());
     expect(slackCalls.some((c) => c.method === "conversations.replies")).toBe(false);
     await deliverQueued();
     expect(slackReplies.thread_ts).toBe("1793610840.000100");
     expect(slackReplies.text).toBe(
-      `Logged for Legal: <https://mike.example.com/intake/${inboundId}?org=personal|Review Supplier Co NDA>. Assigned to Sam Lawyer.`,
+      "Thanks, I've passed this to Legal. Sam Lawyer will pick it up.",
     );
+  });
+  it("answers a greeting in the chat without recording a request", async () => {
+    setup({ payload: slackPayload({ thread_ts: null, ts: "1793610840.000100", user: "U1", text: "<@UBOT> hi there" }), source: "slack" });
+    mocks.completeText.mockResolvedValue(
+      JSON.stringify({ reply: "Hi! Tell me what you need from Legal & I'll pass it on.", subject: "Hi there", attachments: [] }),
+    );
+    await expect(handleIntakeInbound(memory.db, job())).resolves.toMatchObject({ request_id: null, replied: true });
+    expect(memory.rows("intake_requests")).toEqual([]);
+    expect(memory.rows("intake_outbound")).toEqual([]);
+    expect(slackReplies).toMatchObject({
+      channel: "C42",
+      thread_ts: "1793610840.000100",
+      text: "Hi! Tell me what you need from Legal &amp; I'll pass it on.",
+    });
+    expect(row()).toMatchObject({ status: "done", payload: null });
+    // Remembered, so a reply there without a mention reaches MikeGC.
+    expect(memory.rows("intake_conversations")).toEqual([
+      expect.objectContaining({ org_id: org, source: "slack", thread_key: ":C42:1793610840.000100", rounds: 1 }),
+    ]);
+  });
+  it("records the message once MikeGC has answered in its thread a few times", async () => {
+    setup({ payload: slackPayload({ thread_ts: null, ts: "1793610840.000100", user: "U1", text: "<@UBOT> wassup" }), source: "slack" });
+    memory.rows("intake_conversations").push({ org_id: org, source: "slack", thread_key: ":C42:1793610840.000100", rounds: 3 });
+    mocks.completeText.mockResolvedValue(JSON.stringify({ reply: "Hi again!", subject: "Wassup", attachments: [] }));
+    await expect(handleIntakeInbound(memory.db, job())).resolves.toMatchObject({ request_id: inboundId });
+    expect(memory.rows("intake_requests")).toHaveLength(1);
+  });
+  it("records mail through Postmark even when triage would only have replied: it has no thread", async () => {
+    setup({ payload: emailPayload() });
+    mocks.completeText.mockResolvedValue(JSON.stringify({ reply: "Hi!", subject: "Hello", attachments: [] }));
+    await handleIntakeInbound(memory.db, job());
+    expect(memory.rows("intake_requests")).toHaveLength(1);
+  });
+  it("answers an email that isn't a request in its thread, as in a chat, recording nothing", async () => {
+    setup({ payload: gmailPayload(), source: "gmail" });
+    mocks.gmailDeliver.mockResolvedValue({ externalId: "sent-1@mail.gmail.com", documents: [] });
+    mocks.completeText.mockResolvedValue(
+      JSON.stringify({ reply: "Hi! Tell me what you need from Legal and I'll pass it on.", subject: "How are you", attachments: [] }),
+    );
+    await expect(handleIntakeInbound(memory.db, job())).resolves.toMatchObject({ request_id: null, replied: true });
+    expect(memory.rows("intake_requests")).toEqual([]);
+    expect(memory.rows("intake_outbound")).toEqual([]);
+    expect(memory.rows("intake_channel_links")).toEqual([]);
+    // A reply to the sender's own message, in its thread, with no link behind it.
+    const [, link, message] = mocks.gmailDeliver.mock.calls[0]!;
+    expect(link).toMatchObject({
+      id: "",
+      source: "gmail",
+      thread_key: "gmail:t-9",
+      address: expect.objectContaining({
+        to: ["pat@firm.test"],
+        thread: "t-9",
+        reply_to_message_id: "gm-9",
+        subject: "How are you",
+        references: ["<hello@firm.test>"],
+      }),
+    });
+    expect(message).toMatchObject({
+      kind: "answer",
+      author: { kind: "mikegc" },
+      text: "Hi! Tell me what you need from Legal and I'll pass it on.",
+    });
+    expect(row()).toMatchObject({ status: "done", payload: null });
+    // Counted, so after a few answers the thread's next email is recorded.
+    expect(memory.rows("intake_conversations")).toEqual([
+      expect.objectContaining({ org_id: org, source: "gmail", thread_key: "gmail:t-9", rounds: 1 }),
+    ]);
+  });
+  it("answers an email once when counting the answer fails and the job retries", async () => {
+    setup({ payload: gmailPayload(), source: "gmail" });
+    mocks.gmailDeliver.mockResolvedValue({ externalId: "sent-1@mail.gmail.com", documents: [] });
+    mocks.completeText.mockResolvedValue(JSON.stringify({ reply: "Hi!", subject: "How are you", attachments: [] }));
+    let outage = true;
+    memory.intercept = ({ table }) =>
+      table === "intake_conversations" && outage ? { message: "connection reset" } : null;
+    await expect(handleIntakeInbound(memory.db, job())).rejects.toBeTruthy();
+    outage = false;
+    await expect(handleIntakeInbound(memory.db, job())).resolves.toMatchObject({ request_id: null, replied: true });
+    expect(mocks.gmailDeliver).toHaveBeenCalledTimes(1);
+    expect(memory.rows("intake_conversations")).toEqual([
+      expect.objectContaining({ source: "gmail", thread_key: "gmail:t-9", rounds: 1 }),
+    ]);
+  });
+  it("records an email once MikeGC has answered in its thread a few times", async () => {
+    setup({ payload: gmailPayload(), source: "gmail" });
+    memory.rows("intake_conversations").push({ org_id: org, source: "gmail", thread_key: "gmail:t-9", rounds: 3 });
+    mocks.completeText.mockResolvedValue(JSON.stringify({ reply: "Hi again!", subject: "How are you", attachments: [] }));
+    await expect(handleIntakeInbound(memory.db, job())).resolves.toMatchObject({ request_id: inboundId });
+    expect(memory.rows("intake_requests")).toHaveLength(1);
+    expect(mocks.gmailDeliver).not.toHaveBeenCalled();
   });
   it("acknowledges once when the job is retried", async () => {
     setup({ payload: slackPayload(), source: "slack", model: false });
@@ -620,7 +734,7 @@ describe("recording a Slack thread", () => {
       expect.objectContaining({
         kind: "question",
         automated: true,
-        body: "Before Legal starts, MikeGC needs:\n1. Is Acme a customer or a supplier?",
+        body: "One quick question so it gets to the right person:\nIs Acme a customer or a supplier?",
       }),
     ]);
     expect(memory.rows("intake_outbound")).toEqual([
@@ -629,8 +743,9 @@ describe("recording a Slack thread", () => {
     expect(mocks.enqueueDbJob.mock.calls.some(([, input]) => input.kind === "intake.preprocess")).toBe(false);
     await deliverQueued();
     expect(slackReplies.text).toBe(
-      `Logged for Legal: <https://mike.example.com/intake/${inboundId}?org=${org}|Review Acme NDA>. Not assigned to a reviewer yet.\n\n` +
-        "Before Legal starts, MikeGC needs:\n1. Is Acme a customer or a supplier?",
+      // Asking before choosing who gets it, MikeGC promises no one yet.
+      "Thanks, I've passed this to Legal. One quick question so it gets to the right person:\n" +
+        "Is Acme a customer or a supplier?",
     );
   });
   it("doesn't ask by email through Postmark, where no thread can be answered", async () => {
@@ -676,6 +791,32 @@ describe("recording a Slack thread", () => {
     await expect(handleIntakeInbound(memory.db, job())).resolves.toMatchObject({ asked: false });
     expect(memory.rows("intake_requests")[0]).toMatchObject({ assignee_id: sam });
     expect(memory.rows("intake_messages").filter((m) => m.kind === "question")).toEqual([]);
+  });
+  it("records mail from another request's thread instead of answering it there", async () => {
+    setup({
+      payload: {
+        ...gmailPayload(),
+        thread: "t-1",
+        from: { name: "Pat", email: "pat@partner.test" },
+        subject: "Re: NDA",
+        text: "How are you?",
+        related_request_id: "request-0",
+      },
+      source: "gmail",
+    });
+    memory.rows("intake_channel_links").push({
+      id: "link-0",
+      org_id: org,
+      request_id: "request-0",
+      source: "gmail",
+      thread_key: "gmail:t-1",
+      address: {},
+    });
+    mocks.completeText.mockResolvedValue(JSON.stringify({ reply: "Hi!", subject: "How are you", attachments: [] }));
+    await expect(handleIntakeInbound(memory.db, job())).resolves.toMatchObject({ request_id: inboundId });
+    expect(memory.rows("intake_requests")).toHaveLength(1);
+    expect(mocks.gmailDeliver).not.toHaveBeenCalled();
+    expect(memory.rows("intake_conversations")).toEqual([]);
   });
   it("leaves the acknowledgement to preprocessing's readiness check, which may ask too", async () => {
     setup({ payload: slackPayload(), source: "slack" });
@@ -734,7 +875,7 @@ describe("when a message fails for good", () => {
       error: "The request was recorded, but MikeGC couldn't add all of its documents or reply in its thread.",
     });
     await deliverQueued();
-    expect(String(slackReplies.text)).toMatch(/^Logged for Legal: </);
+    expect(String(slackReplies.text)).toMatch(/^Thanks, I.ve passed this to Legal\./);
   });
   it("links the thread before acknowledging, when the job failed before it could", async () => {
     setup({ payload: slackPayload(), source: "slack", model: false });
@@ -747,7 +888,7 @@ describe("when a message fails for good", () => {
     await markIntakeInboundFailed(memory.db, job());
     expect(memory.rows("intake_channel_links")).toHaveLength(1);
     await deliverQueued();
-    expect(String(slackReplies.text)).toMatch(/^Logged for Legal: </);
+    expect(String(slackReplies.text)).toMatch(/^Thanks, I.ve passed this to Legal\./);
   });
   it("releases an email's staged attachments before it settles, so settling can't leave them behind", async () => {
     setup({ payload: emailPayload() });
