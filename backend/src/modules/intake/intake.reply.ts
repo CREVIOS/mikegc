@@ -19,12 +19,14 @@ import {
   updateLinkAddress,
   type ChannelLink,
 } from "./intake.channels";
+import { runIntakeAgent, type AgentField, type AgentRequest } from "./intake.agent";
 import { MAX_CLARIFY_ROUNDS, stableId } from "./intake.clarify";
 import {
   MAX_ATTACHMENT_BYTES,
   cleanText,
   clip,
   replyPayload,
+  type AgentPlan,
   type AttachmentCandidate,
   type ReplyPayload,
   type SkippedAttachment,
@@ -61,21 +63,21 @@ import {
   SKIPPED_REASON,
   loadTriageRules,
   resolveIntakeModel,
-  triageInbound,
-  type InboundMessage,
 } from "./intake.triage";
 
 /**
  * The intake.reply job: a requester's message in a request's thread. It is
  * recorded on the request as a reply, with its files as the request's
- * documents, and when it answers MikeGC's questions, the stage that asked
- * runs again: triage to choose a rule, or the next round of preprocessing's
- * readiness check. An answer to a lawyer's question runs no AI.
+ * documents. An answer to the readiness check's questions runs its next
+ * round. On any other open request the intake agent reads the reply: it
+ * updates the request's details from it and, while the rule is waiting on
+ * the requester, chooses the rule or asks once more.
  */
 
 export const INTAKE_REPLY_JOB = "intake.reply";
 const JOB_ATTEMPTS = 4;
 const BODY_MAX = 20_000;
+const CLOSED_STATES = new Set(["resolved", "cancelled"]);
 
 const jobPayload = z.object({ inboundId: z.uuid(), orgId: z.uuid() });
 
@@ -225,82 +227,154 @@ type ReplyResult = {
   clarify_stopped: boolean;
 };
 
-/**
- * Triage again over the request and its thread, now that the requester has
- * answered: ask once more while a round is left and a rule is still
- * undecided, or settle on the rule (or none) and start its preprocessing.
- */
-async function rerunRule(
+/** The request as the agent reads it, or null once it is gone. */
+async function loadAgentRequest(
   db: Db,
-  settings: AutomationRow,
-  link: ChannelLink,
+  orgId: string,
   reply: ReplyResult,
-) {
+): Promise<AgentRequest | null> {
   const { data, error } = await db
     .from("intake_requests")
-    .select("subject, description, requester_name, requester_email, created_at")
+    .select("subject, description, requested_by_date, state, member_edited_fields")
+    .eq("org_id", orgId)
     .eq("id", reply.request_id)
     .maybeSingle();
   if (error) throw error;
-  if (!data) return;
+  if (!data) return null;
   const request = data as {
     subject: string;
     description: string;
-    requester_name: string;
-    requester_email: string | null;
-    created_at: string;
+    requested_by_date: string | null;
+    state: string;
+    member_edited_fields?: AgentField[] | null;
   };
-  const message: InboundMessage = {
-    source: link.source,
-    sender: { name: request.requester_name, email: request.requester_email },
-    sentAt: new Date(request.created_at),
+  return {
     subject: request.subject,
-    subjectHint: request.subject,
-    text: request.description,
-    candidates: [],
-    skipped: [],
-    thread: await loadThreadEntries(db, link.org_id, reply.request_id),
+    description: request.description,
+    requested_by_date: request.requested_by_date,
+    state: request.state,
+    member_edited_fields: request.member_edited_fields ?? [],
+    ruleUndecided: reply.clarify_stage === "rule",
+    canAsk: !reply.clarify_stopped && reply.clarify_rounds < MAX_CLARIFY_ROUNDS,
   };
-  const [rules, model] = await Promise.all([
-    loadTriageRules(db, link.org_id),
-    resolveIntakeModel(
-      db,
-      link.org_id,
-      settings.configured_by,
-      settings.triage_model,
-    ),
-  ]);
-  const plan = await triageInbound({ message, rules, model });
+}
+
+/**
+ * Change the request's details as the agent planned. A detail a member has
+ * edited since is skipped by the database; details it refuses are dropped,
+ * as the requester's words can't be trusted to fit.
+ */
+async function updateRequest(
+  db: Db,
+  args: {
+    orgId: string;
+    requestId: string;
+    noteId: string;
+    update: NonNullable<AgentPlan["update"]>;
+  },
+): Promise<void> {
+  const updated = await intakeRpc<string[]>(db, "intake_update_automated", {
+    p_org: args.orgId,
+    p_request: args.requestId,
+    p_note: args.noteId,
+    p_subject: args.update.subject,
+    p_description: args.update.description,
+    p_date: args.update.requested_by_date,
+    p_lines: args.update.lines,
+  });
+  if (updated.ok || updated.kind === "not_found") return;
+  if (updated.kind === "validation") {
+    console.warn("[intake-reply] update refused by the database");
+    return;
+  }
+  throw updated.kind === "error" ? updated.error : new Error(updated.detail);
+}
+
+/**
+ * The agent's turn on a reply: plan once, saving the plan with the stage it
+ * was made at, then update the request, and at the rule stage ask once more
+ * or settle on the chosen rule (or none) and start its preprocessing.
+ */
+async function runAgentOnReply(
+  db: Db,
+  args: {
+    row: ReplyRow;
+    settings: AutomationRow;
+    link: ChannelLink;
+    reply: ReplyResult;
+    payload: ReplyPayload;
+    save: () => Promise<void>;
+  },
+): Promise<void> {
+  const { row, settings, link, reply, payload, save } = args;
+  const orgId = link.org_id;
+  const requestId = reply.request_id;
+  if (!payload.agent) {
+    const [request, thread, rules, model] = await Promise.all([
+      loadAgentRequest(db, orgId, reply),
+      loadThreadEntries(db, orgId, requestId),
+      loadTriageRules(db, orgId),
+      resolveIntakeModel(db, orgId, settings.configured_by, settings.triage_model),
+    ]);
+    if (!request) return;
+    payload.agent = await runIntakeAgent({
+      context: { kind: "reply", channel: link.source, request, thread, sentAt: new Date() },
+      rules,
+      model,
+    });
+    payload.agentStage = reply.clarify_stage === "rule" ? "rule" : null;
+    payload.agentRound = reply.clarify_rounds;
+    await save();
+  }
+  const plan = payload.agent;
+  if (plan.update && !payload.updated) {
+    await updateRequest(db, {
+      orgId,
+      requestId,
+      noteId: stableId(`intake.agent.update:${row.id}`),
+      update: plan.update,
+    });
+    payload.updated = true;
+    await save();
+  }
+  if (payload.agentStage !== "rule") return;
+  const round = payload.agentRound ?? 0;
   if (
     plan.questions.length &&
-    !reply.clarify_stopped &&
-    reply.clarify_rounds < MAX_CLARIFY_ROUNDS &&
+    payload.ruleSettled === undefined &&
     (await askRequester(db, {
-      orgId: link.org_id,
-      requestId: reply.request_id,
-      seed: `${reply.request_id}:rule:${reply.clarify_rounds}`,
+      orgId,
+      requestId,
+      seed: `${requestId}:rule:${round}`,
       questions: plan.questions,
       stage: "rule",
       acknowledge: false,
     }))
   )
     return;
-  // Decided, or no rounds left: a request that matches no rule stays unassigned.
-  const settled = await settleClarify(db, {
-    orgId: link.org_id,
-    requestId: reply.request_id,
-    stage: "rule",
-    assign: true,
-    assigneeId: plan.assignee_id,
-  });
-  if (settled && plan.preprocess)
-    await queueIntakePreprocess(db, {
-      orgId: link.org_id,
-      requestId: reply.request_id,
-      with: plan.preprocess.with,
-      condition: plan.preprocess.condition ?? null,
-      round: reply.clarify_rounds,
+  // Decided, or it can't ask again: a request that matches no rule stays unassigned.
+  if (payload.ruleSettled === undefined) {
+    payload.ruleSettled = await settleClarify(db, {
+      orgId,
+      requestId,
+      stage: "rule",
+      assign: true,
+      assigneeId: plan.rule?.assignee_id ?? null,
     });
+    await save();
+  }
+  const preprocess = plan.rule?.preprocess;
+  if (payload.ruleSettled && preprocess && !payload.preprocessQueued) {
+    await queueIntakePreprocess(db, {
+      orgId,
+      requestId,
+      with: preprocess.with,
+      condition: preprocess.condition ?? null,
+      round,
+    });
+    payload.preprocessQueued = true;
+    await save();
+  }
 }
 
 async function processReply(db: Db, row: ReplyRow): Promise<Record<string, unknown>> {
@@ -364,10 +438,13 @@ async function processReply(db: Db, row: ReplyRow): Promise<Record<string, unkno
   }
   if (payload.kind === "teams_reply")
     await updateLinkAddress(db, link, { service_url: payload.service_url });
-  // An answer to MikeGC's question reruns the stage that asked.
-  if (reply.clarify_stage === "rule") await rerunRule(db, settings, link, reply);
-  else if (reply.clarify_stage === "readiness")
+  // An answer to the readiness check's questions runs its next round; on
+  // any other open request, the agent reads the reply. A plan already made
+  // is carried out even if the request has moved on since.
+  if (!payload.agent && reply.clarify_stage === "readiness")
     await queueNextIntakePreprocess(db, row.org_id, reply.request_id);
+  else if (payload.agent || !CLOSED_STATES.has(reply.state))
+    await runAgentOnReply(db, { row, settings, link, reply, payload, save });
   return done({
     request_id: reply.request_id,
     stage: reply.clarify_stage,

@@ -1,6 +1,10 @@
-# Intake agent: one loop for channel messages (design proposal)
+# Intake agent: one loop for channel messages
 
-Status: proposal, not built. Written 2026-11-10.
+Status: built, for Slack, Teams, Gmail and Outlook at once. Proposed
+2026-11-10, built 2026-11-11. [What was built](#what-was-built) records the
+decisions on the open questions and where the build differs from the
+proposal. The code is `backend/src/modules/intake/intake.agent.ts`; the
+behaviour is documented in [Automated intake](intake-automation.md#the-intake-agent).
 
 ## Why
 
@@ -190,12 +194,9 @@ choosing the model.
 
 ## Rollout
 
-1. Build the loop and tools behind an organization setting, off by default,
-   with Slack only.
-2. Run the agent and today's triage side by side in tests, on the existing
-   fixtures, and compare their decisions.
-3. Turn it on for Slack in the dev organization. Then Teams, then email.
-4. Remove the old path once all four channels use the agent.
+The agent replaces the old path for all four channels at once, with no
+organization setting and no Slack-first stage. The existing tests were
+ported to the agent, so the same fixtures check the same decisions.
 
 ## Open questions
 
@@ -208,3 +209,56 @@ choosing the model.
   covers every requester question?
 - **Model choice.** Tool calling needs a model that does it reliably. Should
   the setting only offer such models?
+
+## What was built
+
+Decisions on the open questions:
+
+- **Field-edit tracking.** The activity history doesn't say which details an
+  edit changed, so `intake_requests` has a `member_edited_fields` column.
+  `intake_edit_request` adds each detail a member's edit changes (subject,
+  description, due date), and `intake_update_automated` skips those. A
+  request MikeGC recorded starts with none.
+- **Step limit.** Four.
+- **Readiness.** Unchanged: answers to its questions still go to the
+  readiness check, and the agent doesn't run on them.
+- **Model choice.** The triage model setting still offers every model with
+  a key. The loop asks the provider to keep tool calling
+  (`requireTools`), so a model that can't call tools fails the run and the
+  message is recorded as it arrived.
+
+Where the build differs from the proposal:
+
+- **The plan, not each call, is saved.** The tools don't act. Each one checks
+  its call against the message and the request, answers the model, and adds
+  what it decided to the run's plan. The job saves the plan on the message
+  before doing any of it, then records, links, asks, assigns and updates
+  with the same idempotent steps as before. A retry replays the plan, not
+  the model, so the model's answer can't change between attempts.
+- **Job names stay.** The loop runs inside the `intake.inbound` and
+  `intake.reply` jobs, so jobs queued before a deploy still run. A plan
+  triage saved before the agent replaced it is carried over unchanged.
+- **The tools offered follow the message.** A message with no thread to
+  answer in (Postmark mail, or mail in another request's email thread) gets
+  only `record_request` and `choose_rule`. A reply on a request whose rule is
+  decided gets only `update_request`. Every tool still checks its own limits.
+- **`reply` on a request is questions.** Once a request is recorded, the
+  reply's lines are checked as questions always were (at most 3, one line
+  each, no links, addresses, mentions or markup) and posted with MikeGC's own
+  opening line, in the acknowledgement or as a question.
+- **A message with attachments is recorded before it is answered.** Email
+  attachments aren't kept with a thread that has no request, so `reply` with
+  no request refuses a message that has attachments.
+- **Replies run the agent on any open request**, not only one waiting on rule
+  answers, so a requester's later "we need it by the 14th" updates the due
+  date. Once the rule is decided, the agent can only update.
+- **MikeGC's earlier answers are stored.** For a thread with no request,
+  `intake_conversations.replies` keeps MikeGC's own answers (never the
+  requester's words), so every channel, email included, shows the agent what
+  it already said.
+- **An update's activity entry is a note** by MikeGC naming each change, such
+  as "Updated the due date to 14 Nov 2026 from the requester's reply." It
+  notifies the assignee as any note does.
+- **Chat answers are sent as before.** With no request there is no outbox
+  row, so `sendChatReply` sends the answer once, flagged on the message, as
+  the chat-reply path did.

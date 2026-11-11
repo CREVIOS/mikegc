@@ -10969,6 +10969,11 @@ alter table public.intake_requests add constraint intake_requests_clarify_prepro
 -- The queue's New reply flag: a requester's reply after the request was last opened.
 alter table public.intake_requests add column if not exists last_reply_at timestamptz;
 alter table public.intake_requests add column if not exists reply_seen_at timestamptz;
+-- The details a member has edited, which MikeGC never changes afterwards.
+alter table public.intake_requests add column if not exists member_edited_fields text[] not null default '{}';
+alter table public.intake_requests drop constraint if exists intake_requests_member_edited_fields_check;
+alter table public.intake_requests add constraint intake_requests_member_edited_fields_check
+  check (member_edited_fields <@ array['subject', 'description', 'requested_by_date']::text[]);
 
 alter table public.intake_events add column if not exists automated boolean not null default false;
 -- The resolution reply a "resolved" change sent; its foreign key follows the outbox.
@@ -11354,6 +11359,7 @@ create or replace function public.intake_edit_request(p_org uuid, p_actor uuid, 
   p_requester_team text default null, p_date date default null)
 returns jsonb language plpgsql set search_path = public, pg_temp as $$
 declare r public.intake_requests; input jsonb; replay jsonb; receipt jsonb; extra jsonb; next_state text;
+  edited text[];
 begin
   perform public.intake_lock_org(p_org, p_actor);
   if not public.intake_can_read(p_org, p_actor, p_request) then
@@ -11374,9 +11380,20 @@ begin
   -- to work, as Stop asking does.
   next_state := case when r.clarify_stage is not null and r.state = 'needs_information'
     then case when r.assignee_id is null then 'submitted' else 'in_review' end else r.state end;
+  edited := r.member_edited_fields;
+  if p_subject is distinct from r.subject and not 'subject' = any(edited) then
+    edited := edited || 'subject'::text;
+  end if;
+  if p_description is distinct from r.description and not 'description' = any(edited) then
+    edited := edited || 'description'::text;
+  end if;
+  if p_date is distinct from r.requested_by_date and not 'requested_by_date' = any(edited) then
+    edited := edited || 'requested_by_date'::text;
+  end if;
   update public.intake_requests set subject = p_subject, description = p_description,
     requester_name = p_requester_name, requester_email = p_requester_email, requester_team = p_requester_team,
     requested_by_date = p_date, clarify_stage = null, clarify_stopped = true, state = next_state,
+    member_edited_fields = edited,
     reply_seen_at = case when last_reply_at is null then reply_seen_at else now() end,
     version = version + 1, updated_at = now()
     where id = p_request;
@@ -12063,6 +12080,12 @@ create table if not exists public.intake_conversations (
   updated_at timestamptz not null default now(),
   primary key (org_id, source, thread_key)
 );
+-- MikeGC's own answers there, oldest first, so the next message in the
+-- thread is read with them. Only MikeGC's words are kept here.
+alter table public.intake_conversations add column if not exists replies jsonb not null default '[]'::jsonb;
+alter table public.intake_conversations drop constraint if exists intake_conversations_replies_check;
+alter table public.intake_conversations add constraint intake_conversations_replies_check
+  check (jsonb_typeof(replies) = 'array' and octet_length(replies::text) <= 20000);
 
 -- An email's attachments wait in storage until it is handled. A message
 -- deleted first, including by an intake purge or an organization's purge,
@@ -12373,6 +12396,66 @@ begin
       values(p_org, p_request, null, 'resume', r.state, next_state, next_assignee, true);
   end if;
   return true;
+end $$;
+
+-- MikeGC changes an open request's subject, description or due date from
+-- what the requester wrote, skipping any detail a member has edited, and
+-- says so in a note. p_lines names each change for the note, by field. The
+-- caller names the note, so a retry adds nothing. Returns the fields changed.
+create or replace function public.intake_update_automated(p_org uuid, p_request uuid, p_note uuid,
+  p_subject text default null, p_description text default null, p_date date default null,
+  p_lines jsonb default '{}'::jsonb)
+returns text[] language plpgsql set search_path = public, pg_temp as $$
+declare r public.intake_requests; applied text[] := '{}'; lines text[] := '{}'; field text; said text;
+  next_subject text; next_description text; next_date date;
+begin
+  perform 1 from public.organizations where id = p_org and kind in ('team', 'personal')
+    and deleted_at is null for update;
+  if not found then raise exception 'Intake not found' using errcode = 'P0002'; end if;
+  select * into r from public.intake_requests where org_id = p_org and id = p_request for update;
+  if not found then raise exception 'Request not found' using errcode = 'P0002'; end if;
+  if p_note is null or p_lines is null or jsonb_typeof(p_lines) <> 'object' then
+    raise exception 'Invalid update' using errcode = '22023';
+  end if;
+  if exists(select 1 from public.intake_messages where id = p_note) then return applied; end if;
+  if r.state in ('resolved', 'cancelled') then return applied; end if;
+  next_subject := r.subject;
+  next_description := r.description;
+  next_date := r.requested_by_date;
+  if p_subject is not null and p_subject is distinct from r.subject
+      and not 'subject' = any(r.member_edited_fields) then
+    next_subject := p_subject;
+    applied := applied || 'subject'::text;
+  end if;
+  if p_description is not null and p_description is distinct from r.description
+      and not 'description' = any(r.member_edited_fields) then
+    next_description := p_description;
+    applied := applied || 'description'::text;
+  end if;
+  if p_date is not null and p_date is distinct from r.requested_by_date
+      and not 'requested_by_date' = any(r.member_edited_fields) then
+    next_date := p_date;
+    applied := applied || 'requested_by_date'::text;
+  end if;
+  if cardinality(applied) = 0 then return applied; end if;
+  perform public.intake_check_details(next_subject, next_description, r.requester_name,
+    r.requester_email, r.requester_team);
+  foreach field in array applied loop
+    said := btrim(coalesce(p_lines->>field, ''));
+    if said <> '' then lines := lines || left(said, 400); end if;
+  end loop;
+  said := case cardinality(lines)
+    when 0 then 'the details'
+    when 1 then lines[1]
+    when 2 then lines[1] || ' and ' || lines[2]
+    else lines[1] || ', ' || lines[2] || ' and ' || lines[3] end;
+  update public.intake_requests set subject = next_subject, description = next_description,
+    requested_by_date = next_date, version = version + 1, updated_at = now()
+    where id = p_request;
+  insert into public.intake_messages(id, org_id, request_id, author_id, kind, body, automated)
+    values(p_note, p_org, p_request, null, 'note',
+      'Updated ' || said || ' from the requester''s reply.', true);
+  return applied;
 end $$;
 
 -- A requester's message in a request's thread, recorded once as a reply. An
@@ -12927,5 +13010,6 @@ insert into public.schema_migrations (filename) values
   ('20261104_07_intake_delivery_message.sql'),
   ('20261104_08_intake_notifications.sql'),
   ('20261110_01_intake_conversations.sql'),
-  ('20261110_02_intake_conversations_email.sql')
+  ('20261110_02_intake_conversations_email.sql'),
+  ('20261111_01_intake_agent.sql')
 on conflict (filename) do nothing;

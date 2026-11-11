@@ -435,6 +435,11 @@ Apply migrations before starting the new application build:
   the `intake_notifications` table, the triggers on `intake_events`,
   `intake_messages` and `org_members` that write and clear it, and
   `intake_claim_notifications` and `intake_expire_notifications`.
+- `20261111_01_intake_agent.sql` adds what the
+  [intake agent](intake-automation.md#the-intake-agent) needs: the details a
+  member has edited (`member_edited_fields`, which MikeGC never changes),
+  `intake_update_automated`, and MikeGC's own answers in a thread with no
+  request (`intake_conversations.replies`).
 
 Use the existing migration runner documented in [deployment.md](deployment.md).
 Do not replay historical migrations over a fresh schema. Fresh installations use
