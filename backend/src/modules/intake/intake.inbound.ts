@@ -8,7 +8,7 @@ import {
 } from "../../lib/serviceResult";
 import type { Db } from "../../lib/supabase";
 import { dispatchIntakeInbound } from "./intake.automationJob";
-import { findThreadLink, routeThreadMessage } from "./intake.channels";
+import { findConversation, findThreadLink, routeThreadMessage } from "./intake.channels";
 import {
   MAX_MESSAGE_CHARS,
   cleanText,
@@ -268,6 +268,9 @@ export async function receiveSlackEvent(
   const team = envelope.data.team_id ?? settings.slack_team_id ?? "";
   const externalId = `${message.channel}:${message.ts}`;
   const inThread = !!message.thread_ts && message.thread_ts !== message.ts;
+  // A thread where MikeGC answered without recording a request: replies
+  // there reach it without a mention.
+  let conversing = false;
   if (inThread) {
     let link;
     try {
@@ -300,9 +303,21 @@ export async function receiveSlackEvent(
       });
       return routed.ok ? ok({}) : routed;
     }
+    if (message.type === "message") {
+      try {
+        conversing = !!(await findConversation(
+          db,
+          settings.org_id,
+          "slack",
+          `${team}:${message.channel}:${message.thread_ts}`,
+        ));
+      } catch (error) {
+        return internalFailure(error);
+      }
+    }
   }
-  // Only a mention of MikeGC starts a request.
-  if (message.type !== "app_mention") return ok({});
+  // Only a mention of MikeGC starts a request, or a reply in its conversation.
+  if (message.type !== "app_mention" && !conversing) return ok({});
   const payload: SlackInboundPayload = {
     kind: "slack",
     team_id: team || null,
@@ -395,7 +410,16 @@ export async function receiveTeamsActivity(
     });
     return routed.ok ? ok({ status: routed.data }) : routed;
   }
-  if (!teamsMentionsBot(activity, settings.teams_app_id)) return ok({ status: "ignored" });
+  if (!teamsMentionsBot(activity, settings.teams_app_id)) {
+    // Unless MikeGC answered in this thread without recording a request.
+    let conversing;
+    try {
+      conversing = await findConversation(db, settings.org_id, "teams", `${tenant}:${conversationId}`);
+    } catch (error) {
+      return internalFailure(error);
+    }
+    if (!conversing) return ok({ status: "ignored" });
+  }
   const channelData = activity.channelData ?? {};
   const payload: TeamsInboundPayload = {
     kind: "teams",

@@ -76,6 +76,11 @@ export const triagePlan = z.object({
   candidates: z.array(candidate),
   /** Whether a model shaped the request, or the safe defaults did. */
   triaged: z.boolean(),
+  /**
+   * MikeGC's own answer in a chat, when triage found no request to record
+   * (a greeting, or a question about how to reach Legal). Null records it.
+   */
+  reply: z.string().nullable().default(null),
 });
 export type TriagePlan = z.infer<typeof triagePlan>;
 
@@ -95,6 +100,8 @@ const progress = {
    * the request is deleted, and this tells that apart from never recorded.
    */
   recorded: z.boolean().optional(),
+  /** Set once MikeGC answered in the chat instead of recording a request. */
+  conversed: z.boolean().optional(),
   /** Set once the Slack thread had MikeGC's answer, before the outbox. */
   replied: z.boolean().optional(),
   /** Set once the request is linked to its thread. */

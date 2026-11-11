@@ -25,6 +25,12 @@ interface ModalProps {
     disabled?: boolean;
     icon?: ReactNode;
   };
+  /** Back to the previous screen: a black pill, first at the footer's left. */
+  backAction?: {
+    label?: string;
+    onClick: () => void;
+    disabled?: boolean;
+  };
   className?: string;
 }
 
@@ -36,6 +42,7 @@ export function Modal({
   children,
   primaryAction,
   secondaryAction,
+  backAction,
   className,
 }: ModalProps): React.ReactElement | null {
   return (
@@ -46,6 +53,18 @@ export function Modal({
       ariaLabel={title}
       size="md"
       className={cn("h-[min(600px,calc(100vh-2rem))]", className)}
+      backAction={
+        backAction ? (
+          <PillButton
+            tone="black"
+            size="normal"
+            onClick={backAction.onClick}
+            disabled={backAction.disabled}
+          >
+            {backAction.label ?? "Back"}
+          </PillButton>
+        ) : undefined
+      }
       secondaryAction={
         secondaryAction ? (
           <PillButton
@@ -62,7 +81,8 @@ export function Modal({
       primaryAction={
         primaryAction ? (
           <PillButton
-            tone={primaryAction.tone ?? "black"}
+            // Blue, as in the web app; red when it destroys something.
+            tone={primaryAction.tone ?? "blue"}
             size="normal"
             onClick={primaryAction.onClick}
             disabled={primaryAction.disabled}

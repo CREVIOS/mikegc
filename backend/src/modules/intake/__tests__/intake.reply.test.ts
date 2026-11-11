@@ -235,14 +235,14 @@ describe("a requester's reply in the thread", () => {
       request_id: requestId,
       kind: "question",
       automated: true,
-      body: "Before Legal starts, MikeGC needs:\n1. Is Acme a customer or a supplier?",
+      body: "One quick question so it gets to the right person:\nIs Acme a customer or a supplier?",
       created_at: "2026-11-02T09:15:00.000Z",
     });
     mocks.completeText.mockResolvedValue(JSON.stringify({ subject: "x", rule: 1, questions: [] }));
     await handleIntakeReply(memory.db, job());
     const prompt = mocks.completeText.mock.calls[0]![0].user as string;
     expect(prompt).toContain("--- Thread after the request ---");
-    expect(prompt).toContain("MikeGC, 2 Nov 2026, 09:15 UTC:\nBefore Legal starts, MikeGC needs:");
+    expect(prompt).toContain("MikeGC, 2 Nov 2026, 09:15 UTC:\nOne quick question so it gets to the right person:");
     expect(prompt).toContain("Jane Business (requester)");
     expect(prompt).toContain("Acme is a customer.");
     expect(request()).toMatchObject({ clarify_stage: null, assignee_id: sam, state: "in_review" });

@@ -22,7 +22,12 @@ import {
     setProjectMemoryEnabled,
     updateProjectMemory,
 } from "@/app/lib/mikeApi";
-import { userFacingApiError } from "@/app/lib/userFacingError";
+import { useLatestRef } from "@/app/hooks/useLatestRef";
+import {
+    UserVisibleError,
+    notifyError,
+    userFacingApiError,
+} from "@/app/lib/userFacingError";
 
 export function ProjectMemoryModal({
     open,
@@ -105,6 +110,34 @@ export function ProjectMemoryModal({
             "Project memory was turned off while you were editing, so your changes were not saved.",
         onCurrentChange: handleCurrentChange,
     });
+
+    // Failures are notices, never footer text. The controller keeps both
+    // states, which closing still reads; each new one raises a notice.
+    useEffect(() => {
+        if (!open || !error) return;
+        notifyError(new UserVisibleError(error, { kind: "conflict" }), {
+            action: "update project memory",
+            dedupeKey: `project-memory:${projectId}`,
+        });
+    }, [open, error, projectId]);
+    const retryAutosave = useLatestRef(() => {
+        setAutosaveError(null);
+        autosave.retry();
+    });
+    useEffect(() => {
+        if (!open || !autosaveError) return;
+        notifyError(
+            new UserVisibleError(autosaveError, {
+                kind: "conflict",
+                retryable: true,
+            }),
+            {
+                action: "save project memory",
+                onRetry: () => retryAutosave.current(),
+                dedupeKey: `project-memory-autosave:${projectId}`,
+            },
+        );
+    }, [open, autosaveError, projectId, retryAutosave]);
 
     useEffect(() => {
         if (!open) {
@@ -191,18 +224,12 @@ export function ProjectMemoryModal({
                 ) : undefined
             }
             footerStatus={
-                error ? (
-                    <span className="text-sm text-red-600" role="alert">
-                        {error}
-                    </span>
-                ) : autosaveError || autosave.status !== "idle" ? (
+                // Only progress here: a failed save is a notice with Retry.
+                !error && !autosaveError && autosave.status !== "idle" ? (
                     <MemorySaveStatus
-                        error={autosaveError}
+                        error={null}
                         status={autosave.status}
-                        onRetry={() => {
-                            setAutosaveError(null);
-                            autosave.retry();
-                        }}
+                        onRetry={() => retryAutosave.current()}
                     />
                 ) : savedNotice ? (
                     <span className="text-sm text-gray-400" role="status">

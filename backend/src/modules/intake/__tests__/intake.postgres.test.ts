@@ -1328,7 +1328,7 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
   const ask = (n: number, stage = "rule", request = 21, acknowledge = false) =>
     sql(
       `select public.intake_ask_automated(${q(10)},${q(request)},${q(n)},${q(n + 1)},` +
-        `'Before Legal starts, MikeGC needs:\n1. Is Acme a customer or a supplier?','${stage}',${acknowledge})`,
+        `'One quick question so it gets to the right person:\nIs Acme a customer or a supplier?','${stage}',${acknowledge})`,
     );
   const reply = (inboundId: number, message: number, request = 21, body = "Acme is a customer.") => {
     sql(`insert into public.intake_inbound(id,org_id,source,kind,external_id,payload,request_id)

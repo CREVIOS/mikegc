@@ -3405,15 +3405,16 @@ describe("requester loop", () => {
     ]);
   });
 
-  it("names an email thread's recipients, each on its own line", async () => {
+  it("names an email thread's provider alone, without its addresses", async () => {
     mocks.request.mockResolvedValue(threaded({ conversation: gmail }));
     render(detail());
     const details = await screen.findByRole("complementary", {
       name: "Details",
     });
-    expect(details).toHaveTextContent("Gmail email from intake@acme.test");
-    expect(within(details).getByText("To ana@acme.test")).toBeInTheDocument();
-    expect(within(details).getByText("Cc ben@acme.test")).toBeInTheDocument();
+    expect(details).toHaveTextContent("ConversationGmail");
+    expect(details).not.toHaveTextContent("intake@acme.test");
+    expect(details).not.toHaveTextContent("ana@acme.test");
+    expect(details).not.toHaveTextContent("ben@acme.test");
   });
 
   it("clears the New reply flag once Messages is opened to show the reply", async () => {

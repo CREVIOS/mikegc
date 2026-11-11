@@ -434,6 +434,24 @@ keep their own spacing and should not receive this attribute.
 For a real standalone checkbox use `<input type="checkbox">` with
 `TABLE_CHECKBOX_CLASS` (see `TablePrimitive.tsx`), not `check-square`.
 
+### Modal footers
+
+Every modal's footer follows one layout, which `Modal` (and the Word
+add-in's `Modal` primitive) draws from its action props:
+
+- **Primary action, at the right:** `primaryAction`, a blue pill. Use
+  `variant: "danger"` for one that destroys something (red).
+- **Back, at the left:** `backAction`, a black pill, always first at the
+  footer's left. Every "Back" (to a previous step, screen, help page or
+  preview) goes here, never in `primaryAction`, `secondaryAction` or
+  `cancelAction`. A dialog whose Back closes it has no separate Cancel.
+- **Other actions:** `secondaryAction` (such as Upload) sits after Back at
+  the left; `cancelAction` (Cancel, Skip) is grey text just before the
+  primary action.
+- **No warnings in the footer.** `footerStatus` is only for progress and
+  quiet confirmations ("Saving…", "Updated", "Checking whether it was
+  saved."). A failure is a notice; see below.
+
 ## Reporting failures
 
 Every failure that stops something the user asked for must be shown to them,
@@ -451,7 +469,12 @@ goes in it and when.
    users and is shown; 5xx bodies and stack text never are.
 2. **Show it in the right place.**
    - A form field the user is editing: inline text next to the field, using
-     the description's `message`.
+     the description's `message`, for what the page itself can check (an
+     empty name, a domain that isn't one).
+   - A modal's save, connect or other request the server refused, even with
+     a validation reply such as "Microsoft couldn't find that mailbox. Check
+     the intake address.": a notice, as below, never text in the modal's
+     footer. The modal stays open with what was typed, to fix it.
    - Anything else (saves, deletes, loads, exports, background refreshes):
      `notifyError(error, { action, onRetry, dedupeKey })`. `AppToasts` draws
      it as a `WarningPopup` with "Retry" (only when the failure is retryable

@@ -8,6 +8,7 @@ import {
   headerValue,
   htmlToText,
   mailAddress,
+  mailHtml,
   normalizeMessageId,
   parseMailbox,
   addressList,
@@ -417,6 +418,8 @@ export async function buildMime(args: {
       ...(args.autoSubmitted ? { "Auto-Submitted": "auto-generated" } : {}),
     },
     text: args.text,
+    // Mail apps reflow HTML; some show plain text at a fixed width.
+    html: mailHtml(args.text),
     attachments: args.attachments,
   });
   return new Promise((resolve, reject) =>
@@ -500,17 +503,23 @@ export const gmailAdapter: ChannelAdapter = {
     const address = mailbox.address;
     try {
       const thread = mailAddress(link);
-      const { data: ids, error } = await ctx.db
-        .from("intake_email_message_ids")
-        .select("message_id, created_at")
-        .eq("link_id", link.id)
-        .order("created_at", { ascending: false })
-        .limit(20);
-      if (error) throw error;
-      const references = ((ids ?? []) as { message_id: string }[])
-        .map((r) => r.message_id)
-        .filter((id) => !id.startsWith("sha256:"))
-        .reverse();
+      let recorded: { message_id: string }[] = [];
+      if (link.id) {
+        const { data: ids, error } = await ctx.db
+          .from("intake_email_message_ids")
+          .select("message_id, created_at")
+          .eq("link_id", link.id)
+          .order("created_at", { ascending: false })
+          .limit(20);
+        if (error) throw error;
+        recorded = (ids ?? []) as { message_id: string }[];
+      }
+      // Recorded IDs are stored bare; a message's own may still be in <>.
+      const references = (
+        recorded.length
+          ? recorded.map((r) => r.message_id).reverse()
+          : (thread.references ?? []).map((id) => normalizeMessageId(id) ?? "")
+      ).filter((id) => id && !id.startsWith("sha256:"));
       const documents = message.documents.map((d) => ({ ...d }));
       const { attached, tooLarge } = fitAttachments(documents, thread.max_attachment_bytes, encodedSize);
       const files = [];

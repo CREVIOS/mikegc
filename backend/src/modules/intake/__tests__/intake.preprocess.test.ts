@@ -388,7 +388,7 @@ describe("checking what preprocessing needs first", () => {
     expect(memory.rows("intake_messages")).toEqual([
       expect.objectContaining({
         kind: "question",
-        body: "Before Legal starts, MikeGC needs:\n1. Which entity is signing for us?",
+        body: "One thing Legal will need before they start:\nWhich entity is signing for us?",
       }),
     ]);
     expect(memory.rows("intake_outbound")).toEqual([expect.objectContaining({ kind: "acknowledgement" })]);

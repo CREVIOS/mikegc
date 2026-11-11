@@ -307,7 +307,7 @@ function WorkflowAddonPreviewDialog({
         disabled: importing,
         onClick: () => void onImport(addon),
       }}
-      secondaryAction={
+      backAction={
         selectedAsset
           ? {
               label: "Back",

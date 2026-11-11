@@ -577,8 +577,8 @@ function ClarifyNotice({
 
 /**
  * The thread the request came from, where messages to the requester go: a
- * Slack or Teams channel with a link to the thread, or the email's
- * recipients, each on its own line.
+ * Slack or Teams channel with a link to the thread, or for email just
+ * Gmail or Outlook.
  */
 function ConversationFact({
   conversation,
@@ -590,22 +590,7 @@ function ConversationFact({
   if (isEmailConversation(conversation))
     return (
       <Fact label="Conversation">
-        <span className="block">
-          {INTAKE_CHANNEL_LABELS[conversation.source]} email
-          {conversation.mailbox && (
-            <span className="text-gray-500"> from {conversation.mailbox}</span>
-          )}
-        </span>
-        {conversation.to.length > 0 && (
-          <span className="block text-xs text-gray-500">
-            To {conversation.to.join(", ")}
-          </span>
-        )}
-        {conversation.cc.length > 0 && (
-          <span className="block text-xs text-gray-500">
-            Cc {conversation.cc.join(", ")}
-          </span>
-        )}
+        {INTAKE_CHANNEL_LABELS[conversation.source]}
       </Fact>
     );
   const name =

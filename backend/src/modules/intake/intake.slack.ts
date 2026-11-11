@@ -1,6 +1,8 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import {
+  acknowledgementLines,
   ChannelDeliveryError,
+  DOCUMENTS_ONLY_TEXT,
   memberSender,
   type ChannelAdapter,
   type ChannelLink,
@@ -605,20 +607,10 @@ export function slackMessageText(
   message: OutboundMessage,
   options: { fromName: string; customize: boolean },
 ): string {
-  const lines: string[] = [];
-  if (message.acknowledgement) {
-    const ack = message.acknowledgement;
-    lines.push(
-      `Logged for Legal: <${ack.link}|${slackEscape(ack.subject)}>. ` +
-        (ack.assignee
-          ? `Assigned to ${slackEscape(ack.assignee)}.`
-          : "Not assigned to a reviewer yet."),
-    );
-    if (message.text) lines.push("", slackEscape(message.text));
-    return lines.join("\n");
-  }
+  if (message.acknowledgement)
+    return acknowledgementLines(message.acknowledgement, message.text, slackEscape).join("\n");
   const text = slackEscape(
-    message.text || (message.documents.length ? "Legal sent these documents." : ""),
+    message.text || (message.documents.length ? DOCUMENTS_ONLY_TEXT : ""),
   );
   if (message.author.kind === "member" && !options.customize) {
     const who = slackEscape(memberSender(message.author.name, options.fromName));

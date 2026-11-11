@@ -340,6 +340,11 @@ export type MailAddress = {
   /** The provider's thread handle: Outlook's conversationId or Gmail's threadId. */
   thread: string;
   max_attachment_bytes: number;
+  /**
+   * Message-IDs to reply to when the thread has none recorded, as when
+   * MikeGC answers a message without recording a request.
+   */
+  references?: string[];
 };
 
 /** The thread a new email starts: replies go to its sender, cc the others accepted. */
@@ -389,6 +394,8 @@ export async function recordEmailMessageIds(
   linkId: string,
   ids: string[],
 ): Promise<void> {
+  // An answer that records no request has no link to remember them by.
+  if (!linkId) return;
   const rows = ids
     .map((id) => normalizeMessageId(id))
     .filter((id): id is string => !!id)
@@ -448,9 +455,37 @@ export function replySubject(subject: string): string {
   return /^re:/i.test(clean) ? clean.slice(0, 900) : `Re: ${clean}`.slice(0, 900);
 }
 
+const HTML_ESCAPES: Record<string, string> = {
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+  "'": "&#39;",
+};
+
+/**
+ * The HTML version of an email's plain text, sent beside it: paragraphs at
+ * blank lines and line breaks kept, so every mail app reflows the text to
+ * its window. Some show plain text at a fixed width, which breaks MikeGC's
+ * sentences mid-line. Everything is escaped: it is text, never markup.
+ */
+export function mailHtml(text: string): string {
+  const paragraphs = text
+    .replace(/\r\n?/g, "\n")
+    .split(/\n{2,}/)
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .map(
+      (p) =>
+        `<p style="margin:0 0 1em">${p
+          .replace(/[&<>"']/g, (c) => HTML_ESCAPES[c]!)
+          .replace(/\n/g, "<br>")}</p>`,
+    );
+  return `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;font-size:14px;line-height:1.5">${paragraphs.join("")}</div>`;
+}
+
 /** The line every email from MikeGC ends with. */
-export const MAIL_FOOTER =
-  "Reply to this email to answer. Your reply goes to the Legal team's request.";
+export const MAIL_FOOTER = "Just reply to this email and Legal will see your answer.";
 
 /**
  * The documents that fit in one email, in the order they were ticked, and

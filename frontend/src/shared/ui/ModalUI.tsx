@@ -25,6 +25,8 @@ export interface ModalUIProps {
     primaryAction?: ReactNode;
     secondaryAction?: ReactNode;
     cancelAction?: ReactNode;
+    /** Back to the previous step or screen: always first at the footer's left. */
+    backAction?: ReactNode;
     keepMounted?: boolean;
 }
 
@@ -48,6 +50,7 @@ export function ModalUI({
     primaryAction,
     secondaryAction,
     cancelAction,
+    backAction,
     keepMounted = false,
 }: ModalUIProps) {
     const [hasMounted, setHasMounted] = useState(false);
@@ -132,8 +135,13 @@ export function ModalUI({
 
     const hasHeader = Boolean(breadcrumbs?.length);
     const hasFooter = Boolean(
-        footerStatus || primaryAction || secondaryAction || cancelAction,
+        footerStatus ||
+            primaryAction ||
+            secondaryAction ||
+            cancelAction ||
+            backAction,
     );
+    const hasLeading = Boolean(backAction || secondaryAction);
 
     return createPortal(
         <div
@@ -184,10 +192,11 @@ export function ModalUI({
 
                 {hasFooter && (
                     <footer
-                        className={`flex items-center gap-3 border-t border-white/60 p-3 ${secondaryAction ? "justify-between" : "justify-end"}`}
+                        className={`flex items-center gap-3 border-t border-white/60 p-3 ${hasLeading ? "justify-between" : "justify-end"}`}
                     >
-                        {secondaryAction && (
+                        {hasLeading && (
                             <div className="flex min-w-0 items-center gap-2">
+                                {backAction}
                                 {secondaryAction}
                             </div>
                         )}
