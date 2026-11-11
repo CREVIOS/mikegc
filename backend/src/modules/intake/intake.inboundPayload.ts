@@ -41,9 +41,71 @@ const candidate = z.object({
 });
 export type AttachmentCandidate = z.infer<typeof candidate>;
 
+/** A rule's preprocessing: the workflow or playbook to follow, and its condition. */
+const preprocessPlan = z.object({
+  with: z
+    .object({ kind: z.enum(["workflow", "playbook"]), id: z.string() })
+    .nullable(),
+  /** The rule's condition, which the readiness check reads. */
+  condition: z.string().nullable().default(null),
+});
+
 /**
- * The request triage decided on, saved before it is recorded so a retry
- * records the same request without asking the model again.
+ * What the intake agent decided for one message, saved before any of it is
+ * done so a retry does the same without asking the model again. Every value
+ * here was checked by the tool that set it.
+ */
+export const agentPlan = z.object({
+  /** Whether a model shaped the plan, or the safe defaults did. */
+  agent: z.boolean(),
+  /** MikeGC's answer in a thread with no request; nothing is recorded. */
+  reply: z.string().nullable().default(null),
+  /** MikeGC's questions on the request, so its rule can be chosen. */
+  questions: z.array(z.string()).default([]),
+  /** The request to record, for a message that has none yet. */
+  record: z
+    .object({
+      subject: z.string(),
+      description: z.string(),
+      requester_name: z.string(),
+      requester_email: z.string().nullable(),
+      requested_by_date: z.string().nullable(),
+      /** Indexes into `candidates` of the attachments to add. */
+      attachments: z.array(z.number().int().nonnegative()),
+    })
+    .nullable()
+    .default(null),
+  /**
+   * The rule chosen, once decided: its member (null when no rule fits) and
+   * its preprocessing. Null while the rule is undecided.
+   */
+  rule: z
+    .object({
+      assignee_id: z.string().nullable(),
+      preprocess: preprocessPlan.nullable(),
+    })
+    .nullable()
+    .default(null),
+  /**
+   * Details to change on the request a reply is about, each with the words
+   * MikeGC's note uses for it, by field.
+   */
+  update: z
+    .object({
+      subject: z.string().nullable(),
+      description: z.string().nullable(),
+      requested_by_date: z.string().nullable(),
+      lines: z.record(z.string(), z.string()),
+    })
+    .nullable()
+    .default(null),
+  candidates: z.array(candidate).default([]),
+});
+export type AgentPlan = z.infer<typeof agentPlan>;
+
+/**
+ * The plan triage saved before the intake agent replaced it, read only so a
+ * message in flight across the change finishes as it began.
  */
 export const triagePlan = z.object({
   subject: z.string(),
@@ -56,30 +118,13 @@ export const triagePlan = z.object({
    * AI preprocessing, when the rule that assigned the request asks for it,
    * with the workflow or playbook to follow, if any.
    */
-  preprocess: z
-    .object({
-      with: z
-        .object({ kind: z.enum(["workflow", "playbook"]), id: z.string() })
-        .nullable(),
-      /** The rule's condition, which the readiness check reads. */
-      condition: z.string().nullable().default(null),
-    })
-    .nullable()
-    .default(null),
-  /**
-   * What MikeGC asks the requester before choosing a rule. With questions,
-   * the request is recorded unassigned and waits on the requester.
-   */
+  preprocess: preprocessPlan.nullable().default(null),
+  /** Questions to choose a rule; with them, the request waits unassigned. */
   questions: z.array(z.string()).default([]),
-  /** Indexes into `candidates` of the attachments to add. */
   attachments: z.array(z.number().int().nonnegative()),
   candidates: z.array(candidate),
-  /** Whether a model shaped the request, or the safe defaults did. */
   triaged: z.boolean(),
-  /**
-   * MikeGC's own answer in a chat, when triage found no request to record
-   * (a greeting, or a question about how to reach Legal). Null records it.
-   */
+  /** An answer in a chat instead of a request. */
   reply: z.string().nullable().default(null),
 });
 export type TriagePlan = z.infer<typeof triagePlan>;
@@ -93,6 +138,8 @@ const documentEntry = z.object({
 export type DocumentEntry = z.infer<typeof documentEntry>;
 
 const progress = {
+  agent: agentPlan.optional(),
+  /** A triage plan saved before the agent; see `triagePlan`. */
   plan: triagePlan.optional(),
   documents: z.record(z.string(), documentEntry).optional(),
   /**
@@ -250,6 +297,19 @@ const replyProgress = {
   documents: z.record(z.string(), documentEntry).optional(),
   /** Set once the reply is on the request. */
   recorded: z.boolean().optional(),
+  /**
+   * The agent's plan for the reply, with the request as the agent read it:
+   * whether its rule was undecided, and MikeGC's rounds of questions so far.
+   */
+  agent: agentPlan.optional(),
+  agentStage: z.enum(["rule"]).nullable().optional(),
+  agentRound: z.number().int().nonnegative().optional(),
+  /** Set once the plan's changes to the request's details are made. */
+  updated: z.boolean().optional(),
+  /** Set once the rule stage is settled: true when it was still waiting. */
+  ruleSettled: z.boolean().optional(),
+  /** Set once the chosen rule's preprocessing is queued. */
+  preprocessQueued: z.boolean().optional(),
 };
 
 /** A requester's message in a linked Slack thread: read from Slack when handled. */

@@ -6,10 +6,11 @@ import { parseModelJson } from "./intake.shared";
 import type { TriageModel } from "./intake.triage";
 
 /**
- * MikeGC's clarifying questions to the requester. Two stages ask: triage,
- * when it can't choose a rule without a fact the message doesn't state, and
- * the readiness check before preprocessing, when the rule's playbook or
- * workflow needs something the request lacks. Both answer with questions in
+ * MikeGC's clarifying questions to the requester. Two stages ask: the
+ * intake agent, when it can't choose a rule without a fact the message
+ * doesn't state, and the readiness check before preprocessing, when the
+ * rule's playbook or workflow needs something the request lacks. Both end in
+ * questions in
  * the same shape, which is checked here before anything is posted: the
  * thread is untrusted, and the questions go to people in the business.
  */
@@ -42,6 +43,16 @@ const MENTION_LIKE = /<[@#!]|<\/?at\b|@(?:here|channel|everyone|all)\b/i;
 /** HTML or Slack angle brackets, Markdown links, code, emphasis or headings. */
 const MARKUP_LIKE = /[<>`]|\]\(|\*\*|__|~~|^\s*#|&#?[a-z0-9]+;/i;
 
+/** Whether text has a link, an email address, a mention or markup, which MikeGC never posts. */
+export function hasUnsafeContent(text: string): boolean {
+  return (
+    URL_LIKE.test(text) ||
+    EMAIL_LIKE.test(text) ||
+    MENTION_LIKE.test(text) ||
+    MARKUP_LIKE.test(text)
+  );
+}
+
 /**
  * The questions it is safe to post: at most three, each one line of at most
  * 300 characters, none with a link, an email address, a mention or markup.
@@ -56,13 +67,7 @@ export function sanitizeQuestions(value: unknown): string[] {
     if (/[\u0000-\u001f\u007f\u2028\u2029]/.test(item.trim())) continue;
     const question = item.replace(/\s+/g, " ").trim().replace(/^\d+[.)]\s*/, "");
     if (!question || question.length > QUESTION_MAX) continue;
-    if (
-      URL_LIKE.test(question) ||
-      EMAIL_LIKE.test(question) ||
-      MENTION_LIKE.test(question) ||
-      MARKUP_LIKE.test(question)
-    )
-      continue;
+    if (hasUnsafeContent(question)) continue;
     if (questions.some((q) => q.toLowerCase() === question.toLowerCase())) continue;
     questions.push(question);
     if (questions.length === MAX_QUESTIONS) break;

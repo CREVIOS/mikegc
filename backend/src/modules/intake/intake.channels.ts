@@ -327,46 +327,64 @@ export async function routeThreadMessage(
 /** Where MikeGC can answer instead of recording: chats and email threads. */
 export type ConversationSource = "slack" | "teams" | "gmail" | "outlook";
 
+/** One of MikeGC's answers in a thread with no request, as it was sent. */
+export type ConversationReply = { at: string; text: string };
+/** Answers kept per thread; MikeGC records the next message after a few. */
+const KEPT_REPLIES = 5;
+
 /**
  * A chat or email thread where MikeGC answered instead of recording a
- * request: how many times it has answered there, or null when it never has.
+ * request: how many times it has answered there and what it said, or null
+ * when it never has.
  */
 export async function findConversation(
   db: Db,
   orgId: string,
   source: ConversationSource,
   threadKey: string,
-): Promise<{ rounds: number } | null> {
+): Promise<{ rounds: number; replies: ConversationReply[] } | null> {
   const { data, error } = await db
     .from("intake_conversations")
-    .select("rounds")
+    .select("rounds, replies")
     .eq("org_id", orgId)
     .eq("source", source)
     .eq("thread_key", threadKey)
     .maybeSingle();
   if (error) throw error;
-  return (data as { rounds: number } | null) ?? null;
+  if (!data) return null;
+  const row = data as { rounds: number; replies?: unknown };
+  const replies = (Array.isArray(row.replies) ? row.replies : []).filter(
+    (r): r is ConversationReply =>
+      !!r && typeof (r as ConversationReply).at === "string" && typeof (r as ConversationReply).text === "string",
+  );
+  return { rounds: row.rounds, replies };
 }
 
-/** Count one more of MikeGC's answers in a chat or email thread. */
+/** Count one more of MikeGC's answers in a chat or email thread, keeping what it said. */
 export async function rememberConversation(
   db: Db,
   orgId: string,
   source: ConversationSource,
   threadKey: string,
+  reply: ConversationReply,
 ): Promise<void> {
   const existing = await findConversation(db, orgId, source, threadKey);
   const updated_at = new Date().toISOString();
+  const said = { at: reply.at, text: reply.text.slice(0, 1000) };
   const { error } = existing
     ? await db
         .from("intake_conversations")
-        .update({ rounds: existing.rounds + 1, updated_at })
+        .update({
+          rounds: existing.rounds + 1,
+          replies: [...existing.replies, said].slice(-KEPT_REPLIES),
+          updated_at,
+        })
         .eq("org_id", orgId)
         .eq("source", source)
         .eq("thread_key", threadKey)
     : await db
         .from("intake_conversations")
-        .insert({ org_id: orgId, source, thread_key: threadKey, rounds: 1, updated_at });
+        .insert({ org_id: orgId, source, thread_key: threadKey, rounds: 1, replies: [said], updated_at });
   // Two answers at once in a new thread: the other one remembered it.
   if (error && (error as { code?: string }).code !== "23505") throw error;
 }
