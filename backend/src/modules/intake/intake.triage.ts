@@ -18,7 +18,7 @@ import type { Db } from "../../lib/supabase";
 import { parseModelJson } from "./intake.shared";
 import { envApiKeys, getEffectiveApiKeys } from "../user/user.service";
 import type { IntakeChannel } from "@mike/contracts";
-import { sanitizeQuestions, threadText, type ThreadEntry } from "./intake.clarify";
+import { URL_LIKE, sanitizeQuestions, threadText, type ThreadEntry } from "./intake.clarify";
 import {
   MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENTS,
@@ -42,8 +42,11 @@ const DESCRIPTION_MAX = 20_000;
 const SUBJECT_MAX = 200;
 const SUMMARY_MAX = 4_000;
 const REPLY_MAX = 600;
-/** Links, addresses and mentions, which a reply never carries. */
-const REPLY_FORBIDDEN = /https?:|www\.|@|<[!#]/i;
+/**
+ * Links (bare domains too, which chat and mail apps link), addresses and
+ * mentions, which a reply never carries: the same link rule as questions.
+ */
+const REPLY_FORBIDDEN = new RegExp(`${URL_LIKE.source}|@|<[!#]`, "i");
 // Same rule as the intake_requests check constraint.
 const EMAIL = /^[^@\s]+@[^@\s]+$/;
 /**

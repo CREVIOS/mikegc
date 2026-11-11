@@ -654,8 +654,9 @@ async function processInbound(db: Db, row: InboundRow): Promise<Record<string, u
       plan.assignee_id = null;
       plan.preprocess = null;
     } else plan.questions = [];
-    // Only a chat converses, and only for a few rounds in one thread.
-    const thread = plan.reply ? conversationThread(settings, payload) : null;
+    // Only a chat converses, and only for a few rounds in one thread. Mail
+    // in another request's thread is recorded apart, never answered there.
+    const thread = plan.reply && canAsk ? conversationThread(settings, payload) : null;
     if (!thread) plan.reply = null;
     else {
       const conversation = await findConversation(db, row.org_id, thread.source, thread.key);
@@ -667,12 +668,18 @@ async function processInbound(db: Db, row: InboundRow): Promise<Record<string, u
   const plan = payload.plan;
   // Nothing to record: MikeGC answers in the chat, and no request is made.
   if (plan.reply && !row.request_id && !payload.recorded) {
+    // Saved straight after the send, and the round counted apart, so a
+    // retry neither answers twice nor counts the answer twice.
     if (!payload.conversed) {
       await sendChatReply(db, row, settings, payload, plan.reply);
+      payload.conversed = true;
+      await save();
+    }
+    if (!payload.remembered) {
       // So a reply in the thread without a mention reaches MikeGC too.
       const thread = conversationThread(settings, payload);
       if (thread) await rememberConversation(db, row.org_id, thread.source, thread.key);
-      payload.conversed = true;
+      payload.remembered = true;
       await save();
     }
     await settleInbound(db, row.id, "done", null, payload);

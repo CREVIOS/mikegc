@@ -102,6 +102,8 @@ const progress = {
   recorded: z.boolean().optional(),
   /** Set once MikeGC answered in the chat instead of recording a request. */
   conversed: z.boolean().optional(),
+  /** Set once that answer is counted against the thread's rounds. */
+  remembered: z.boolean().optional(),
   /** Set once the Slack thread had MikeGC's answer, before the outbox. */
   replied: z.boolean().optional(),
   /** Set once the request is linked to its thread. */

@@ -130,7 +130,7 @@ describe("checking triage against the message", () => {
       ).reply,
     ).toBeNull();
     // A reply with a link, address or mention is dropped, and the message recorded.
-    for (const reply of ["See https://x.test", "Email legal@acme.test", "Ask <!channel>", "Try www.x.test"])
+    for (const reply of ["See https://x.test", "Email legal@acme.test", "Ask <!channel>", "Try www.x.test", "Try acme-payments.com"])
       expect(applyTriage({ reply }, hello).reply, reply).toBeNull();
     expect(applyTriage({ reply: "x".repeat(2_000) }, hello).reply!.length).toBeLessThanOrEqual(600);
   });

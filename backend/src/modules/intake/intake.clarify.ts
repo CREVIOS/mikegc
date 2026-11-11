@@ -33,7 +33,8 @@ export function questionFraming(stage: ClarifyStage, count: number): string {
     : `${amount} thing${count === 1 ? "" : "s"} Legal will need before they start:`;
 }
 
-const URL_LIKE =
+/** Links, including bare domains that chat and mail apps turn into links. */
+export const URL_LIKE =
   /(?:[a-z][a-z0-9+.-]*:\/\/|\bwww\.|\bmailto:|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|net|org|io|co|ai|app|dev|info|biz|xyz|link|ly|me|uk|us|eu|de|fr|ru|cn|tk|gq|ml|ga|cf|zip|top|site|online|click)\b)/i;
 const EMAIL_LIKE = /[^\s@]+@[^\s@]+\.[^\s@]+/;
 /** Slack's <@U…>, <!here>, <#C…>; Teams' <at>; bare @here/@channel/@everyone. */

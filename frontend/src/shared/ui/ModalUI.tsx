@@ -192,15 +192,17 @@ export function ModalUI({
 
                 {hasFooter && (
                     <footer
-                        className={`flex items-center gap-3 border-t border-white/60 p-3 ${hasLeading ? "justify-between" : "justify-end"}`}
+                        className={`flex flex-wrap items-center gap-3 border-t border-white/60 p-3 ${hasLeading ? "justify-between" : "justify-end"}`}
                     >
+                        {/* Each group wraps, and the actions stay right when
+                            they move to their own line at narrow widths. */}
                         {hasLeading && (
-                            <div className="flex min-w-0 items-center gap-2">
+                            <div className="flex min-w-0 flex-wrap items-center gap-2">
                                 {backAction}
                                 {secondaryAction}
                             </div>
                         )}
-                        <div className="flex items-center gap-2">
+                        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
                             {footerStatus}
                             {cancelAction}
                             {primaryAction}

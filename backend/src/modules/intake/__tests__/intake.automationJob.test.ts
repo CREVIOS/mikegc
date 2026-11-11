@@ -634,6 +634,21 @@ describe("recording a Slack thread", () => {
       expect.objectContaining({ org_id: org, source: "gmail", thread_key: "gmail:t-9", rounds: 1 }),
     ]);
   });
+  it("answers an email once when counting the answer fails and the job retries", async () => {
+    setup({ payload: gmailPayload(), source: "gmail" });
+    mocks.gmailDeliver.mockResolvedValue({ externalId: "sent-1@mail.gmail.com", documents: [] });
+    mocks.completeText.mockResolvedValue(JSON.stringify({ reply: "Hi!", subject: "How are you", attachments: [] }));
+    let outage = true;
+    memory.intercept = ({ table }) =>
+      table === "intake_conversations" && outage ? { message: "connection reset" } : null;
+    await expect(handleIntakeInbound(memory.db, job())).rejects.toBeTruthy();
+    outage = false;
+    await expect(handleIntakeInbound(memory.db, job())).resolves.toMatchObject({ request_id: null, replied: true });
+    expect(mocks.gmailDeliver).toHaveBeenCalledTimes(1);
+    expect(memory.rows("intake_conversations")).toEqual([
+      expect.objectContaining({ source: "gmail", thread_key: "gmail:t-9", rounds: 1 }),
+    ]);
+  });
   it("records an email once MikeGC has answered in its thread a few times", async () => {
     setup({ payload: gmailPayload(), source: "gmail" });
     memory.rows("intake_conversations").push({ org_id: org, source: "gmail", thread_key: "gmail:t-9", rounds: 3 });
@@ -776,6 +791,32 @@ describe("recording a Slack thread", () => {
     await expect(handleIntakeInbound(memory.db, job())).resolves.toMatchObject({ asked: false });
     expect(memory.rows("intake_requests")[0]).toMatchObject({ assignee_id: sam });
     expect(memory.rows("intake_messages").filter((m) => m.kind === "question")).toEqual([]);
+  });
+  it("records mail from another request's thread instead of answering it there", async () => {
+    setup({
+      payload: {
+        ...gmailPayload(),
+        thread: "t-1",
+        from: { name: "Pat", email: "pat@partner.test" },
+        subject: "Re: NDA",
+        text: "How are you?",
+        related_request_id: "request-0",
+      },
+      source: "gmail",
+    });
+    memory.rows("intake_channel_links").push({
+      id: "link-0",
+      org_id: org,
+      request_id: "request-0",
+      source: "gmail",
+      thread_key: "gmail:t-1",
+      address: {},
+    });
+    mocks.completeText.mockResolvedValue(JSON.stringify({ reply: "Hi!", subject: "How are you", attachments: [] }));
+    await expect(handleIntakeInbound(memory.db, job())).resolves.toMatchObject({ request_id: inboundId });
+    expect(memory.rows("intake_requests")).toHaveLength(1);
+    expect(mocks.gmailDeliver).not.toHaveBeenCalled();
+    expect(memory.rows("intake_conversations")).toEqual([]);
   });
   it("leaves the acknowledgement to preprocessing's readiness check, which may ask too", async () => {
     setup({ payload: slackPayload(), source: "slack" });
