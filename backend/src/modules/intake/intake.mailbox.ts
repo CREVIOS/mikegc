@@ -29,7 +29,7 @@ import {
   clip,
   type MailInboundPayload,
 } from "./intake.inboundPayload";
-import { insertInbound } from "./intake.inbound";
+import { insertInbound } from "./intake.inboundStore";
 import {
   discardStaged,
   isAutomaticMail,
@@ -205,7 +205,7 @@ export async function recordMail(
       },
       dispatch: dispatchIntakeAgent,
     });
-    if (!routed.ok || routed.data === "duplicate")
+    if (routed.payloadOwnership === "unowned")
       await discardStaged(staged.attachments.map((a) => a.key));
     if (!routed.ok) throw failureError(routed);
     if (routed.data === "duplicate") return requeue(await lookup());
@@ -244,7 +244,7 @@ export async function recordMail(
     status: "pending",
     payload,
   });
-  if (!stored.ok || stored.data === null)
+  if (stored.payloadOwnership === "unowned")
     await discardStaged(staged.attachments.map((a) => a.key));
   if (!stored.ok) throw failureError(stored);
   if (stored.data === null) return requeue(await lookup());

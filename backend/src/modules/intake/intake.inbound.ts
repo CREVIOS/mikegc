@@ -11,7 +11,6 @@ import {
   findConversation,
   findThreadLink,
   routeThreadMessage,
-  type ChannelSource,
 } from "./intake.channels";
 import {
   MAX_MESSAGE_CHARS,
@@ -20,6 +19,7 @@ import {
   type SlackInboundPayload,
   type TeamsInboundPayload,
 } from "./intake.inboundPayload";
+import { insertInbound, type InboundInsert } from "./intake.inboundStore";
 import { slackSigningSecret } from "./intake.secrets";
 import { automationByWebhook, type AutomationRow } from "./intake.settingsRow";
 import { verifySlackSignature } from "./intake.slack";
@@ -51,33 +51,6 @@ export {
 const NOT_FOUND = failure("not_found", "Not found.");
 
 export type InboundReceipt = { status: "received" | "duplicate" | "ignored" };
-
-type InboundInsert = {
-  id?: string;
-  org_id: string;
-  source: ChannelSource;
-  kind?: "request" | "reply";
-  external_id: string;
-  status: "pending" | "ignored";
-  payload: Record<string, unknown> | null;
-  request_id?: string | null;
-  error?: string | null;
-};
-
-/** Store a message once: the new row's id, or null if it was stored before. */
-export async function insertInbound(
-  db: Db,
-  row: InboundInsert,
-): Promise<ServiceResult<string | null>> {
-  const { data, error } = await db
-    .from("intake_inbound")
-    .insert({ ...row, error: row.error ?? null })
-    .select("id")
-    .single();
-  if (error && (error as { code?: string }).code === "23505") return ok(null);
-  if (error || !data) return internalFailure(error);
-  return ok((data as { id: string }).id);
-}
 
 /**
  * Hand a stored message to its job. If that fails the sender is answered

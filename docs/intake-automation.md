@@ -703,12 +703,12 @@ changes a request's details as MikeGC; and `intake_conversations.replies`,
 MikeGC's own answers in a thread with no request. Apply it before starting the
 new build; the old build keeps working once it has run.
 
-`20261111_02_intake_retire_postmark.sql` removes what was left of Postmark:
+`20261111_03_intake_retire_postmark.sql` removes what was left of Postmark:
 requests recorded through it take the organization's connected mailbox
 (Outlook or Gmail) as their source, or Manual when none is connected; Postmark
 mail still waiting is deleted; the `'email'` source and
 `intake_automation.email_reconnect_notice` are dropped. The old webhook URL is
-gone and answers `404`. `20261111_03_intake_answer_automated.sql` adds
+gone and answers `404`. `20261111_04_intake_answer_automated.sql` adds
 `intake_answer_automated`, which MikeGC's answers in a request's thread use.
 Apply both before starting the new build. Jobs queued as `intake.inbound` or
 `intake.reply` by an older build aren't run by the new one, which queues
