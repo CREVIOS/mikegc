@@ -491,24 +491,7 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                           : "People"
                       : "Add Documents",
             ]}
-            secondaryAction={
-                step === "documents"
-                    ? {
-                          label: `Upload${pendingFiles.length > 0 ? ` (${pendingFiles.length})` : ""}`,
-                          icon: <Upload className="h-3.5 w-3.5" />,
-                          onClick: () => fileInputRef.current?.click(),
-                          disabled: loading,
-                      }
-                    : step === "access"
-                      ? {
-                            label: "Back",
-                            type: "button",
-                            onClick: () => setStep("details"),
-                            disabled: loading,
-                        }
-                      : undefined
-            }
-            cancelAction={
+            backAction={
                 step === "documents"
                     ? {
                           label: "Back",
@@ -523,6 +506,26 @@ export function NewProjectModal({ open, onClose, onCreated }: Props) {
                       }
                     : step === "access"
                       ? {
+                            label: "Back",
+                            type: "button",
+                            onClick: () => setStep("details"),
+                            disabled: loading,
+                        }
+                      : undefined
+            }
+            secondaryAction={
+                step === "documents"
+                    ? {
+                          label: `Upload${pendingFiles.length > 0 ? ` (${pendingFiles.length})` : ""}`,
+                          icon: <Upload className="h-3.5 w-3.5" />,
+                          onClick: () => fileInputRef.current?.click(),
+                          disabled: loading,
+                      }
+                    : undefined
+            }
+            cancelAction={
+                step === "access"
+                    ? {
                             label: "Skip",
                             type: "button",
                             onClick: () => {

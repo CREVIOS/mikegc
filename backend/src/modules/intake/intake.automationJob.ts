@@ -15,11 +15,16 @@ import {
   type CandidateDownloader,
 } from "./intake.attachments";
 import {
+  ChannelDeliveryError,
+  findConversation,
   linkThread,
+  rememberConversation,
   loadRequestLink,
   type ChannelSource,
+  type ConversationSource,
 } from "./intake.channels";
-import { MAX_CLARIFY_ROUNDS, stableId } from "./intake.clarify";
+import { planFromTriage, runIntakeAgent } from "./intake.agent";
+import { stableId } from "./intake.clarify";
 import { requestLink } from "./intake.deliver";
 import {
   MAX_ATTACHMENT_BYTES,
@@ -31,10 +36,12 @@ import {
   type EmailInboundPayload,
   type InboundPayload,
   type MailInboundPayload,
+  type AgentPlan,
   type SlackInboundPayload,
-  type TriagePlan,
 } from "./intake.inboundPayload";
+import { gmailAdapter } from "./intake.gmail";
 import { mailThread, recordEmailMessageIds } from "./intake.mail";
+import { outlookAdapter } from "./intake.outlook";
 import { queueIntakePreprocess } from "./intake.preprocess";
 import { slackBotToken } from "./intake.secrets";
 import { dispatchIntakeJob, intakeRpc } from "./intake.shared";
@@ -46,6 +53,7 @@ import {
   mentionedUsers,
   slackChannelName,
   slackPermalink,
+  slackEscape,
   slackPostMessage,
   slackTextToPlain,
   slackThreadMessages,
@@ -57,6 +65,7 @@ import {
   TeamsApiError,
   isPermanentTeamsError,
   teamsDownloadFile,
+  teamsAdapter,
   teamsInboundMessage,
   teamsThread,
 } from "./intake.teams";
@@ -64,18 +73,20 @@ import {
   formatSent,
   loadTriageRules,
   resolveIntakeModel,
-  triageInbound,
   type InboundMessage,
 } from "./intake.triage";
 
 /**
- * The intake.inbound job: triage a received message, record it as MikeGC's
- * request, add its documents, link the request to its thread and answer
- * there: with MikeGC's questions when it needs more to choose a rule, else
- * with an acknowledgement (which waits for the readiness check when the
- * rule's preprocessing may ask too). Every step can run again: the plan,
- * each document's ids and each step done are saved on the message as they
- * happen, and recording the request is keyed by the message.
+ * The intake.inbound job: a message in a Slack, Teams, Gmail or Outlook
+ * thread no request is linked to, or an email received through Postmark.
+ * The intake agent reads the conversation and plans what to do: answer in
+ * the thread, or record a request, with its rule or with questions to choose
+ * one. The plan is saved on the message before any of it is done; then the
+ * request is recorded, its documents added, its thread linked and answered:
+ * with MikeGC's questions, or with an acknowledgement (which waits for the
+ * readiness check when the rule's preprocessing may ask too). Every step can
+ * run again: each document's ids and each step done are saved on the
+ * message as they happen, and recording the request is keyed by the message.
  */
 
 export const INTAKE_INBOUND_JOB = "intake.inbound";
@@ -359,7 +370,7 @@ async function slackMessage(
   };
 }
 
-/** The message as triage reads it, whichever channel it came from. */
+/** The message as the agent reads it, whichever channel it came from. */
 async function inboundMessage(
   settings: AutomationRow | null,
   payload: InboundPayload,
@@ -459,28 +470,33 @@ function downloader(settings: AutomationRow | null): CandidateDownloader {
 }
 
 /**
- * Record the request. A plan the database refuses is recorded once more
+ * Record the request. One the database refuses is recorded once more
  * without its date and requester email, which are the fields a model or a
  * sender could get wrong.
  */
-async function submit(db: Db, row: InboundRow, plan: TriagePlan): Promise<string> {
-  const args = (p: TriagePlan) => ({
+async function submit(
+  db: Db,
+  row: InboundRow,
+  record: NonNullable<AgentPlan["record"]>,
+  assigneeId: string | null,
+): Promise<string> {
+  const args = (r: NonNullable<AgentPlan["record"]>) => ({
     p_org: row.org_id,
     p_inbound: row.id,
     p_request: row.id,
-    p_subject: p.subject,
-    p_description: p.description,
-    p_requester_name: p.requester_name,
-    p_requester_email: p.requester_email,
-    p_date: p.requested_by_date,
-    p_assignee: p.assignee_id,
+    p_subject: r.subject,
+    p_description: r.description,
+    p_requester_name: r.requester_name,
+    p_requester_email: r.requester_email,
+    p_date: r.requested_by_date,
+    p_assignee: assigneeId,
   });
-  let result = await intakeRpc<string>(db, "intake_submit_automated", args(plan));
+  let result = await intakeRpc<string>(db, "intake_submit_automated", args(record));
   if (!result.ok && result.kind === "validation")
     result = await intakeRpc<string>(
       db,
       "intake_submit_automated",
-      args({ ...plan, requester_email: null, requested_by_date: null }),
+      args({ ...record, requester_email: null, requested_by_date: null }),
     );
   if (result.ok) return result.data;
   if (result.kind === "error") throw result.error;
@@ -512,6 +528,140 @@ async function noteRelated(
     throw note.kind === "error" ? note.error : new Error(note.detail);
 }
 
+/**
+ * The thread a Slack, Teams or email message belongs to, as links key it,
+ * where MikeGC can answer instead of recording. Mail through Postmark has no
+ * thread to answer in, and mail in another request's thread is that
+ * request's to answer.
+ */
+function conversationThread(
+  settings: AutomationRow | null,
+  payload: InboundPayload,
+): { source: ConversationSource; key: string } | null {
+  if (payload.kind === "slack")
+    return {
+      source: "slack",
+      key: `${payload.team_id ?? settings?.slack_team_id ?? ""}:${payload.channel}:${payload.thread_ts ?? payload.ts}`,
+    };
+  if (payload.kind === "teams") return { source: "teams", key: teamsThread(payload).key };
+  if (payload.kind === "mail" && settings && !payload.related_request_id) {
+    const thread = mailThread(settings, payload);
+    return thread ? { source: thread.source as ConversationSource, key: thread.key } : null;
+  }
+  return null;
+}
+
+/**
+ * MikeGC's own answer in the chat or email thread a message came from, the
+ * agent's `reply` when it found no request to record. Nothing is recorded,
+ * so it goes out without a request or a link: an email replies to the
+ * message itself.
+ */
+export async function sendChatReply(
+  db: Db,
+  row: InboundRow,
+  settings: AutomationRow | null,
+  payload: InboundPayload,
+  text: string,
+) {
+  if (payload.kind === "slack") {
+    await slackPostMessage(requireSlackToken(settings), {
+      channel: payload.channel,
+      threadTs: payload.thread_ts ?? payload.ts,
+      text: slackEscape(text),
+    });
+    return;
+  }
+  if (!settings || (payload.kind !== "teams" && payload.kind !== "mail"))
+    throw new NonRetryableJobError(GENERIC_FAILURE);
+  let thread: { source: ChannelSource; key: string; address: Record<string, unknown> };
+  if (payload.kind === "teams") thread = teamsThread(payload);
+  else {
+    const mail = mailThread(settings, payload);
+    if (!mail) throw new NonRetryableJobError(GENERIC_FAILURE);
+    // No recorded thread to follow: reply to the message itself.
+    thread = { ...mail, address: { ...mail.address, references: [payload.message_id] } };
+  }
+  const adapter =
+    payload.kind === "teams"
+      ? teamsAdapter
+      : payload.provider === "gmail"
+        ? gmailAdapter
+        : outlookAdapter;
+  try {
+    await adapter.deliver(
+      {
+        db,
+        settings,
+        fromName: settings.email_from_name?.trim() || "Legal",
+        readDocument: () => Promise.reject(new Error("No documents to read.")),
+        saveProgress: () => Promise.resolve(),
+      },
+      {
+        // No request, so no link: Teams keys its post by the message, and
+        // email records no Message-IDs, which belong to a link.
+        id: payload.kind === "teams" ? row.id : "",
+        org_id: row.org_id,
+        request_id: "",
+        source: thread.source,
+        thread_key: thread.key,
+        address: thread.address,
+      },
+      {
+        id: row.id,
+        kind: "answer",
+        author: { kind: "mikegc" },
+        text,
+        requestSubject: "",
+        documents: [],
+      },
+      null,
+    );
+  } catch (error) {
+    if (error instanceof ChannelDeliveryError && error.permanent)
+      throw new NonRetryableJobError(error.sentence);
+    throw error;
+  }
+}
+
+/**
+ * The agent's plan for a message, made once and saved before any of it is
+ * done. A plan triage saved before the agent replaced it is carried over.
+ */
+async function planInbound(
+  db: Db,
+  row: InboundRow,
+  settings: AutomationRow | null,
+  payload: InboundPayload,
+): Promise<AgentPlan> {
+  if (payload.plan) return planFromTriage(payload.plan);
+  const message = await inboundMessage(settings, payload);
+  const thread = conversationThread(settings, payload);
+  // The agent runs with the model the organization chose for triage; with
+  // none, or once its key has gone, the message is recorded as it arrived.
+  const [conversation, rules, model] = await Promise.all([
+    thread ? findConversation(db, row.org_id, thread.source, thread.key) : null,
+    loadTriageRules(db, row.org_id),
+    resolveIntakeModel(
+      db,
+      row.org_id,
+      settings?.configured_by ?? null,
+      settings?.triage_model ?? null,
+    ),
+  ]);
+  return runIntakeAgent({
+    context: {
+      kind: "message",
+      message,
+      earlierReplies: conversation?.replies ?? [],
+      canReply: !!thread,
+      rounds: conversation?.rounds ?? 0,
+    },
+    rules,
+    model,
+  });
+}
+
 async function processInbound(db: Db, row: InboundRow): Promise<Record<string, unknown>> {
   const parsed = inboundPayload.safeParse(row.payload);
   if (!parsed.success)
@@ -522,40 +672,50 @@ async function processInbound(db: Db, row: InboundRow): Promise<Record<string, u
   const channel = channelOf(payload);
   // MikeGC asks only where it can be answered: in a thread of the request's
   // own. Mail in another request's thread is recorded apart, and the thread
-  // stays that request's, so questions planned for it could never be sent
-  // while the rule's reviewer waited on them.
+  // stays that request's.
   const canAsk =
     !!channel && !(payload.kind === "mail" && payload.related_request_id);
 
-  if (!payload.plan) {
-    const message = await inboundMessage(settings, payload);
-    // Triage runs with the model the organization chose; without one, or
-    // once its key has gone, the message is recorded as it arrived.
-    const [rules, model] = await Promise.all([
-      loadTriageRules(db, row.org_id),
-      resolveIntakeModel(
-        db,
-        row.org_id,
-        settings?.configured_by ?? null,
-        settings?.triage_model ?? null,
-      ),
-    ]);
-    const plan = await triageInbound({ message, rules, model });
-    // With questions, the rule is undecided: recorded unassigned, waiting.
-    if (plan.questions.length && canAsk && MAX_CLARIFY_ROUNDS > 0) {
-      plan.assignee_id = null;
-      plan.preprocess = null;
-    } else plan.questions = [];
-    payload.plan = plan;
+  if (!payload.agent) {
+    payload.agent = await planInbound(db, row, settings, payload);
+    delete payload.plan;
     await save();
   }
-  const plan = payload.plan;
+  const plan = payload.agent;
+  // Nothing to record: MikeGC answers in the thread, and no request is made.
+  if (!plan.record && plan.reply && !row.request_id && !payload.recorded) {
+    // Saved straight after the send, and the round counted apart, so a
+    // retry neither answers twice nor counts the answer twice.
+    if (!payload.conversed) {
+      await sendChatReply(db, row, settings, payload, plan.reply);
+      payload.conversed = true;
+      await save();
+    }
+    if (!payload.remembered) {
+      // So the next message in the thread reaches MikeGC, without a
+      // mention, and is read with this answer.
+      const thread = conversationThread(settings, payload);
+      if (thread)
+        await rememberConversation(db, row.org_id, thread.source, thread.key, {
+          at: formatSent(new Date()),
+          text: plan.reply,
+        });
+      payload.remembered = true;
+      await save();
+    }
+    await settleInbound(db, row.id, "done", null, payload);
+    return { request_id: null, replied: true };
+  }
   // Recorded, then deleted before this run: it stays deleted.
   if (payload.recorded && !row.request_id) {
     await settleInbound(db, row.id, "done", null, payload);
     return { request_id: null, deleted: true };
   }
-  const requestId = row.request_id ?? (await submit(db, row, plan));
+  if (!plan.record) throw new NonRetryableJobError(GENERIC_FAILURE);
+  // With questions, the rule is undecided: recorded unassigned, waiting.
+  const rule = plan.questions.length ? null : plan.rule;
+  const requestId =
+    row.request_id ?? (await submit(db, row, plan.record, rule?.assignee_id ?? null));
   if (!payload.recorded) {
     payload.recorded = true;
     await save();
@@ -570,7 +730,7 @@ async function processInbound(db: Db, row: InboundRow): Promise<Record<string, u
     orgId: row.org_id,
     requestId,
     candidates: plan.candidates,
-    chosen: plan.attachments,
+    chosen: plan.record.attachments,
     documents: payload.documents,
     save,
     download: downloader(settings),
@@ -605,13 +765,14 @@ async function processInbound(db: Db, row: InboundRow): Promise<Record<string, u
   // Once its documents are attached, so preprocessing reads them. When its
   // readiness check may ask, the acknowledgement waits for it, so any
   // questions go in the same message.
-  const deferAcknowledgement = !!plan.preprocess && linked && canAsk;
-  if (plan.preprocess && !payload.preprocessQueued) {
+  const preprocess = rule?.preprocess ?? null;
+  const deferAcknowledgement = !!preprocess && linked && canAsk;
+  if (preprocess && !payload.preprocessQueued) {
     await queueIntakePreprocess(db, {
       orgId: row.org_id,
       requestId,
-      with: plan.preprocess.with,
-      condition: plan.preprocess.condition ?? null,
+      with: preprocess.with,
+      condition: preprocess.condition ?? null,
       round: 0,
       acknowledge: deferAcknowledgement && !payload.acknowledged,
     });
@@ -627,7 +788,7 @@ async function processInbound(db: Db, row: InboundRow): Promise<Record<string, u
   await settleInbound(db, row.id, "done", null, payload);
   return {
     request_id: requestId,
-    triaged: plan.triaged,
+    triaged: plan.agent,
     asked: plan.questions.length > 0,
   };
 }
@@ -681,7 +842,7 @@ export async function markIntakeInboundFailed(db: Db, job: DbJob): Promise<void>
   const parsed = inboundPayload.safeParse(row.payload);
   const payload = parsed.success ? parsed.data : null;
   const reason = row.request_id ? RECORDED_INCOMPLETE : row.error ?? GENERIC_FAILURE;
-  if (payload && !payload.acknowledged && !payload.replied) {
+  if (payload && !payload.acknowledged && !payload.replied && !payload.conversed) {
     try {
       if (row.request_id) {
         // Failed before its thread was linked: link it, so the thread hears.

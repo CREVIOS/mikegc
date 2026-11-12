@@ -493,15 +493,29 @@ export async function updateIntakeAutomation(
       }
     }
   }
-  // Teams: the IDs as given; the credentials are checked with Microsoft
-  // once the app ID, tenant ID and secret are all known.
-  if (input.teams_app_id !== undefined) patch.teams_app_id = input.teams_app_id.trim().toLowerCase();
-  if (input.teams_tenant_id !== undefined) patch.teams_tenant_id = input.teams_tenant_id.trim().toLowerCase();
-  const teamsSecret = input.teams_client_secret?.trim() ?? teamsClientSecret(row);
+  // Teams: the IDs as given, or the connected Outlook mailbox's app copied;
+  // the credentials are checked with Microsoft once the app ID, tenant ID
+  // and secret are all known.
+  let teams: Pick<IntakeAutomationUpdate, "teams_app_id" | "teams_tenant_id" | "teams_client_secret"> = input;
+  if (input.teams_use_outlook_app) {
+    if (
+      input.teams_app_id !== undefined ||
+      input.teams_tenant_id !== undefined ||
+      input.teams_client_secret !== undefined
+    )
+      return failure("validation", "Use the Outlook app, or enter the Teams app's details, not both.");
+    const app = outlookEntraApp(row);
+    if (!app)
+      return failure("validation", "Connect Outlook first, or enter the Teams app's details.");
+    teams = { teams_app_id: app.clientId, teams_tenant_id: app.tenantId, teams_client_secret: app.secret };
+  }
+  if (teams.teams_app_id !== undefined) patch.teams_app_id = teams.teams_app_id.trim().toLowerCase();
+  if (teams.teams_tenant_id !== undefined) patch.teams_tenant_id = teams.teams_tenant_id.trim().toLowerCase();
+  const teamsSecret = teams.teams_client_secret?.trim() ?? teamsClientSecret(row);
   const teamsApp = (patch.teams_app_id as string | undefined) ?? row.teams_app_id;
   const teamsTenant = (patch.teams_tenant_id as string | undefined) ?? row.teams_tenant_id;
-  if (input.teams_client_secret !== undefined) {
-    const sealed = encryptedColumns("teams_client_secret", input.teams_client_secret.trim());
+  if (teams.teams_client_secret !== undefined) {
+    const sealed = encryptedColumns("teams_client_secret", teams.teams_client_secret.trim());
     if (!sealed) return ENCRYPTION_UNAVAILABLE;
     Object.assign(patch, sealed);
   }
@@ -514,9 +528,9 @@ export async function updateIntakeAutomation(
     patch.teams_enabled = input.teams_enabled;
   }
   const teamsChanged =
-    input.teams_app_id !== undefined ||
-    input.teams_tenant_id !== undefined ||
-    input.teams_client_secret !== undefined;
+    teams.teams_app_id !== undefined ||
+    teams.teams_tenant_id !== undefined ||
+    teams.teams_client_secret !== undefined;
   if (teamsChanged && teamsApp && teamsTenant && teamsSecret) {
     const checked = await checkTeamsCredentials({
       appId: teamsApp,
@@ -621,6 +635,65 @@ function mailboxFailure(error: unknown, fallback: string): ServiceFailure {
 }
 
 /**
+ * A mailbox connection as the API accepts it: Outlook's app details may be
+ * left out for the Teams channel's app (`use_teams_app`).
+ */
+export type IntakeMailboxConnectionInput =
+  | Extract<IntakeMailboxConnection, { provider: "gmail" }>
+  | {
+      provider: "graph";
+      mailbox: string;
+      tenant_id?: string;
+      client_id?: string;
+      client_secret?: string;
+      use_teams_app?: true;
+    };
+
+/** The Entra app Teams is set up with, when all of it is saved. */
+function teamsEntraApp(row: AutomationRow) {
+  const secret = teamsClientSecret(row);
+  return row.teams_app_id && row.teams_tenant_id && secret
+    ? { tenantId: row.teams_tenant_id, clientId: row.teams_app_id, secret }
+    : null;
+}
+
+/** The Entra app the connected Outlook mailbox uses, when all of it is saved. */
+function outlookEntraApp(row: AutomationRow) {
+  const secret = graphClientSecret(row);
+  return row.email_provider === "graph" && row.graph_tenant_id && row.graph_client_id && secret
+    ? { tenantId: row.graph_tenant_id, clientId: row.graph_client_id, secret }
+    : null;
+}
+
+/**
+ * The Entra app an Outlook connection uses: the details sent, with the saved
+ * secret when none is, or the Teams channel's app, copied.
+ */
+function graphAppFor(
+  row: AutomationRow,
+  input: Extract<IntakeMailboxConnectionInput, { provider: "graph" }>,
+): ServiceResult<{ tenantId: string; clientId: string; secret: string }> {
+  if (input.use_teams_app) {
+    if (input.tenant_id || input.client_id || input.client_secret)
+      return failure(
+        "validation",
+        "Use the Teams app, or enter the Entra app's details, not both.",
+      );
+    const app = teamsEntraApp(row);
+    return app
+      ? ok(app)
+      : failure("validation", "Set up Teams first, or enter the Entra app's details.");
+  }
+  const tenantId = (input.tenant_id ?? "").trim().toLowerCase();
+  const clientId = (input.client_id ?? "").trim().toLowerCase();
+  if (!ID.test(tenantId) || !ID.test(clientId))
+    return failure("validation", "Enter the Entra app's tenant ID and client ID.");
+  const secret = input.client_secret?.trim() || graphClientSecret(row);
+  if (!secret) return failure("validation", "Enter the Entra app's client secret.");
+  return ok({ tenantId, clientId, secret });
+}
+
+/**
  * Connect the organization's intake mailbox: Microsoft 365 through Graph,
  * or Google Workspace through the Gmail API. MikeGC checks it can open the
  * mailbox, records only mail that arrives from now on, starts reading it,
@@ -629,7 +702,7 @@ function mailboxFailure(error: unknown, fallback: string): ServiceFailure {
 export async function connectIntakeMailbox(
   db: Db,
   scope: IntakeScope & { userEmail?: string | null },
-  input: IntakeMailboxConnection,
+  input: IntakeMailboxConnectionInput,
 ): Promise<ServiceResult<IntakeAutomationSettings>> {
   const refused = await denied(db, scope);
   if (refused) return refused;
@@ -654,13 +727,10 @@ export async function connectIntakeMailbox(
   const domain = mailbox.split("@").pop()!;
   if (!(row.email_allowed_domains ?? []).length) patch.email_allowed_domains = [domain];
   if (input.provider === "graph") {
-    const tenantId = input.tenant_id.trim().toLowerCase();
-    const clientId = input.client_id.trim().toLowerCase();
-    if (!ID.test(tenantId) || !ID.test(clientId))
-      return failure("validation", "Enter the Entra app's tenant ID and client ID.");
-    const secret = input.client_secret?.trim() || graphClientSecret(row);
-    if (!secret) return failure("validation", "Enter the Entra app's client secret.");
-    if (input.client_secret) {
+    const app = graphAppFor(row, input);
+    if (!app.ok) return app;
+    const { tenantId, clientId, secret } = app.data;
+    if (input.client_secret || input.use_teams_app) {
       const sealed = encryptedColumns("graph_client_secret", secret);
       if (!sealed) return ENCRYPTION_UNAVAILABLE;
       Object.assign(patch, sealed);

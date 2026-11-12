@@ -1663,6 +1663,31 @@ describe("request detail", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
+  it("reads MikeGC's preprocessing report as Markdown and people's notes as typed", async () => {
+    mocks.messages.mockResolvedValue([
+      message({
+        id: "m-report",
+        purpose: "preprocessing",
+        automated: true,
+        author_id: null,
+        author_name: "MikeGC",
+        body: "AI preprocessing\n\n**Cannot be signed** as is.\n\nMarked up with tracked changes:\n- Supplier NDA.docx: 2 changes",
+      }),
+      message({ id: "m-note", body: "Keep **this** literal." }),
+    ]);
+    render(detail());
+    const activity = await screen.findByRole("region", { name: "Activity" });
+    expect(
+      (await within(activity).findByText("Cannot be signed")).tagName,
+    ).toBe("STRONG");
+    expect(
+      within(activity).getByText("Supplier NDA.docx: 2 changes").tagName,
+    ).toBe("LI");
+    expect(
+      within(activity).getByText("Keep **this** literal."),
+    ).toBeInTheDocument();
+  });
+
   it("reads a cancellation's reason in the timeline and offers Reopen in place of a note", async () => {
     const user = userEvent.setup();
     mocks.request.mockResolvedValue(
@@ -2311,13 +2336,28 @@ describe("request detail", () => {
       },
     ]);
     finish();
-    expect(
-      await within(documents).findByRole("button", {
-        name: "Drop more documents here, or click to add more.",
-      }),
-    ).toBeInTheDocument();
+    // With documents, the grey field gives way to an Add menu by the heading.
+    const add = await within(documents).findByRole("button", {
+      name: "Add documents",
+    });
     expect(
       within(documents).getByRole("button", { name: "Open Supplier NDA.docx" }),
+    ).toBeInTheDocument();
+    expect(
+      within(documents).queryByRole("button", { name: /click to/ }),
+    ).not.toBeInTheDocument();
+    browse.mockClear();
+    await userEvent.click(add);
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "Upload Documents" }),
+    );
+    expect(browse).toHaveBeenCalledTimes(1);
+    await userEvent.click(add);
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "Saved Documents" }),
+    );
+    expect(
+      await screen.findByRole("dialog", { name: "Add documents" }),
     ).toBeInTheDocument();
   });
 
@@ -3365,15 +3405,16 @@ describe("requester loop", () => {
     ]);
   });
 
-  it("names an email thread's recipients, each on its own line", async () => {
+  it("names an email thread's provider alone, without its addresses", async () => {
     mocks.request.mockResolvedValue(threaded({ conversation: gmail }));
     render(detail());
     const details = await screen.findByRole("complementary", {
       name: "Details",
     });
-    expect(details).toHaveTextContent("Gmail email from intake@acme.test");
-    expect(within(details).getByText("To ana@acme.test")).toBeInTheDocument();
-    expect(within(details).getByText("Cc ben@acme.test")).toBeInTheDocument();
+    expect(details).toHaveTextContent("ConversationGmail");
+    expect(details).not.toHaveTextContent("intake@acme.test");
+    expect(details).not.toHaveTextContent("ana@acme.test");
+    expect(details).not.toHaveTextContent("ben@acme.test");
   });
 
   it("clears the New reply flag once Messages is opened to show the reply", async () => {

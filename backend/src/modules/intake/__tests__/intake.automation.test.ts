@@ -718,6 +718,112 @@ describe("Teams", () => {
   });
 });
 
+describe("one Entra app for Outlook and Teams", () => {
+  const app = {
+    tenant: "22222222-2222-4222-8222-222222222222",
+    client: "11111111-1111-4111-8111-111111111111",
+    secret: "shared-secret",
+  };
+  /** Microsoft: tokens for anyone, and an Outlook mailbox that opens. */
+  const tokenRequests: URLSearchParams[] = [];
+  const stubMicrosoft = () => {
+    tokenRequests.length = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL, init?: RequestInit) => {
+        const target = String(url);
+        if (target.startsWith("https://login.microsoftonline.com/")) {
+          tokenRequests.push(new URLSearchParams(String(init?.body)));
+          return Response.json({ access_token: msToken(), expires_in: 3600 });
+        }
+        if (target.includes("/mailFolders/inbox")) return Response.json({ id: "inbox" });
+        if (target.includes("/messages/delta"))
+          return Response.json({ value: [], "@odata.deltaLink": "https://graph.microsoft.com/v1.0/delta?token=1" });
+        if (target.endsWith("/subscriptions"))
+          return Response.json({ id: "sub-1", expirationDateTime: "2026-11-06T10:00:00Z" });
+        if (target.endsWith("/sendMail")) return new Response(null, { status: 202 });
+        return Response.json({}, { status: 404 });
+      }),
+    );
+  };
+
+  it("connects Outlook with the Teams app, keeping its own encrypted copy of the secret", async () => {
+    stubMicrosoft();
+    await updateIntakeAutomation(memory.db, scope(owner), {
+      teams_app_id: app.client,
+      teams_tenant_id: app.tenant,
+      teams_client_secret: app.secret,
+    });
+    tokenRequests.length = 0;
+    const result = await connectIntakeMailbox(memory.db, scope(owner), {
+      provider: "graph",
+      mailbox: "intake@firm.test",
+      use_teams_app: true,
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      data: { email: { provider: "graph", graph: { tenant_id: app.tenant, client_id: app.client, secret_set: true } } },
+    });
+    // Checked with the Teams app's own credentials.
+    expect(tokenRequests[0]!.get("client_id")).toBe(app.client);
+    expect(tokenRequests[0]!.get("client_secret")).toBe(app.secret);
+    // Its own ciphertext, so changing Teams later doesn't change Outlook.
+    expect(row().graph_client_secret_encrypted).toBeTruthy();
+    expect(row().graph_client_secret_encrypted).not.toBe(row().teams_client_secret_encrypted);
+    expect(JSON.stringify(memory.tables)).not.toContain(app.secret);
+  });
+
+  it("won't reuse a Teams app that isn't set up, or mix it with typed details", async () => {
+    stubMicrosoft();
+    expect(
+      await connectIntakeMailbox(memory.db, scope(owner), { provider: "graph", mailbox: "intake@firm.test", use_teams_app: true }),
+    ).toMatchObject({ ok: false, kind: "validation", detail: "Set up Teams first, or enter the Entra app's details." });
+    expect(
+      await connectIntakeMailbox(memory.db, scope(owner), {
+        provider: "graph",
+        mailbox: "intake@firm.test",
+        use_teams_app: true,
+        client_secret: "typed",
+      }),
+    ).toMatchObject({ ok: false, kind: "validation", detail: expect.stringMatching(/not both/) });
+    expect(row().email_provider).toBeNull();
+  });
+
+  it("sets Teams up with the connected Outlook app, checked and turned on", async () => {
+    stubMicrosoft();
+    await connectIntakeMailbox(memory.db, scope(owner), {
+      provider: "graph",
+      mailbox: "intake@firm.test",
+      tenant_id: app.tenant,
+      client_id: app.client,
+      client_secret: app.secret,
+    });
+    tokenRequests.length = 0;
+    const result = await updateIntakeAutomation(memory.db, scope(owner), { teams_use_outlook_app: true });
+    expect(result).toMatchObject({
+      ok: true,
+      data: { teams: { configured: true, enabled: true, app_id: app.client, tenant_id: app.tenant } },
+    });
+    // Checked with Microsoft as typed credentials are.
+    expect(tokenRequests.some((r) => r.get("client_id") === app.client && r.get("client_secret") === app.secret)).toBe(true);
+    expect(row().teams_client_secret_encrypted).not.toBe(row().graph_client_secret_encrypted);
+    expect(JSON.stringify(memory.tables)).not.toContain(app.secret);
+  });
+
+  it("won't copy an Outlook app that isn't connected, or mix it with typed details", async () => {
+    stubMicrosoft();
+    expect(await updateIntakeAutomation(memory.db, scope(owner), { teams_use_outlook_app: true })).toMatchObject({
+      ok: false,
+      kind: "validation",
+      detail: "Connect Outlook first, or enter the Teams app's details.",
+    });
+    expect(
+      await updateIntakeAutomation(memory.db, scope(owner), { teams_use_outlook_app: true, teams_app_id: app.client }),
+    ).toMatchObject({ ok: false, kind: "validation", detail: expect.stringMatching(/not both/) });
+    expect(row().teams_app_id).toBeNull();
+  });
+});
+
 describe("asking requesters", () => {
   it("names the Slack scopes the requester loop still needs", async () => {
     vi.stubGlobal(

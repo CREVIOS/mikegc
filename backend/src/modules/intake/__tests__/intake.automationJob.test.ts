@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { automatedIntakeRpc, memoryDb, type MemoryDb } from "./memoryDb";
 
 const mocks = vi.hoisted(() => ({
-  completeText: vi.fn(),
+  stream: vi.fn(),
   getEffectiveApiKeys: vi.fn(),
   envApiKeys: vi.fn(),
   createDocumentVersion: vi.fn(),
@@ -12,10 +12,13 @@ const mocks = vi.hoisted(() => ({
   enqueueDbJob: vi.fn(),
   deleteFile: vi.fn(),
   enqueueConversion: vi.fn(),
+  gmailDeliver: vi.fn(),
+  teamsDeliver: vi.fn(),
+  outlookDeliver: vi.fn(),
 }));
 vi.mock("../../../lib/llm", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../lib/llm")>()),
-  completeText: mocks.completeText,
+  streamChatWithTools: mocks.stream,
 }));
 vi.mock("../../user/user.service", () => ({
   getEffectiveApiKeys: mocks.getEffectiveApiKeys,
@@ -37,7 +40,21 @@ vi.mock("../../../lib/dbq/enqueue", () => ({
 vi.mock("../../../lib/queue/conversionQueue", () => ({
   enqueueConversion: mocks.enqueueConversion,
 }));
+// Gmail itself is tested in intake.gmailChatReply.test.ts; here, what it is asked to send.
+vi.mock("../intake.gmail", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../intake.gmail")>();
+  return { ...actual, gmailAdapter: { ...actual.gmailAdapter, deliver: mocks.gmailDeliver } };
+});
+vi.mock("../intake.teams", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../intake.teams")>();
+  return { ...actual, teamsAdapter: { ...actual.teamsAdapter, deliver: mocks.teamsDeliver } };
+});
+vi.mock("../intake.outlook", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../intake.outlook")>();
+  return { ...actual, outlookAdapter: { ...actual.outlookAdapter, deliver: mocks.outlookDeliver } };
+});
 import { NonRetryableJobError } from "../../../lib/dbq/runner";
+import { recordCall, replyCall, ruleCall, scripted, type ScriptedCall } from "./agentScript";
 import type { DbJob } from "../../../lib/dbq/types";
 import { encryptString } from "../../../lib/mcp/client";
 import {
@@ -58,6 +75,12 @@ const env = { ...process.env };
 let memory: MemoryDb;
 let slackCalls: { method: string; params: Record<string, string> }[];
 let slackReplies: Record<string, unknown>;
+let model: ReturnType<typeof scripted>;
+/** The model makes these tool calls, one list per step. */
+function modelCalls(...steps: ScriptedCall[][]) {
+  model = scripted(steps);
+  mocks.stream.mockImplementation(model.stream);
+}
 
 const job = (): DbJob => ({
   id: "job-1",
@@ -75,6 +98,23 @@ const job = (): DbJob => ({
   created_at: "",
 });
 const row = () => memory.rows("intake_inbound")[0]!;
+/** A new email to a Gmail intake mailbox, from an accepted sender. */
+const gmailPayload = () => ({
+  kind: "mail",
+  provider: "gmail",
+  mailbox: "intake@firm.test",
+  provider_id: "gm-9",
+  message_id: "<hello@firm.test>",
+  thread: "t-9",
+  from: { name: "Pat", email: "pat@firm.test" },
+  to: ["intake@firm.test"],
+  cc: [],
+  subject: "How are you",
+  date: "2026-11-02T09:14:00.000Z",
+  text: "How are you?",
+  attachments: [],
+  skipped: [],
+});
 const emailPayload = () => ({
   kind: "email",
   from: { name: "Jane Business", email: "jane@acme.test" },
@@ -100,7 +140,7 @@ const slackPayload = (overrides: Record<string, unknown> = {}) => ({
 
 function setup(options: {
   payload: Record<string, unknown>;
-  source?: "email" | "slack";
+  source?: "email" | "slack" | "gmail";
   /** False when no model key is available, so triage can't run. */
   model?: boolean;
   kind?: "team" | "personal";
@@ -217,17 +257,7 @@ beforeEach(() => {
   mocks.enqueueConversion.mockResolvedValue(undefined);
   mocks.deleteFile.mockResolvedValue(undefined);
   mocks.enqueueDbJob.mockResolvedValue(undefined);
-  mocks.completeText.mockResolvedValue(
-    JSON.stringify({
-      subject: "Review Supplier Co NDA",
-      summary: "Jane needs the Supplier Co NDA reviewed by Friday.",
-      requester_name: "Jane Business",
-      requester_email: "jane@acme.test",
-      target_date: "2026-11-06",
-      rule: 1,
-      attachments: [1],
-    }),
-  );
+  modelCalls([recordCall(), ruleCall(1)]);
   stubSlack();
 });
 afterAll(() => {
@@ -314,10 +344,15 @@ describe("recording an email", () => {
         prefixes: [],
       },
     }));
-    // The model saw the organization's rules, never another organization's.
-    expect(mocks.completeText.mock.calls[0]![0].user).toContain(
+    // The model saw the organization's rules, never another organization's,
+    // and could only record: Postmark mail has no thread to answer in.
+    const asked = model.requests[0]!;
+    expect(asked.messages[0]!.content).toContain(
       'RULES: [{"number":1,"condition":"The request is about an NDA"}]',
     );
+    expect(asked.tools!.map((t) => t.function.name)).toEqual(["record_request", "choose_rule"]);
+    expect(asked).toMatchObject({ model: "claude-haiku-4-5", maxIterations: 4, requireTools: true });
+    expect(model.results).toEqual([["recorded", "assigned by rule 1"]]);
   });
   it("queues AI preprocessing once the request and its documents are recorded, when its rule asks", async () => {
     setup({ payload: emailPayload() });
@@ -360,7 +395,7 @@ describe("recording an email", () => {
   it("records the message as it is with no model to triage with, keeping every attachment", async () => {
     setup({ payload: emailPayload(), model: false });
     await expect(handleIntakeInbound(memory.db, job())).resolves.toMatchObject({ triaged: false });
-    expect(mocks.completeText).not.toHaveBeenCalled();
+    expect(mocks.stream).not.toHaveBeenCalled();
     expect(memory.rows("intake_requests")[0]).toMatchObject({
       subject: "NDA with Supplier Co",
       requester_email: "jane@acme.test",
@@ -374,7 +409,7 @@ describe("recording an email", () => {
   });
   it("leaves the request unassigned when no rule matches", async () => {
     setup({ payload: emailPayload() });
-    mocks.completeText.mockResolvedValue(JSON.stringify({ rule: null, assignee_id: outsider }));
+    modelCalls([recordCall({ assignee_id: outsider }), ruleCall(0)]);
     await handleIntakeInbound(memory.db, job());
     expect(memory.rows("intake_requests")[0]).toMatchObject({ assignee_id: null, state: "submitted" });
   });
@@ -402,6 +437,31 @@ describe("recording an email", () => {
     expect(row()).toMatchObject({ status: "done", error: null });
     // A third run finds nothing to do.
     await expect(handleIntakeInbound(memory.db, job())).resolves.toEqual({ skipped: "done" });
+  });
+  it("finishes a message whose plan triage saved before the agent, without asking the model", async () => {
+    setup({
+      payload: {
+        ...emailPayload(),
+        plan: {
+          subject: "Triaged before",
+          description: "Saved by triage.",
+          requester_name: "Jane Business",
+          requester_email: "jane@acme.test",
+          requested_by_date: null,
+          assignee_id: sam,
+          preprocess: null,
+          questions: [],
+          attachments: [0],
+          candidates: emailPayload().attachments.map((a) => ({ ...a, url: null })),
+          triaged: true,
+          reply: null,
+        },
+      },
+    });
+    await handleIntakeInbound(memory.db, job());
+    expect(mocks.stream).not.toHaveBeenCalled();
+    expect(memory.rows("intake_requests")[0]).toMatchObject({ subject: "Triaged before", assignee_id: sam });
+    expect(memory.rows("documents")).toHaveLength(1);
   });
   it("keeps a document an earlier attempt finished when a retry runs again", async () => {
     setup({ payload: emailPayload(), model: false });
@@ -523,7 +583,8 @@ describe("recording a Slack thread", () => {
     expect(slackReplies).toMatchObject({
       channel: "C42",
       thread_ts: "1793610840.000100",
-      text: `Logged for Legal: <https://mike.example.com/intake/${inboundId}?org=${org}|Need the Supplier Co NDA signed off>. Not assigned to a reviewer yet.`,
+      // No link: the request's page is for the organization's members only.
+      text: "Thanks, I've passed this to Legal. Someone from the team will pick it up soon.",
     });
     // Marked, so a retry can find it; MikeGC's own name, not a member's.
     expect(JSON.parse(String(slackReplies.metadata))).toEqual({
@@ -533,15 +594,190 @@ describe("recording a Slack thread", () => {
     expect(slackReplies.username).toBeUndefined();
     expect(memory.rows("intake_outbound")[0]).toMatchObject({ status: "sent", external_id: "1793610999.000900" });
   });
-  it("names the reviewer, and links Personal requests as personal", async () => {
+  it("names the reviewer who will pick the request up", async () => {
     setup({ payload: slackPayload({ thread_ts: null, ts: "1793610840.000100", user: "U1", text: "<@UBOT> NDA please" }), source: "slack", kind: "personal" });
     await handleIntakeInbound(memory.db, job());
     expect(slackCalls.some((c) => c.method === "conversations.replies")).toBe(false);
     await deliverQueued();
     expect(slackReplies.thread_ts).toBe("1793610840.000100");
     expect(slackReplies.text).toBe(
-      `Logged for Legal: <https://mike.example.com/intake/${inboundId}?org=personal|Review Supplier Co NDA>. Assigned to Sam Lawyer.`,
+      "Thanks, I've passed this to Legal. Sam Lawyer will pick it up.",
     );
+  });
+  it("answers a greeting in the chat without recording a request", async () => {
+    setup({ payload: slackPayload({ thread_ts: null, ts: "1793610840.000100", user: "U1", text: "<@UBOT> hi there" }), source: "slack" });
+    modelCalls([replyCall("Hi! Tell me what you need from Legal & I'll pass it on."), recordCall()]);
+    await expect(handleIntakeInbound(memory.db, job())).resolves.toMatchObject({ request_id: null, replied: true });
+    // A reply ends the run: nothing after it is done.
+    expect(model.results).toEqual([["(the run ended)"]]);
+    expect(memory.rows("intake_requests")).toEqual([]);
+    expect(memory.rows("intake_outbound")).toEqual([]);
+    expect(slackReplies).toMatchObject({
+      channel: "C42",
+      thread_ts: "1793610840.000100",
+      text: "Hi! Tell me what you need from Legal &amp; I'll pass it on.",
+    });
+    expect(row()).toMatchObject({ status: "done", payload: null });
+    // Remembered with what MikeGC said, so a reply there without a mention
+    // reaches MikeGC and is read with it.
+    expect(memory.rows("intake_conversations")).toEqual([
+      expect.objectContaining({
+        org_id: org,
+        source: "slack",
+        thread_key: ":C42:1793610840.000100",
+        rounds: 1,
+        replies: [{ at: expect.stringMatching(/UTC$/), text: "Hi! Tell me what you need from Legal & I'll pass it on." }],
+      }),
+    ]);
+  });
+  it("reads the next message in the thread with MikeGC's earlier answer, and records it once it's clear", async () => {
+    setup({ payload: slackPayload({ thread_ts: "1793610840.000100", ts: "1793610900.000300", user: "U1", text: "It's a supplier NDA" }), source: "slack" });
+    memory.rows("intake_conversations").push({
+      org_id: org,
+      source: "slack",
+      thread_key: ":C42:1793610840.000100",
+      rounds: 1,
+      replies: [{ at: "2 Nov 2026, 09:14 UTC", text: "Is Acme a customer or a supplier?" }],
+    });
+    await expect(handleIntakeInbound(memory.db, job())).resolves.toMatchObject({ request_id: inboundId });
+    const prompt = model.requests[0]!.messages[0]!.content;
+    expect(prompt).toContain("--- MikeGC's earlier replies in this thread ---\nMikeGC, 2 Nov 2026, 09:14 UTC:\nIs Acme a customer or a supplier?");
+    expect(memory.rows("intake_requests")[0]).toMatchObject({ assignee_id: sam });
+  });
+  it("records the message once MikeGC has answered in its thread a few times", async () => {
+    setup({ payload: slackPayload({ thread_ts: null, ts: "1793610840.000100", user: "U1", text: "<@UBOT> wassup" }), source: "slack" });
+    memory.rows("intake_conversations").push({ org_id: org, source: "slack", thread_key: ":C42:1793610840.000100", rounds: 3 });
+    modelCalls([replyCall("Hi again!")], [recordCall({ subject: "Wassup", attachments: [] }), ruleCall(0)]);
+    await expect(handleIntakeInbound(memory.db, job())).resolves.toMatchObject({ request_id: inboundId });
+    expect(model.results[0]).toEqual(["refused: you have answered in this thread 3 times: call record_request"]);
+    expect(memory.rows("intake_requests")).toHaveLength(1);
+  });
+  it("records mail through Postmark even when the model would only have replied: it has no thread", async () => {
+    setup({ payload: emailPayload() });
+    modelCalls([replyCall("Hi!")]);
+    await handleIntakeInbound(memory.db, job());
+    expect(model.results).toEqual([["refused: reply doesn't apply to this message"]]);
+    // A run that does nothing records the message as it arrived, unassigned.
+    expect(memory.rows("intake_requests")).toEqual([
+      expect.objectContaining({ subject: "NDA with Supplier Co", assignee_id: null }),
+    ]);
+  });
+  it("records a message with attachments rather than answering it without a request", async () => {
+    setup({ payload: slackPayload(), source: "slack" });
+    modelCalls([replyCall("Is Acme a customer or a supplier?")], [recordCall(), ruleCall(1)]);
+    await handleIntakeInbound(memory.db, job());
+    expect(model.results[0]).toEqual(["refused: the message has attachments: call record_request first, then reply"]);
+    expect(memory.rows("intake_requests")[0]).toMatchObject({ assignee_id: sam });
+  });
+  it("answers an email that isn't a request in its thread, as in a chat, recording nothing", async () => {
+    setup({ payload: gmailPayload(), source: "gmail" });
+    mocks.gmailDeliver.mockResolvedValue({ externalId: "sent-1@mail.gmail.com", documents: [] });
+    modelCalls([replyCall("Hi! Tell me what you need from Legal and I'll pass it on.")]);
+    await expect(handleIntakeInbound(memory.db, job())).resolves.toMatchObject({ request_id: null, replied: true });
+    expect(memory.rows("intake_requests")).toEqual([]);
+    expect(memory.rows("intake_outbound")).toEqual([]);
+    expect(memory.rows("intake_channel_links")).toEqual([]);
+    // A reply to the sender's own message, in its thread, with no link behind it.
+    const [, link, message] = mocks.gmailDeliver.mock.calls[0]!;
+    expect(link).toMatchObject({
+      id: "",
+      source: "gmail",
+      thread_key: "gmail:t-9",
+      address: expect.objectContaining({
+        to: ["pat@firm.test"],
+        thread: "t-9",
+        reply_to_message_id: "gm-9",
+        subject: "How are you",
+        references: ["<hello@firm.test>"],
+      }),
+    });
+    expect(message).toMatchObject({
+      kind: "answer",
+      author: { kind: "mikegc" },
+      text: "Hi! Tell me what you need from Legal and I'll pass it on.",
+    });
+    expect(row()).toMatchObject({ status: "done", payload: null });
+    // Counted, so after a few answers the thread's next email is recorded.
+    expect(memory.rows("intake_conversations")).toEqual([
+      expect.objectContaining({ org_id: org, source: "gmail", thread_key: "gmail:t-9", rounds: 1 }),
+    ]);
+  });
+  it("answers an email once when counting the answer fails and the job retries", async () => {
+    setup({ payload: gmailPayload(), source: "gmail" });
+    mocks.gmailDeliver.mockResolvedValue({ externalId: "sent-1@mail.gmail.com", documents: [] });
+    modelCalls([replyCall("Hi!")]);
+    let outage = true;
+    memory.intercept = ({ table }) =>
+      table === "intake_conversations" && outage ? { message: "connection reset" } : null;
+    await expect(handleIntakeInbound(memory.db, job())).rejects.toBeTruthy();
+    outage = false;
+    await expect(handleIntakeInbound(memory.db, job())).resolves.toMatchObject({ request_id: null, replied: true });
+    expect(mocks.gmailDeliver).toHaveBeenCalledTimes(1);
+    expect(memory.rows("intake_conversations")).toEqual([
+      expect.objectContaining({ source: "gmail", thread_key: "gmail:t-9", rounds: 1 }),
+    ]);
+  });
+  it("answers and records in Teams the same way, in the message's own thread", async () => {
+    const teams = (activity: string, text: string) => ({
+      kind: "teams",
+      tenant_id: "tenant-1",
+      service_url: "https://smba.trafficmanager.net/emea/",
+      conversation_id: "19:abc@thread.tacv2;messageid=1700000000001",
+      team_id: "team-1",
+      // Without a group, the thread isn't read from Graph: the message alone.
+      aad_group_id: null,
+      channel_id: "19:abc@thread.tacv2",
+      root_message_id: "1700000000001",
+      team_name: "Legal",
+      channel_name: "Requests",
+      activity_id: activity,
+      from: { id: "29:jane", aad_object_id: "aad-jane", name: "Jane Business" },
+      date: "2026-11-02T09:14:00.000Z",
+      text,
+      files: [],
+    });
+    setup({ payload: teams("1700000000001", "Hi MikeGC"), source: "slack" });
+    mocks.teamsDeliver.mockResolvedValue({ externalId: "1700000000009", documents: [] });
+    modelCalls([replyCall("Hi! What do you need from Legal?")]);
+    await expect(handleIntakeInbound(memory.db, job())).resolves.toMatchObject({ replied: true });
+    expect(mocks.teamsDeliver.mock.calls[0]![2]).toMatchObject({ kind: "answer", text: "Hi! What do you need from Legal?" });
+    const key = "tenant-1:19:abc@thread.tacv2;messageid=1700000000001";
+    expect(memory.rows("intake_conversations")).toEqual([
+      expect.objectContaining({ source: "teams", thread_key: key, rounds: 1 }),
+    ]);
+    // The next message in the thread is read with that answer, and recorded.
+    setup({ payload: teams("1700000000002", "I need the Acme NDA reviewed"), source: "slack" });
+    memory.rows("intake_conversations").push({
+      org_id: org,
+      source: "teams",
+      thread_key: key,
+      rounds: 1,
+      replies: [{ at: "2 Nov 2026, 09:14 UTC", text: "Hi! What do you need from Legal?" }],
+    });
+    modelCalls([recordCall({ attachments: [] }), ruleCall(1)]);
+    await expect(handleIntakeInbound(memory.db, job())).resolves.toMatchObject({ request_id: inboundId });
+    expect(model.requests[0]!.messages[0]!.content).toContain("CHANNEL: Teams");
+    expect(model.requests[0]!.messages[0]!.content).toContain("MikeGC, 2 Nov 2026, 09:14 UTC:\nHi! What do you need from Legal?");
+    expect(memory.rows("intake_requests")[0]).toMatchObject({ assignee_id: sam });
+    expect(memory.rows("intake_channel_links")).toEqual([expect.objectContaining({ source: "teams", thread_key: key })]);
+    expect(memory.rows("intake_outbound")).toEqual([expect.objectContaining({ kind: "acknowledgement" })]);
+  });
+  it("answers an Outlook email in its thread, as in Gmail", async () => {
+    setup({ payload: { ...gmailPayload(), provider: "graph", provider_id: "AAMk-9", thread: "conv-9" }, source: "gmail" });
+    mocks.outlookDeliver.mockResolvedValue({ externalId: "sent-1", documents: [] });
+    modelCalls([replyCall("Hi! What do you need from Legal?")]);
+    await expect(handleIntakeInbound(memory.db, job())).resolves.toMatchObject({ replied: true });
+    expect(model.requests[0]!.messages[0]!.content).toContain("CHANNEL: Outlook");
+    expect(mocks.outlookDeliver.mock.calls[0]![1]).toMatchObject({ source: "outlook", address: expect.objectContaining({ reply_to_message_id: "AAMk-9" }) });
+    expect(memory.rows("intake_conversations")).toEqual([expect.objectContaining({ source: "outlook", rounds: 1 })]);
+  });
+  it("records an email once MikeGC has answered in its thread a few times", async () => {
+    setup({ payload: gmailPayload(), source: "gmail" });
+    memory.rows("intake_conversations").push({ org_id: org, source: "gmail", thread_key: "gmail:t-9", rounds: 3 });
+    modelCalls([replyCall("Hi again!")]);
+    await expect(handleIntakeInbound(memory.db, job())).resolves.toMatchObject({ request_id: inboundId });
+    expect(memory.rows("intake_requests")).toHaveLength(1);
+    expect(mocks.gmailDeliver).not.toHaveBeenCalled();
   });
   it("acknowledges once when the job is retried", async () => {
     setup({ payload: slackPayload(), source: "slack", model: false });
@@ -598,17 +834,13 @@ describe("recording a Slack thread", () => {
   });
   it("asks the requester in the acknowledgement when it can't yet choose a rule", async () => {
     setup({ payload: slackPayload(), source: "slack" });
-    mocks.completeText.mockResolvedValue(
-      JSON.stringify({
-        subject: "Review Acme NDA",
-        summary: "An NDA with Acme.",
-        requester_name: "Jane Business",
-        rule: null,
-        questions: ["Is Acme a customer or a supplier?", "See https://evil.test for details"],
-        attachments: [1],
-      }),
-    );
+    modelCalls([
+      recordCall({ subject: "Review Acme NDA", summary: "An NDA with Acme.", due_date: "" }),
+      replyCall("Is Acme a customer or a supplier?\nSee https://evil.test for details"),
+    ]);
     await expect(handleIntakeInbound(memory.db, job())).resolves.toMatchObject({ asked: true });
+    // The reply ended the run in its step.
+    expect(model.results).toEqual([["(the run ended)"]]);
     expect(memory.rows("intake_requests")[0]).toMatchObject({
       assignee_id: null,
       state: "needs_information",
@@ -620,7 +852,7 @@ describe("recording a Slack thread", () => {
       expect.objectContaining({
         kind: "question",
         automated: true,
-        body: "Before Legal starts, MikeGC needs:\n1. Is Acme a customer or a supplier?",
+        body: "One quick question so it gets to the right person:\nIs Acme a customer or a supplier?",
       }),
     ]);
     expect(memory.rows("intake_outbound")).toEqual([
@@ -629,22 +861,22 @@ describe("recording a Slack thread", () => {
     expect(mocks.enqueueDbJob.mock.calls.some(([, input]) => input.kind === "intake.preprocess")).toBe(false);
     await deliverQueued();
     expect(slackReplies.text).toBe(
-      `Logged for Legal: <https://mike.example.com/intake/${inboundId}?org=${org}|Review Acme NDA>. Not assigned to a reviewer yet.\n\n` +
-        "Before Legal starts, MikeGC needs:\n1. Is Acme a customer or a supplier?",
+      // Asking before choosing who gets it, MikeGC promises no one yet.
+      "Thanks, I've passed this to Legal. One quick question so it gets to the right person:\n" +
+        "Is Acme a customer or a supplier?",
     );
   });
   it("doesn't ask by email through Postmark, where no thread can be answered", async () => {
-    const asking = JSON.stringify({ subject: "NDA", rule: 1, questions: ["Is the contract over $250k?"], attachments: [] });
     setup({ payload: emailPayload() });
-    mocks.completeText.mockResolvedValue(asking);
+    modelCalls([recordCall(), replyCall("Is the contract over $250k?")], [ruleCall(1)]);
     await handleIntakeInbound(memory.db, job());
+    expect(model.results[0]).toEqual(["recorded", "refused: reply doesn't apply to this message"]);
     expect(memory.rows("intake_requests")[0]).toMatchObject({ assignee_id: sam });
     expect(memory.rows("intake_messages")).toEqual([]);
   });
   it("keeps the rule's reviewer for mail from another request's thread, where it can't ask", async () => {
     // The thread stays the other request's, so this one is never linked to
     // it: questions planned for it could never be sent.
-    const asking = JSON.stringify({ subject: "NDA", rule: 1, questions: ["Is the contract over $250k?"], attachments: [] });
     setup({
       payload: {
         kind: "mail",
@@ -672,10 +904,38 @@ describe("recording a Slack thread", () => {
       thread_key: "gmail:t-1",
       address: {},
     });
-    mocks.completeText.mockResolvedValue(asking);
+    modelCalls([recordCall({ attachments: [] }), replyCall("Is the contract over $250k?")], [ruleCall(1)]);
     await expect(handleIntakeInbound(memory.db, job())).resolves.toMatchObject({ asked: false });
+    expect(model.requests[0]!.tools!.map((t) => t.function.name)).not.toContain("reply");
     expect(memory.rows("intake_requests")[0]).toMatchObject({ assignee_id: sam });
     expect(memory.rows("intake_messages").filter((m) => m.kind === "question")).toEqual([]);
+  });
+  it("records mail from another request's thread instead of answering it there", async () => {
+    setup({
+      payload: {
+        ...gmailPayload(),
+        thread: "t-1",
+        from: { name: "Pat", email: "pat@partner.test" },
+        subject: "Re: NDA",
+        text: "How are you?",
+        related_request_id: "request-0",
+      },
+      source: "gmail",
+    });
+    memory.rows("intake_channel_links").push({
+      id: "link-0",
+      org_id: org,
+      request_id: "request-0",
+      source: "gmail",
+      thread_key: "gmail:t-1",
+      address: {},
+    });
+    modelCalls([replyCall("Hi!")]);
+    await expect(handleIntakeInbound(memory.db, job())).resolves.toMatchObject({ request_id: inboundId });
+    expect(model.results).toEqual([["refused: reply doesn't apply to this message"]]);
+    expect(memory.rows("intake_requests")).toHaveLength(1);
+    expect(mocks.gmailDeliver).not.toHaveBeenCalled();
+    expect(memory.rows("intake_conversations")).toEqual([]);
   });
   it("leaves the acknowledgement to preprocessing's readiness check, which may ask too", async () => {
     setup({ payload: slackPayload(), source: "slack" });
@@ -734,7 +994,7 @@ describe("when a message fails for good", () => {
       error: "The request was recorded, but MikeGC couldn't add all of its documents or reply in its thread.",
     });
     await deliverQueued();
-    expect(String(slackReplies.text)).toMatch(/^Logged for Legal: </);
+    expect(String(slackReplies.text)).toMatch(/^Thanks, I.ve passed this to Legal\./);
   });
   it("links the thread before acknowledging, when the job failed before it could", async () => {
     setup({ payload: slackPayload(), source: "slack", model: false });
@@ -747,7 +1007,7 @@ describe("when a message fails for good", () => {
     await markIntakeInboundFailed(memory.db, job());
     expect(memory.rows("intake_channel_links")).toHaveLength(1);
     await deliverQueued();
-    expect(String(slackReplies.text)).toMatch(/^Logged for Legal: </);
+    expect(String(slackReplies.text)).toMatch(/^Thanks, I.ve passed this to Legal\./);
   });
   it("releases an email's staged attachments before it settles, so settling can't leave them behind", async () => {
     setup({ payload: emailPayload() });

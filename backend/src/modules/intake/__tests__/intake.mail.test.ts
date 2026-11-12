@@ -152,8 +152,8 @@ describe("replies in a request's thread", () => {
     );
     expect(body).toBe(
       "Emma Chen (Legal):\nApproved with the changes attached.\n\n" +
-        "Too large to email: big.pdf. Ask Legal for a copy.\n\n" +
-        "Reply to this email to answer. Your reply goes to the Legal team's request.",
+        "big.pdf was too large to email, so ask Legal for a copy.\n\n" +
+        "Just reply to this email and Legal will see your answer.",
     );
   });
 });

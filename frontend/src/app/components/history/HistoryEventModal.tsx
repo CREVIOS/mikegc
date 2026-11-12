@@ -267,9 +267,12 @@ export function HistoryEventModal({
                 }
               : undefined
         }
+        backAction={
+          preview ? { label: "Back", onClick: () => setPreview(false) } : undefined
+        }
         secondaryAction={
           preview
-            ? { label: "Back", onClick: () => setPreview(false) }
+            ? undefined
             : privateAccess && hasAccess
               ? {
                   label: "End access",

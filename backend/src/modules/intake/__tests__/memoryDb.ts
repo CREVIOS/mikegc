@@ -494,6 +494,45 @@ export function requesterLoopRpc(): Record<string, RpcHandler> {
         error: null,
       };
     },
+    intake_update_automated: (args, memory) => {
+      const request = findRequest(memory, args.p_org, args.p_request);
+      if (!request) return { data: null, error: { code: "P0002" } };
+      if (memory.rows("intake_messages").some((m) => m.id === args.p_note)) return { data: [], error: null };
+      if (["resolved", "cancelled"].includes(String(request.state))) return { data: [], error: null };
+      const locked = (request.member_edited_fields as string[] | undefined) ?? [];
+      const values: Record<string, unknown> = {
+        subject: args.p_subject,
+        description: args.p_description,
+        requested_by_date: args.p_date,
+      };
+      const applied = Object.keys(values).filter(
+        (field) => values[field] != null && values[field] !== request[field] && !locked.includes(field),
+      );
+      if (!applied.length) return { data: [], error: null };
+      const lines = applied
+        .map((field) => (args.p_lines as Record<string, string>)[field])
+        .filter((said): said is string => !!said?.trim());
+      const said =
+        lines.length === 0
+          ? "the details"
+          : lines.length === 1
+            ? lines[0]
+            : lines.length === 2
+              ? `${lines[0]} and ${lines[1]}`
+              : `${lines[0]}, ${lines[1]} and ${lines[2]}`;
+      for (const field of applied) request[field] = values[field];
+      memory.rows("intake_messages").push({
+        id: args.p_note,
+        org_id: args.p_org,
+        request_id: request.id,
+        author_id: null,
+        kind: "note",
+        body: `Updated ${said} from the requester's reply.`,
+        automated: true,
+        created_at: new Date().toISOString(),
+      });
+      return { data: applied, error: null };
+    },
     intake_record_delivery: (args, memory) => {
       const row = memory.rows("intake_outbound").find((o) => o.id === args.p_outbound && o.org_id === args.p_org);
       if (!row) return { data: false, error: null };

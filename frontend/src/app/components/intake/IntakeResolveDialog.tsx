@@ -106,7 +106,9 @@ export function IntakeResolveDialog({
         onClick: onConfirm,
         disabled: locked,
       }}
-      cancelAction={{ label: "Back", onClick: onClose, disabled: locked }}
+      // Back closes the dialog; there is no separate Cancel.
+      backAction={{ label: "Back", onClick: onClose, disabled: locked }}
+      cancelAction={false}
     >
       <form
         className="space-y-4 pb-4"

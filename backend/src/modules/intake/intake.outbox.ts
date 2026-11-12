@@ -40,7 +40,7 @@ export async function askRequester(
     p_request: args.requestId,
     p_outbound: ids.outboundId,
     p_message: ids.messageId,
-    p_body: questionBody(args.questions),
+    p_body: questionBody(args.questions, args.stage),
     p_stage: args.stage,
     p_acknowledge: args.acknowledge,
     p_preprocess: args.preprocess ?? null,

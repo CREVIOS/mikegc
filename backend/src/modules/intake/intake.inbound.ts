@@ -8,7 +8,7 @@ import {
 } from "../../lib/serviceResult";
 import type { Db } from "../../lib/supabase";
 import { dispatchIntakeInbound } from "./intake.automationJob";
-import { findThreadLink, routeThreadMessage } from "./intake.channels";
+import { findConversation, findThreadLink, routeThreadMessage } from "./intake.channels";
 import {
   MAX_MESSAGE_CHARS,
   cleanText,
@@ -16,6 +16,7 @@ import {
   type SlackInboundPayload,
   type TeamsInboundPayload,
 } from "./intake.inboundPayload";
+import { insertInbound, type InboundInsert } from "./intake.inboundStore";
 import { dispatchIntakeReply } from "./intake.reply";
 import { slackSigningSecret } from "./intake.secrets";
 import { automationByWebhook, type AutomationRow } from "./intake.settingsRow";
@@ -48,33 +49,6 @@ export {
 const NOT_FOUND = failure("not_found", "Not found.");
 
 export type InboundReceipt = { status: "received" | "duplicate" | "ignored" };
-
-type InboundInsert = {
-  id?: string;
-  org_id: string;
-  source: "email" | "slack" | "outlook" | "gmail" | "teams";
-  kind?: "request" | "reply";
-  external_id: string;
-  status: "pending" | "ignored";
-  payload: Record<string, unknown> | null;
-  request_id?: string | null;
-  error?: string | null;
-};
-
-/** Store a message once: the new row's id, or null if it was stored before. */
-export async function insertInbound(
-  db: Db,
-  row: InboundInsert,
-): Promise<ServiceResult<string | null>> {
-  const { data, error } = await db
-    .from("intake_inbound")
-    .insert({ ...row, error: row.error ?? null })
-    .select("id")
-    .single();
-  if (error && (error as { code?: string }).code === "23505") return ok(null);
-  if (error || !data) return internalFailure(error);
-  return ok((data as { id: string }).id);
-}
 
 /**
  * Hand a stored message to its job. If that fails the sender is answered
@@ -268,6 +242,9 @@ export async function receiveSlackEvent(
   const team = envelope.data.team_id ?? settings.slack_team_id ?? "";
   const externalId = `${message.channel}:${message.ts}`;
   const inThread = !!message.thread_ts && message.thread_ts !== message.ts;
+  // A thread where MikeGC answered without recording a request: replies
+  // there reach it without a mention.
+  let conversing = false;
   if (inThread) {
     let link;
     try {
@@ -300,9 +277,21 @@ export async function receiveSlackEvent(
       });
       return routed.ok ? ok({}) : routed;
     }
+    if (message.type === "message") {
+      try {
+        conversing = !!(await findConversation(
+          db,
+          settings.org_id,
+          "slack",
+          `${team}:${message.channel}:${message.thread_ts}`,
+        ));
+      } catch (error) {
+        return internalFailure(error);
+      }
+    }
   }
-  // Only a mention of MikeGC starts a request.
-  if (message.type !== "app_mention") return ok({});
+  // Only a mention of MikeGC starts a request, or a reply in its conversation.
+  if (message.type !== "app_mention" && !conversing) return ok({});
   const payload: SlackInboundPayload = {
     kind: "slack",
     team_id: team || null,
@@ -395,7 +384,16 @@ export async function receiveTeamsActivity(
     });
     return routed.ok ? ok({ status: routed.data }) : routed;
   }
-  if (!teamsMentionsBot(activity, settings.teams_app_id)) return ok({ status: "ignored" });
+  if (!teamsMentionsBot(activity, settings.teams_app_id)) {
+    // Unless MikeGC answered in this thread without recording a request.
+    let conversing;
+    try {
+      conversing = await findConversation(db, settings.org_id, "teams", `${tenant}:${conversationId}`);
+    } catch (error) {
+      return internalFailure(error);
+    }
+    if (!conversing) return ok({ status: "ignored" });
+  }
   const channelData = activity.channelData ?? {};
   const payload: TeamsInboundPayload = {
     kind: "teams",

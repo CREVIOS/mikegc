@@ -150,14 +150,9 @@ function QuickActionsModalForWorkspace({
       onClose={close}
       size="md"
       breadcrumbs={breadcrumbs}
-      secondaryAction={
+      backAction={
         screen !== "list"
-          ? {
-              label: "Back",
-              variant: "primary",
-              onClick: resetToList,
-              disabled: saving,
-            }
+          ? { label: "Back", onClick: resetToList, disabled: saving }
           : undefined
       }
       cancelAction={false}

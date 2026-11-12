@@ -421,8 +421,27 @@ export type TextCardEvent = {
   text: string;
 };
 
+/** A status change the assistant proposes for its chat's intake request. */
+export type IntakeStatusChange = "resolve" | "cancel" | "wait" | "resume" | "reopen";
+
+/**
+ * A proposed status change for the intake request a chat was started from.
+ * Nothing changes until the user confirms it on the card, which sends the
+ * request's own command as them.
+ */
+export type IntakeActionEvent = {
+  type: "intake_action";
+  card_id: string;
+  org_id: string;
+  request_id: string;
+  action: IntakeStatusChange;
+  /** The resolution, the reason for cancelling, or a note on the change. */
+  note?: string;
+};
+
 export type AssistantEvent =
   | TextCardEvent
+  | IntakeActionEvent
   | DocumentSearchEvent
   | { type: "reasoning"; text: string }
   | AskInputsEvent
@@ -986,6 +1005,12 @@ export interface IntakeAutomationUpdate {
   teams_tenant_id?: string;
   /** Write-only. Saving it checks the app's credentials with Microsoft. */
   teams_client_secret?: string;
+  /**
+   * Copy the connected Outlook mailbox's Entra app (tenant ID, client ID and
+   * client secret) into Teams, then check it with Microsoft as a typed one
+   * is. Not sent with teams_app_id, teams_tenant_id or teams_client_secret.
+   */
+  teams_use_outlook_app?: true;
   slack_enabled?: boolean;
   /** Write-only. Saving a bot token checks it with Slack first. */
   slack_signing_secret?: string;
@@ -1034,6 +1059,19 @@ export type IntakeMailboxConnection =
       client_id: string;
       /** Write-only; may be left out to keep the saved one. */
       client_secret?: string;
+      use_teams_app?: never;
+    }
+  | {
+      provider: "graph";
+      mailbox: string;
+      /**
+       * Connect with the Teams channel's Entra app: its tenant ID, client ID
+       * and client secret are copied to the mailbox's connection.
+       */
+      use_teams_app: true;
+      tenant_id?: never;
+      client_id?: never;
+      client_secret?: never;
     }
   | {
       provider: "gmail";

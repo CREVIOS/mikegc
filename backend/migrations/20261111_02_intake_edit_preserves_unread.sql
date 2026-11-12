@@ -1,4 +1,4 @@
--- Migration date: 2026-11-04
+-- Migration date: 2026-11-11
 -- Editing request metadata is human takeover, not acknowledgement that its
 -- requester replies were read. Preserve the explicit Messages watermark.
 
@@ -7,6 +7,7 @@ create or replace function public.intake_edit_request(p_org uuid, p_actor uuid, 
   p_requester_team text default null, p_date date default null)
 returns jsonb language plpgsql set search_path = public, pg_temp as $$
 declare r public.intake_requests; input jsonb; replay jsonb; receipt jsonb; extra jsonb; next_state text;
+  edited text[];
 begin
   perform public.intake_lock_org(p_org, p_actor);
   if not public.intake_can_read(p_org, p_actor, p_request) then
@@ -28,9 +29,20 @@ begin
   -- requester replies were read; their explicit seen watermark stays intact.
   next_state := case when r.clarify_stage is not null and r.state = 'needs_information'
     then case when r.assignee_id is null then 'submitted' else 'in_review' end else r.state end;
+  edited := r.member_edited_fields;
+  if p_subject is distinct from r.subject and not 'subject' = any(edited) then
+    edited := edited || 'subject'::text;
+  end if;
+  if p_description is distinct from r.description and not 'description' = any(edited) then
+    edited := edited || 'description'::text;
+  end if;
+  if p_date is distinct from r.requested_by_date and not 'requested_by_date' = any(edited) then
+    edited := edited || 'requested_by_date'::text;
+  end if;
   update public.intake_requests set subject = p_subject, description = p_description,
     requester_name = p_requester_name, requester_email = p_requester_email, requester_team = p_requester_team,
     requested_by_date = p_date, clarify_stage = null, clarify_stopped = true, state = next_state,
+    member_edited_fields = edited,
     version = version + 1, updated_at = now()
     where id = p_request;
   insert into public.intake_events(org_id, request_id, actor_id, kind, from_state, to_state, assignee_id)

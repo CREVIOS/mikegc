@@ -1,7 +1,9 @@
 import { z } from "zod";
 import { DbJobDeferredError } from "../../lib/dbq/types";
 import {
+  acknowledgementLines,
   ChannelDeliveryError,
+  DOCUMENTS_ONLY_TEXT,
   memberSender,
   type ChannelAdapter,
   type ChannelLink,
@@ -520,14 +522,9 @@ export function teamsMessageText(
 ): string {
   const lines: string[] = [];
   if (message.acknowledgement) {
-    const ack = message.acknowledgement;
-    lines.push(
-      `Logged for Legal: [${teamsEscape(ack.subject)}](${ack.link}). ` +
-        (ack.assignee ? `Assigned to ${teamsEscape(ack.assignee)}.` : "Not assigned to a reviewer yet."),
-    );
-    if (message.text) lines.push("", ...message.text.split("\n").map(teamsEscape));
+    lines.push(...acknowledgementLines(message.acknowledgement, message.text, teamsEscape));
   } else {
-    const text = message.text || (message.documents.length ? "Legal sent these documents." : "");
+    const text = message.text || (message.documents.length ? DOCUMENTS_ONLY_TEXT : "");
     if (message.author.kind === "member") {
       const who = teamsEscape(memberSender(message.author.name, options.fromName));
       lines.push(message.kind === "question" ? `${who} asks:` : `${who}:`);
@@ -538,7 +535,7 @@ export function teamsMessageText(
   if (linked.length)
     lines.push("", `Documents: ${linked.map((f) => `[${teamsEscape(f.name)}](${f.url})`).join(" · ")}`);
   if (options.withheld.length)
-    lines.push("", `Documents from Legal: ${options.withheld.map(teamsEscape).join(", ")}. Ask Legal for a copy.`);
+    lines.push("", `I couldn't share ${options.withheld.map(teamsEscape).join(", ")} here, so ask Legal for a copy.`);
   // Teams markdown needs two spaces or a blank line for a break.
   return lines.join("  \n");
 }
