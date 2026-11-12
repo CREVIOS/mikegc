@@ -139,7 +139,7 @@ describe("normalisation", () => {
     it("unifies the spellings of য় ো and khanda-ta", () => {
         expect(normalizeBangla("য়")).toBe(normalizeBangla("য়"));
         expect(normalizeBangla("কো")).toBe("কো");
-        expect(normalizeBangla("হঠাত্‍")).toBe("হঠাৎ");
+        expect(normalizeBangla("হঠাত্\u200D")).toBe("হঠাৎ");
     });
 
     it("converts digits both ways", () => {

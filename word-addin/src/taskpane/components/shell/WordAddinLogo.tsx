@@ -22,7 +22,7 @@ export function WordAddinLogo({
           large ? "text-4xl" : "text-2xl"
         )}
       >
-        Spectre<span className="text-(--brand-accent-text)">GC</span>
+        Spectre
       </span>
     </div>
   );

@@ -134,9 +134,9 @@ export function decodeBdLawsBody(bytes: Uint8Array, contentType: string | null):
     if (bom16be || bom16le || label.startsWith("utf-16") || looks16) {
         const littleEndian = bom16le || (!bom16be && oddZeros > evenZeros);
         const text = new TextDecoder(littleEndian ? "utf-16le" : "utf-16be").decode(bytes);
-        return text.replace(/^﻿/, "");
+        return text.replace(/^\uFEFF/, "");
     }
-    return new TextDecoder("utf-8").decode(bytes).replace(/^﻿/, "");
+    return new TextDecoder("utf-8").decode(bytes).replace(/^\uFEFF/, "");
 }
 
 async function fetchPage(url: string, deps: Deps): Promise<string> {

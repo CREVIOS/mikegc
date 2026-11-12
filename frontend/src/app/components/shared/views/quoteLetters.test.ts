@@ -16,7 +16,7 @@ describe("quote letters", () => {
     it("matches precomposed and decomposed spellings", () => {
         expect(onlyLetters("য়")).toBe(onlyLetters("য়"));
         expect(onlyLetters("কো")).toBe(onlyLetters("কো"));
-        expect(onlyLetters("র‍্যাব")).toBe(onlyLetters("র্যাব"));
+        expect(onlyLetters("র\u200D্যাব")).toBe(onlyLetters("র্যাব"));
     });
 
     it("maps a stripped position back to the original character", () => {

@@ -46,10 +46,10 @@ const GLYPHS: Readonly<Record<string, string>> = {
     "®": "ষ্", "¯": "স্", "”": "চ্", "˜": "দ্", "™": "দ্", "š": "ন্", "›": "ন্",
     "¤": "ম্",
     // Phalas and other forms that join the previous consonant.
-    "&": "্‌", "ú": "্প", "è": "্ন", "^": "্ব", "‘": "্তু", "’": "্থ",
+    "&": "্\u200C", "ú": "্প", "è": "্ন", "^": "্ব", "‘": "্তু", "’": "্থ",
     "‹": "্ক", "Œ": "্ক্র", "—": "্ত", "Í": "্ত", "œ": "্ন", "Ÿ": "্ব",
     "¡": "্ব", "¢": "্ভ", "£": "্ভ্র", "¥": "্ম", "¦": "্ব", "§": "্ম",
-    "¨": "্য", "ª": "্র", "«": "্র", "¬": "্ল", "­": "্ল", "Ö": "্র",
+    "¨": "্য", "ª": "্র", "«": "্র", "¬": "্ল", "\u00AD": "্ল", "Ö": "্র",
     // Vowel signs that follow their consonant.
     v: "া", x: "ী", y: "ু", z: "ু", "æ": "ু", "“": "ু", "–": "ু", "~": "ূ",
     "ƒ": "ূ", "‚": "ূ", "„": "ৃ", "…": "ৃ", "Š": "ৗ",
@@ -68,10 +68,10 @@ const PRE_BASE: Readonly<Record<string, string>> = {
 const REPH = "©";
 
 // Private-use markers that hold a glyph's place until it is reordered.
-const MARK_I = "";
-const MARK_E = "";
-const MARK_AI = "";
-const MARK_REPH = "";
+const MARK_I = "\uE001";
+const MARK_E = "\uE002";
+const MARK_AI = "\uE003";
+const MARK_REPH = "\uE004";
 const MARK_FOR: Readonly<Record<string, string>> = {
     "ি": MARK_I,
     "ে": MARK_E,
@@ -118,7 +118,7 @@ export function bijoyToUnicode(input: string): string {
         .replace(PRE_BASE_PATTERN, (_m, mark: string, candra: string, cluster: string) =>
             `${cluster}${SIGN_FOR[mark]}${candra}`,
         )
-        .replace(/[-]/g, (mark) => SIGN_FOR[mark])
+        .replace(/[\uE001-\uE003]/g, (mark) => SIGN_FOR[mark])
         // ে + া and ে + ৗ are the two halves of ো and ৌ.
         .replace(/ো/g, "ো")
         .replace(/ৌ/g, "ৌ")

@@ -18,7 +18,7 @@ describe("Bangla text matching", () => {
     });
 
     it("ignores zero-width joiners", () => {
-        const { hits } = findTextMatches({ text: "র‍্যাব অভিযান", query: "র্যাব", maxResults: 5, contextChars: 0 });
+        const { hits } = findTextMatches({ text: "র\u200D্যাব অভিযান", query: "র্যাব", maxResults: 5, contextChars: 0 });
         expect(hits).toHaveLength(1);
     });
 

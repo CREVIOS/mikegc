@@ -197,11 +197,8 @@ describe("AppSidebar workspace switcher", () => {
     state.workspaceId = "personal";
     render(<AppSidebar isOpen onToggle={vi.fn()} />);
 
-    expect(heading()).toHaveTextContent("Spectre");
-    // The wordmark's "GC" takes the blue brand accent.
-    expect(within(heading()).getByText("GC")).toHaveClass(
-      "text-(--brand-accent-text)",
-    );
+    // The wordmark is the product name alone, with no suffix.
+    expect(heading()).toHaveTextContent(/^Spectre$/);
     expect(screen.queryByText("Personal")).not.toBeInTheDocument();
   });
 

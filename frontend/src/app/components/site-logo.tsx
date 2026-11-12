@@ -46,7 +46,7 @@ export function SiteLogo({
                 <MikeIcon size={iconSizes[size]} />
             </span>
             <span>
-                Spectre<span className="text-(--brand-accent-text)">GC</span>
+                Spectre
             </span>
         </h1>
     );

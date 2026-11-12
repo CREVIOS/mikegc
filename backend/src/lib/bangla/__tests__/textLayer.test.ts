@@ -3,8 +3,15 @@ import { textLayerQuality } from "../textLayer";
 
 describe("text layer quality", () => {
     it("rejects Bangla re-encoded into junk code points (pdf.js on a gazette)", () => {
-        const garbled = "এনািজȟ ǯর̶ েলটরী কিমশন আইন ২০২৩ এনািজȟ ǯর̶ েলটরী ǯর̶ এনািজȟ";
+        const garbled = "এনািজȟ ǯর\u0336 েলটরী কিমশন আইন ২০২৩ এনািজȟ ǯর\u0336 েলটরী ǯর\u0336 এনািজȟ";
         expect(textLayerQuality(garbled)).toBe("garbled");
+    });
+
+    it("rejects Bangla whose glyph map is broken (LibreOffice output read back by pdf.js)", () => {
+        // A PDF of "এই চুক্তি বাংলাদেশের আইন অনুযায়ী পরিচালিত হবে। …" as pdf.js extracts it.
+        const extracted =
+            "[Page 1]\nএই চুক্তি\u0006 বাংলাদে দে র আইন অনুযায়ী প রিরচা ক্তিল ত হদেব। উভয় পক্ষ এই চু ক্তি\u0006 র সকল ত\u001f  মে!দেন চলদেত বাধ্য থাক দেবন\nএবং মেকাদেনা রিবদেরাধ মে খা রি দেল তা ঢাকার আ ালদেত রিনষ্প ক্তি( হদেব।";
+        expect(textLayerQuality(extracted)).toBe("garbled");
     });
 
     it("rejects an English OCR layer laid over a Bangla scan", () => {
@@ -13,7 +20,7 @@ describe("text layer quality", () => {
     });
 
     it("rejects pages of private-use or replacement characters", () => {
-        expect(textLayerQuality(" ��")).toBe("garbled");
+        expect(textLayerQuality("\uE001\uE002\uE003 \uE004\uE005\uFFFD\uFFFD\uE006\uE007\uE008\uE009\uE00A\uE00B\uE00C\uE00D\uE00E\uE00F\uE010\uE011\uE012")).toBe("garbled");
     });
 
     it("accepts real Bangla, English and mixed pages", () => {

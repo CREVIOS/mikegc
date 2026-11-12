@@ -24,7 +24,7 @@ export function hasBengali(text: string): boolean {
 export function normalizeBangla(text: string): string {
     const nfc = text.normalize("NFC");
     if (!hasBengali(nfc)) return nfc;
-    return nfc.replace(/ত্‍/g, "ৎ");
+    return nfc.replace(/ত্\u200D/g, "ৎ");
 }
 
 const BANGLA_DIGITS = "০১২৩৪৫৬৭৮৯";

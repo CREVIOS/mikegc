@@ -534,12 +534,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                         }
                                     >
                                         {activeOrganization ? undefined : (
-                                            <>
-                                                Spectre
-                                                <span className="text-(--brand-accent-text)">
-                                                    GC
-                                                </span>
-                                            </>
+                                            <>Spectre</>
                                         )}
                                     </SidebarHeading>
                                 )}
