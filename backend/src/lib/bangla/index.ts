@@ -8,6 +8,8 @@ export {
     normalizeBangla,
 } from "./normalize";
 export {
+    banglaFontEncoding,
+    hasBijoyGlyphs,
     bijoyToUnicode,
     convertBijoyPassages,
     isBijoyFontName,

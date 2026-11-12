@@ -50,13 +50,24 @@ describe("reading Bijoy Bangla from DOCX", () => {
         const styles =
             `<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/></w:rPr></w:rPrDefault></w:docDefaults>` +
             `<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>` +
-            `<w:style w:type="paragraph" w:styleId="Bangla"><w:basedOn w:val="Normal"/><w:rPr><w:rFonts w:ascii="SutonnyOMJ" w:hAnsi="SutonnyOMJ"/></w:rPr></w:style>`;
+            `<w:style w:type="paragraph" w:styleId="Bangla"><w:basedOn w:val="Normal"/><w:rPr><w:rFonts w:ascii="SutonnyMJ" w:hAnsi="SutonnyMJ"/></w:rPr></w:style>`;
         const bytes = await makeDocx(
             `<w:p><w:pPr><w:pStyle w:val="Bangla"/></w:pPr>${run("aviv 23")}</w:p><w:p>${run("Section 23")}</w:p>`,
             styles,
         );
         await expect(extractDocxBodyText(bytes, { readableBangla: true })).resolves.toBe(
             `${"ধারা ২৩".normalize("NFC")}\nSection 23`,
+        );
+    });
+
+    it("leaves SutonnyOMJ (Unicode) text alone and converts AdarshaLipi only when it reads as Bijoy", async () => {
+        const bytes = await makeDocx(
+            `<w:p>${run("বাংলাদেশ", "SutonnyOMJ")}</w:p>` +
+                `<w:p>${run("evsjv‡`k", "AdarshaLipi")}</w:p>` +
+                `<w:p>${run("Total 25", "AdarshaLipi")}</w:p>`,
+        );
+        await expect(extractDocxBodyText(bytes, { readableBangla: true })).resolves.toBe(
+            `বাংলাদেশ\n${"বাংলাদেশ".normalize("NFC")}\nTotal 25`,
         );
     });
 

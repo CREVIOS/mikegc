@@ -481,6 +481,73 @@ export function withPrefixCacheHints(
   };
 }
 
+/**
+ * One completion over images and text, such as transcribing a scanned page.
+ * The images are sent as AI SDK image parts in a single user message.
+ */
+export async function completeAiSdkVision(
+  params: {
+    systemPrompt?: string;
+    prompt: string;
+    images: { data: Uint8Array; mediaType: string }[];
+    maxTokens?: number;
+    abortSignal?: AbortSignal;
+  },
+  config: AiSdkAdapterConfig,
+): Promise<string> {
+  const { generateText } = await import("ai");
+  const reasoning =
+    config.supportsReasoning === false
+      ? undefined
+      : normalizeReasoningLevelForModel(config.modelId, "none");
+  const requested = params.maxTokens ?? 4096;
+  const result = await generateText({
+    model: config.model,
+    system: params.systemPrompt,
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: params.prompt },
+          ...params.images.map((image) => ({
+            type: "image" as const,
+            image: image.data,
+            mediaType: image.mediaType,
+          })),
+        ],
+      },
+    ],
+    abortSignal: params.abortSignal,
+    ...(config.provider === "openai"
+      ? { providerOptions: { openai: openAiRetentionOptions() } }
+      : {}),
+    maxOutputTokens:
+      reasoning && reasoning !== "none"
+        ? requested + COMPLETION_REASONING_HEADROOM_TOKENS
+        : requested,
+    reasoning: reasoning as
+      | Exclude<NonNullable<StreamChatParams["reasoning"]>, "max">
+      | undefined,
+  });
+  return result.text;
+}
+
+/**
+ * Whether OpenAI may keep a copy of each response. Off by default: legal
+ * work is confidential, and the Responses API otherwise stores responses
+ * (for up to 30 days) so later calls can refer to them. With storage off,
+ * reasoning is carried between steps as encrypted content instead, and the
+ * results of OpenAI's own web search are not re-sent to later steps of the
+ * same answer. SPECTRE_OPENAI_STORE=true restores OpenAI's default.
+ */
+export function openAiStoresResponses(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.SPECTRE_OPENAI_STORE?.trim().toLowerCase() === "true";
+}
+
+function openAiRetentionOptions(): { store?: false } {
+  return openAiStoresResponses() ? {} : { store: false };
+}
+
 export async function streamAiSdk(
   params: StreamChatParams,
   config: AiSdkAdapterConfig,
@@ -532,6 +599,15 @@ export async function streamAiSdk(
   });
   const providerOptions: StreamTextProviderOptions = {
     ...(cacheHints.providerOptions ?? {}),
+    // Every OpenAI call, with or without a conversation to key a cache on.
+    ...(config.provider === "openai"
+      ? {
+          openai: {
+            ...(cacheHints.providerOptions?.openai ?? {}),
+            ...openAiRetentionOptions(),
+          },
+        }
+      : {}),
     ...(config.provider === "openrouter"
       ? {
           // OpenRouter's adapter does not consume AI SDK's call-level
@@ -816,6 +892,9 @@ export async function completeAiSdkText(
     system: params.systemPrompt,
     prompt: params.user,
     abortSignal: params.abortSignal,
+    ...(config.provider === "openai"
+      ? { providerOptions: { openai: openAiRetentionOptions() } }
+      : {}),
     // Some models cannot turn thinking off ("none" is normalized to the
     // lowest level they accept), and thinking is output too. Without
     // headroom a short call — a 64-token title — can spend its whole

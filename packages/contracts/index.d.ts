@@ -439,8 +439,20 @@ export type IntakeActionEvent = {
   note?: string;
 };
 
+/**
+ * Bangladeshi law-report citations in the answer that no source read for it
+ * (documents, statute pages, web pages, the user's own messages) contains.
+ * Shown with the answer so a fabricated or misremembered authority is never
+ * mistaken for a checked one.
+ */
+export type CitationCheckEvent = {
+  type: "citation_check";
+  unverified: string[];
+};
+
 export type AssistantEvent =
   | TextCardEvent
+  | CitationCheckEvent
   | IntakeActionEvent
   | DocumentSearchEvent
   | { type: "reasoning"; text: string }

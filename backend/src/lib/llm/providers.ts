@@ -1,6 +1,7 @@
 import {
   aiSdkFetch,
   completeAiSdkText,
+  completeAiSdkVision,
   streamAiSdk,
   type AiSdkAdapterConfig,
 } from "./aiSdk";
@@ -807,6 +808,22 @@ export function fallbackReasoningLevelFromProviderError(
     );
     return candidateDistance <= nearestDistance ? candidate : nearest;
   });
+}
+
+/** A completion over images, through the same provider adapters as chat. */
+export async function completeVisionWithProvider(params: {
+  model: string;
+  systemPrompt?: string;
+  prompt: string;
+  images: { data: Uint8Array; mediaType: string }[];
+  maxTokens?: number;
+  abortSignal?: AbortSignal;
+  apiKeys?: UserApiKeys;
+}): Promise<string> {
+  return completeAiSdkVision(
+    params,
+    await createProviderAdapter(params.model, params.apiKeys),
+  );
 }
 
 export async function completeWithProvider(

@@ -120,7 +120,7 @@ export type UserPersonalisation = {
 const PRACTICE_SETTING_LABELS: Record<string, string> = {
   private_practice: "Private practice",
   in_house: "In-house",
-  not_practising: "Not a practising attorney",
+  not_practising: "Not a practising lawyer",
 };
 
 /**
@@ -928,6 +928,7 @@ const COMPLETES_TEXTLESS_TURN = {
   web_search: false,
   web_read: false,
   web_sources: false,
+  citation_check: false,
   delegation: false,
   response_details: false,
   case_opinions: false,

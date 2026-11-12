@@ -97,15 +97,25 @@ describe("Bangladesh workflow pack", () => {
             );
             const bangladesh = document.workflows.filter((w) => w.workflow_key.startsWith("bd-"));
             expect(bangladesh.map((w) => w.workflow_key).sort()).toEqual([
+                "bd-affidavit-in-chief",
+                "bd-artha-rin-suit",
+                "bd-bail-petition",
                 "bd-cheque-dishonour",
+                "bd-chronology",
+                "bd-client-update",
                 "bd-contract-compliance-review",
                 "bd-contract-review",
                 "bd-data-protection-review",
                 "bd-employment-contract-review",
+                "bd-labour-dispute",
+                "bd-land-title-chain",
                 "bd-legal-notice",
                 "bd-legal-translation",
+                "bd-ordinance-act-compare",
                 "bd-plaint-draft",
                 "bd-statute-check",
+                "bd-time-petition",
+                "bd-writ-petition",
             ]);
             const asJson = JSON.stringify(bangladesh);
             expect(asJson).toContain("Bangladesh");

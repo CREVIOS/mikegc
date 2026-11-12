@@ -11,3 +11,13 @@ workflows:
   - bd-legal-translation
   - bd-cheque-dishonour
   - bd-data-protection-review
+  - bd-writ-petition
+  - bd-affidavit-in-chief
+  - bd-bail-petition
+  - bd-time-petition
+  - bd-artha-rin-suit
+  - bd-land-title-chain
+  - bd-ordinance-act-compare
+  - bd-labour-dispute
+  - bd-client-update
+  - bd-chronology

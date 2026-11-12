@@ -71,6 +71,7 @@ import { type EditInput } from "../../../../lib/docxTrackedChanges";
 import {
   citationReminder,
   generateDocx,
+  generatePaperBook,
   generateExcel,
   generatePpt,
   getTurnReadIdentity,
@@ -2319,6 +2320,28 @@ export async function runToolCalls(
         result as Record<string, unknown>,
         previewFilename,
         "docx",
+      );
+    } else if (tc.function.name === "build_paper_book") {
+      const title = typeof args.title === "string" ? args.title : "";
+      const previewFilename = safeGeneratedFilename(`Paper book - ${title}`, "pdf");
+      write(
+        `data: ${JSON.stringify({ type: "doc_created_start", filename: previewFilename })}\n\n`,
+      );
+      const result = await generatePaperBook({
+        title,
+        items: args.items,
+        userId,
+        db,
+        docStore,
+        docIndex,
+        projectId: projectId ?? null,
+        orgId: options.orgId ?? null,
+      });
+      registerGeneratedDocument(
+        tc,
+        result as Record<string, unknown>,
+        previewFilename,
+        "pdf",
       );
     } else if (tc.function.name === "generate_excel") {
       const title = args.title as string;

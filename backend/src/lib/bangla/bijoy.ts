@@ -127,13 +127,32 @@ export function bijoyToUnicode(input: string): string {
     return normalizeBangla(out);
 }
 
-/** Whether a font is a Bijoy (ANSI) Bangla font: SutonnyMJ, SutonnyOMJ, ... */
+/**
+ * How a font encodes Bangla:
+ * - "bijoy": an ANSI font drawn with the Bijoy layout. The "MJ" families
+ *   (SutonnyMJ, SushreeMJ, ...) are certain.
+ * - "legacy": another ANSI family (AdarshaLipi) whose text is converted only
+ *   when it also reads as Bijoy, since its layout is not certain to match.
+ * - "unicode": everything else, including the "OMJ" families: SutonnyOMJ is
+ *   the Unicode (OpenType) release of Sutonny, not a Bijoy font.
+ */
+export type BanglaFontEncoding = "bijoy" | "legacy" | "unicode";
+
+export function banglaFontEncoding(font: string | null | undefined): BanglaFontEncoding {
+    if (!font) return "unicode";
+    const name = font
+        .replace(/^[A-Z]{6}\+/, "") // PDF subset prefix
+        .replace(/[\s,_-]*(Bold|Italic|Regular|Normal|Expanded|Exp)*$/gi, "")
+        .trim();
+    if (/OMJ$/i.test(name) || /unicode/i.test(name)) return "unicode";
+    if (/MJ$/i.test(name) || /\bMJ\b/i.test(name) || /^Bijoy/i.test(name)) return "bijoy";
+    if (/^AdarshaLipi/i.test(name)) return "legacy";
+    return "unicode";
+}
+
+/** Whether a font is certainly a Bijoy (ANSI) font: SutonnyMJ and the MJ family. */
 export function isBijoyFontName(font: string | null | undefined): boolean {
-    if (!font) return false;
-    const name = font.replace(/^[A-Z]{6}\+/, "").trim();
-    return /MJ$/i.test(name.replace(/[\s,-]*(Bold|Italic|Regular)*$/i, "")) ||
-        /\bMJ\b/i.test(name) ||
-        /^(Sutonny|Bijoy)(?!.*Unicode)/i.test(name);
+    return banglaFontEncoding(font) === "bijoy";
 }
 
 // Glyph codes that ordinary English or European text almost never uses but
@@ -148,11 +167,16 @@ const ENGLISH_WORD =
 
 function signals(text: string) {
     const letters = text.match(/[A-Za-z]/g)?.length ?? 0;
-    const signature = text.match(SIGNATURE)?.length ?? 0;
     const words = text.split(/[\s,.;:()]+/).filter(Boolean);
+    // Bijoy types ি (w) before its consonant and আ as "Av", so words that
+    // start with "w" + consonant or contain "Av" are telling.
+    // On their own they also match English ("which", "Avenue"), so they only
+    // ever support a Bijoy-only glyph code, never stand in for one.
+    const typed = words.filter((w) => /^w[A-Za-z`_]/.test(w) || /Av/.test(w)).length;
+    const signature = text.match(SIGNATURE)?.length ?? 0;
     const common = words.filter((w) => COMMON_WORD.test(w)).length;
     const english = words.filter((w) => ENGLISH_WORD.test(w)).length;
-    return { letters, signature, common, english, words: words.length };
+    return { letters, signature, typed, common, english, words: words.length };
 }
 
 /**
@@ -168,8 +192,18 @@ export function looksLikeBijoy(text: string): boolean {
     return (
         (s.signature >= 2 && s.signature / Math.max(1, s.letters) >= 0.02) ||
         s.common >= 2 ||
-        (s.signature >= 1 && s.common >= 1)
+        (s.signature >= 1 && (s.common >= 1 || s.typed >= 2))
     );
+}
+
+/**
+ * Whether text in a legacy ANSI font carries any sign of the Bijoy layout: a
+ * Bijoy-only glyph code or a common Bijoy-encoded word, and no Unicode Bangla.
+ */
+export function hasBijoyGlyphs(text: string): boolean {
+    if (hasBengali(text)) return false;
+    const s = signals(text);
+    return s.signature >= 1 || s.common >= 1;
 }
 
 /**

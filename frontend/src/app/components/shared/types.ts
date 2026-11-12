@@ -232,6 +232,7 @@ export type AssistantEvent =
   | (WireActivity<"web_search"> & { isStreaming?: boolean })
   | (WireActivity<"web_read"> & { isStreaming?: boolean })
   | WireActivity<"web_sources">
+  | WireActivity<"citation_check">
   | WireActivity<"response_details">
   | (Omit<WireDelegation, "events" | "status" | "model" | "effort"> & {
       events: AssistantEvent[];

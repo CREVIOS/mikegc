@@ -15,6 +15,8 @@ import {
   uploadFile,
 } from "../../../../lib/storage";
 import { BANGLA_LANGUAGE_TAG, banglaDocumentFont } from "../../../../lib/bangla";
+import { buildPaperBook } from "../../../../lib/paperBook";
+import { safeError } from "../../../../lib/safeError";
 import { convertedPdfKey, docxToPdf } from "../../../../lib/convert";
 import { enqueueConversion } from "../../../../lib/queue/conversionQueue";
 import { enqueueDbJob } from "../../../../lib/dbq/enqueue";
@@ -30,6 +32,7 @@ import {
   type DocIndex,
   type EditAnnotation,
   devLog,
+  resolveDocLabel,
 } from "../types";
 import {
   contentTypeForDocumentType,
@@ -943,7 +946,7 @@ ${slides
 
 async function persistGeneratedFile(params: {
   title: string;
-  extension: "docx" | "xlsx" | "pptx";
+  extension: "docx" | "xlsx" | "pptx" | "pdf";
   buffer: Buffer;
   userId: string;
   db: Db;
@@ -1763,3 +1766,100 @@ export type DocReplicatedResult = {
     version_id: string;
   }[];
 };
+/**
+ * Assemble an HCD paper book from documents in the conversation and save it
+ * as a new PDF (lib/paperBook.ts has the Rule). Each item is resolved through
+ * the conversation's document map, so only documents the user can already
+ * read are used.
+ */
+export async function generatePaperBook(params: {
+  title: string;
+  items: unknown;
+  userId: string;
+  db: Db;
+  docStore: DocStore;
+  docIndex?: DocIndex;
+  projectId?: string | null;
+  orgId?: string | null;
+}) {
+  const { PDFDocument } = await import("pdf-lib");
+  const title = typeof params.title === "string" ? params.title.trim() : "";
+  if (!title) return { error: "A cause title is required, e.g. \"First Appeal No. 252 of 2025\"." };
+  if (!Array.isArray(params.items) || params.items.length === 0) {
+    return { error: "List at least one document to include." };
+  }
+  const items: { description: string; part: "I" | "II"; pdf: Uint8Array }[] = [];
+  const problems: string[] = [];
+  for (const [index, raw] of params.items.entries()) {
+    const item = (raw ?? {}) as { doc_id?: unknown; description?: unknown; part?: unknown };
+    const label = String(item.doc_id ?? "");
+    const docId = resolveDocLabel(label, params.docStore, params.docIndex) ?? label;
+    const docInfo = params.docStore.get(docId);
+    const description = typeof item.description === "string" ? item.description.trim() : "";
+    const part = item.part === "II" ? "II" : item.part === "I" ? "I" : null;
+    if (!docInfo || docInfo.inline_text !== undefined || docInfo.search_source) {
+      problems.push(`Item ${index + 1}: "${label}" is not a document in this conversation.`);
+      continue;
+    }
+    if (!description || !part) {
+      problems.push(`Item ${index + 1}: give a description and a part (I or II).`);
+      continue;
+    }
+    const documentId = params.docIndex?.[docId]?.document_id;
+    const current = documentId ? await loadCurrentVersionBytes(documentId, params.db) : null;
+    const raw0 = current ? current.bytes : await downloadFile(docInfo.storage_path).then((b) => (b ? Buffer.from(b) : null));
+    if (!raw0) {
+      problems.push(`Item ${index + 1}: ${docInfo.filename} could not be read.`);
+      continue;
+    }
+    const type = docInfo.file_type.toLowerCase();
+    let pdf: Uint8Array;
+    try {
+      if (type === "pdf") {
+        pdf = new Uint8Array(raw0);
+      } else if (isWordDocumentType(type)) {
+        pdf = new Uint8Array(await docxToPdf(raw0));
+      } else if (type === "png" || type === "jpg" || type === "jpeg") {
+        const sheet = await PDFDocument.create();
+        const image = type === "png" ? await sheet.embedPng(raw0) : await sheet.embedJpg(raw0);
+        sheet.addPage([image.width, image.height]).drawImage(image, { x: 0, y: 0, width: image.width, height: image.height });
+        pdf = await sheet.save();
+      } else {
+        problems.push(`Item ${index + 1}: ${docInfo.filename} is a ${type} file; use PDF, Word or an image.`);
+        continue;
+      }
+    } catch {
+      problems.push(`Item ${index + 1}: ${docInfo.filename} could not be converted to PDF.`);
+      continue;
+    }
+    items.push({ description, part, pdf });
+  }
+  if (problems.length) return { error: problems.join(" ") };
+  try {
+    const book = await buildPaperBook({ causeTitle: title, items, renderIndex: docxToPdf });
+    const saved = await persistGeneratedFile({
+      title: `Paper book - ${title}`,
+      extension: "pdf",
+      buffer: Buffer.from(book.pdf),
+      userId: params.userId,
+      db: params.db,
+      projectId: params.projectId ?? null,
+      orgId: params.orgId ?? null,
+    });
+    if ("error" in saved) return saved;
+    return {
+      ...saved,
+      paper_book: {
+        index: book.entries,
+        numbered_pages: book.pageCount,
+        index_pages: book.indexPages,
+        ...(book.needsHardboardCover
+          ? { note: "Over 300 pages: the HCD Rules require hardboard covers." }
+          : {}),
+      },
+    };
+  } catch (e) {
+    devLog("[build_paper_book] assembly failed", safeError(e));
+    return { error: "The paper book could not be assembled from these documents." };
+  }
+}

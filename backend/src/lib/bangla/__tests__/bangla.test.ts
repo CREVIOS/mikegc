@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
     banglaDocumentFont,
+    banglaFontEncoding,
+    hasBijoyGlyphs,
     asciiDigitsToBangla,
     banglaDigitsToAscii,
     bijoyToUnicode,
@@ -34,6 +36,13 @@ describe("bijoyToUnicode", () => {
         ["‡KŠk‡j", "কৌশলে"],
         ["aviv 23(1)|", "ধারা ২৩(১)।"],
         ["ˆea", "বৈধ"],
+        // From a 2026 Supreme Court judgment's SutonnyMJ text layer.
+        ["gš¿Yvj‡qi", "মন্ত্রণালয়ের"],
+        ["†RjvRR Av`vj‡Zi", "জেলাজজ আদালতের"],
+        // Reph typed before or after the vowel sign: কর্তৃক either way (a
+        // known failure of other converters).
+        ["KZ©„K", "কর্তৃক"],
+        ["KZ„©K", "কর্তৃক"],
     ])("converts %s", (bijoy, unicode) => {
         expect(bijoyToUnicode(bijoy)).toBe(nfc(unicode));
     });
@@ -46,13 +55,28 @@ describe("bijoyToUnicode", () => {
 });
 
 describe("Bijoy detection", () => {
-    it("recognises the MJ font family", () => {
-        for (const font of ["SutonnyMJ", "SutonnyOMJ", "ABCDEF+SutonnyMJ", "SutonnyMJ Bold", "NikoshMJ"]) {
+    it("recognises the MJ font family, but not its Unicode OMJ release", () => {
+        for (const font of ["SutonnyMJ", "ABCDEF+SutonnyMJ", "SutonnyMJ Bold", "SushreeMJ", "SutonnyMJ-Italic"]) {
+            expect(banglaFontEncoding(font)).toBe("bijoy");
             expect(isBijoyFontName(font)).toBe(true);
         }
-        for (const font of ["Nikosh", "Kalpurush", "SolaimanLipi", "Times New Roman", "Noto Sans Bengali", "", null]) {
-            expect(isBijoyFontName(font)).toBe(false);
+        // SutonnyOMJ is the Unicode (OpenType) Sutonny: converting it would
+        // garble correct text.
+        for (const font of ["SutonnyOMJ", "ABCDEF+SutonnyOMJ", "Nikosh", "Kalpurush", "SolaimanLipi", "Times New Roman", "Noto Sans Bengali", "", null]) {
+            expect(banglaFontEncoding(font)).toBe("unicode");
         }
+        expect(banglaFontEncoding("AdarshaLipiNormal")).toBe("legacy");
+    });
+
+    it("needs a Bijoy-only glyph before English-like patterns count", () => {
+        for (const text of [
+            "Average aviation costs which were written off",
+            "House 12, Gulshan Avenue, Dhaka 1212",
+        ]) {
+            expect(looksLikeBijoy(text)).toBe(false);
+            expect(hasBijoyGlyphs(text)).toBe(false);
+        }
+        expect(hasBijoyGlyphs("Avgvi gš¿Yvj‡qi")).toBe(true);
     });
 
     it("accepts Bijoy passages", () => {

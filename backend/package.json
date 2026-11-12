@@ -52,6 +52,7 @@
     "linkedom": "^0.18.13",
     "mammoth": "^1.13.0",
     "nodemailer": "^10.1.7",
+    "pdf-lib": "1.17.1",
     "pdfjs-dist": "^6.4.299",
     "undici": "^8.12.2",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",

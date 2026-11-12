@@ -1,5 +1,6 @@
 "use client";
 
+import { CitationCheckNotice } from "./message/CitationCheckNotice";
 import { TextCardUI } from "@/shared/ui/TextCardUI";
 import { IntakeActionCard } from "./IntakeActionCard";
 import { useRef, useState, type ReactNode } from "react";
@@ -293,6 +294,8 @@ export function AssistantMessage({
         !!onOpenCitationSource ||
         (citation.kind !== "case" && !!onOpenDocument);
     const eventsWithDelegated = withDelegationEvents(events ?? []);
+    const unverifiedCitations =
+        (events ?? []).findLast((e) => e.type === "citation_check")?.unverified ?? [];
     // The pages an answer cites follow the answer, not the steps before it.
     // Several provider steps can cite the same page, so list each URL once.
     const webSourcesByUrl = new Map<string, WebSource>();
@@ -1274,6 +1277,12 @@ export function AssistantMessage({
                 {webSources.length > 0 && (
                     <div className="mt-2 mb-3">
                         <WebSourcesBlock sources={webSources} />
+                    </div>
+                )}
+
+                {!isStreaming && unverifiedCitations.length > 0 && (
+                    <div className="mt-2 mb-3">
+                        <CitationCheckNotice unverified={unverifiedCitations} />
                     </div>
                 )}
 

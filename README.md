@@ -30,6 +30,16 @@ deploy with OpenAI, and the limits lawyers should know about. In short:
   files, Bangla fonts for PDF conversion, correct matching and highlighting of
   Bangla quotes, repair of Bangla text extracted from PDFs, and conversion of
   legacy Bijoy (SutonnyMJ) documents to Unicode.
+- **Scans and broken PDFs**: pages with no usable text are transcribed by a
+  vision model (Bangla OCR), and garbled text layers never reach the model.
+- **Checkable authorities**: every DLR, BLD, BLC or SCOB citation an answer did
+  not read in a source is shown as not verified.
+- **Court-ready output**: word-level Word tracked changes, HCD paper books to
+  the 2012 Rule, Bangla-calendar dates and the Sunday to Thursday week.
+- **Five corporate use cases** with real tracked-change redlines in
+  [docs/examples/bangladesh](docs/examples/bangladesh/README.md), and 19
+  Bangladesh workflows.
+- **Confidentiality**: OpenAI is told not to store responses.
 
 ## Upstream sponsorship
 

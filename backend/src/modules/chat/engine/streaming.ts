@@ -23,6 +23,7 @@ import type { Db } from "../../../lib/supabase";
 import { buildUserMcpTools } from "../../../lib/mcpConnectors";
 import { buildGoogleDriveTools } from "../../../lib/integrations/googleDrive";
 import { COURTLISTENER_TOOLS } from "./tools/courtlistenerTools";
+import { unverifiedCaseCitations } from "../../../lib/bangladesh/citations";
 import {
   BD_LAW_SYSTEM_PROMPT,
   BD_LAW_TOOLS,
@@ -498,6 +499,8 @@ export async function runLLMStream(params: {
   if (memory.message) chatMessages.unshift(memory.message);
 
   const events: AssistantEvent[] = [];
+  // The content of every tool result in this answer, for the citation check.
+  const retrievedSources: string[] = [];
   // One assistant turn produces at most one document_versions row per
   // edited doc. `runToolCalls` fires once per tool-call batch; the model
   // may emit multiple batches in a single turn, so this map persists
@@ -1090,6 +1093,8 @@ export async function runLLMStream(params: {
               error: `Tool '${c.name}' is not available.`,
             }),
         }));
+        // What this answer read, for checking the authorities it cites.
+        for (const result of results) retrievedSources.push(result.content);
         // Recorded before a pause too, so a continued subagent knows what
         // already ran beside the actions awaiting approval.
         subagentRun?.onToolBatch(calls, results);
@@ -1212,6 +1217,24 @@ export async function runLLMStream(params: {
   write(
     `data: ${JSON.stringify({ type: "citations", status: "final", citations })}\n\n`,
   );
+  // Bangladeshi law-report citations the answer did not take from anything
+  // it read or the user gave it: shown to the user as not verified.
+  if (!isSubagent) {
+    const unverified = unverifiedCaseCitations(fullText, [
+      ...retrievedSources,
+      ...rawMsgs
+        .filter((m) => m.role !== "assistant")
+        .map((m) => (typeof m.content === "string" ? m.content : "")),
+    ]);
+    if (unverified.length) {
+      const check: AssistantEvent = {
+        type: "citation_check",
+        unverified: unverified.map((citation) => citation.key),
+      };
+      events.push(check);
+      write(`data: ${JSON.stringify(check)}\n\n`);
+    }
+  }
   if (!isSubagent && answerModel) {
     const details: AssistantEvent = {
       type: "response_details",

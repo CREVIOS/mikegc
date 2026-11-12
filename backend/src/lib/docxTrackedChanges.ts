@@ -14,7 +14,7 @@
  * (accepting that insertion) before the new change is emitted.
  */
 
-import { bijoyToUnicode, isBijoyFontName } from "./bangla";
+import { banglaFontEncoding, bijoyToUnicode, hasBijoyGlyphs } from "./bangla";
 import JSZip from "jszip";
 import { XMLParser, XMLBuilder } from "fast-xml-parser";
 
@@ -298,8 +298,27 @@ interface PlannedChange {
  * "replace this substring with that substring" card per edit, so only the
  * common prefix and suffix are trimmed and the rest is one span.
  */
+const WORD_SEGMENTER = new Intl.Segmenter(undefined, { granularity: "word" });
+
+/** Every position in `text` where a word, space or punctuation segment starts, plus the end. */
+function wordBoundaries(text: string): Set<number> {
+    const out = new Set<number>([text.length]);
+    for (const { index } of WORD_SEGMENTER.segment(text)) out.add(index);
+    return out;
+}
+
+/**
+ * The tracked range of an edit: the common start and end of `find` and
+ * `replace` are left untouched, and the rest is deleted and inserted.
+ *
+ * The range is widened to whole words, as Word's own compare marks it. A
+ * character-level range would otherwise split a word ("Supplier" →
+ * "Supplier[s]") and, in Bangla, record a lone vowel sign or half a conjunct
+ * as the change (কাজ → কাজ[ে]), which reviewers cannot read and which renders
+ * as a dotted circle. Word segments keep grapheme clusters, conjuncts
+ * included, whole.
+ */
 function collapseDiff(find: string, replace: string): { deleted: string; inserted: string; leadingEq: number; trailingEq: number } {
-    // Find leading/trailing common substrings so the tracked range is minimal
     let leading = 0;
     const minLen = Math.min(find.length, replace.length);
     while (leading < minLen && find[leading] === replace[leading]) leading++;
@@ -309,6 +328,19 @@ function collapseDiff(find: string, replace: string): { deleted: string; inserte
         find[find.length - 1 - trailing] === replace[replace.length - 1 - trailing]
     ) {
         trailing++;
+    }
+    if (find !== replace) {
+        const findBounds = wordBoundaries(find);
+        const replaceBounds = wordBoundaries(replace);
+        while (leading > 0 && !(findBounds.has(leading) && replaceBounds.has(leading))) {
+            leading--;
+        }
+        while (
+            trailing > 0 &&
+            !(findBounds.has(find.length - trailing) && replaceBounds.has(replace.length - trailing))
+        ) {
+            trailing--;
+        }
     }
     const deleted = find.slice(leading, find.length - trailing);
     const inserted = replace.slice(leading, replace.length - trailing);
@@ -815,12 +847,15 @@ function styleFonts(fonts: DocxFontStyles, styleId: string | null): string[] {
     return [];
 }
 
-/** Whether a run is drawn in a Bijoy font, by Word's order of precedence. */
-function runIsBijoy(
+/**
+ * How a run's Bangla is encoded, from the font Word would draw it in (direct
+ * formatting, character style, paragraph style, default style, defaults).
+ */
+function runEncoding(
     rPr: XNode | null,
     paragraphStyle: string | null,
     fonts: DocxFontStyles,
-): boolean {
+): "bijoy" | "legacy" | "unicode" {
     const direct = rPrFonts(rPr);
     const charStyle = elAttrs(childEl(rPr, "w:rStyle"))["@_w:val"] ?? null;
     const resolved = direct.length
@@ -831,7 +866,9 @@ function runIsBijoy(
                 .length
             ? styleFonts(fonts, paragraphStyle ?? fonts.defaultParagraphStyle)
             : fonts.docDefaultFonts;
-    return resolved.some((font) => isBijoyFontName(font));
+    const encodings = resolved.map((font) => banglaFontEncoding(font));
+    if (encodings.includes("bijoy")) return "bijoy";
+    return encodings.includes("legacy") ? "legacy" : "unicode";
 }
 
 /**
@@ -852,7 +889,9 @@ function readableParagraphText(
     for (const run of flat.runs) {
         const runText = run.textNodes.map((t) => t.text).join("");
         if (!runText) continue;
-        if (runIsBijoy(run.rPr, pStyle, fonts)) {
+        const encoding = runEncoding(run.rPr, pStyle, fonts);
+        // A legacy (AdarshaLipi) run is converted only when it reads as Bijoy.
+        if (encoding === "bijoy" || (encoding === "legacy" && hasBijoyGlyphs(runText))) {
             pending += runText;
         } else {
             if (pending) text += bijoyToUnicode(pending);

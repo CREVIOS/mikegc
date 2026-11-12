@@ -25,6 +25,7 @@ export const DOCUMENT_MUTATING_TOOL_NAMES: ReadonlySet<string> = new Set([
   "generate_docx",
   "generate_excel",
   "generate_ppt",
+  "build_paper_book",
 ]);
 
 /** Read a tool schema's function name, whatever shape the entry arrived in. */
@@ -365,6 +366,47 @@ export const TOOLS = [
           },
         },
         required: ["doc_id", "query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "build_paper_book",
+      description:
+        "Assemble a paper book for the High Court Division of the Supreme Court of Bangladesh from documents in this conversation, laid out to the HCD Rules (13 x 8 inch pages; margins 2 inches left, 1.5 right, 1 top, 2 bottom; a serial-numbered index; Part I documents other than exhibits, then Part II exhibits; pages numbered continuously from 1; a bookmark per entry). Accepts PDF, Word and image documents. Saves the paper book as a new PDF and returns its index. Use it when the user asks for a paper book, an appeal bundle or an annexure bundle.",
+      parameters: {
+        type: "object",
+        properties: {
+          title: {
+            type: "string",
+            description:
+              "The cause title for the index, e.g. \"First Appeal No. 252 of 2025\" or \"Writ Petition No. 1434 of 2026\".",
+          },
+          items: {
+            type: "array",
+            description:
+              "The documents in paper-book order. Within each Part they keep this order; Part I always comes before Part II.",
+            items: {
+              type: "object",
+              properties: {
+                doc_id: { type: "string", description: "The document's id, e.g. doc-0." },
+                description: {
+                  type: "string",
+                  description:
+                    "How the entry reads in the index, e.g. \"Certified copy of the judgment and decree dated 01.12.2025\" or \"Exhibit-1: Sale deed No. 4512 dated 03.02.1998\".",
+                },
+                part: {
+                  type: "string",
+                  enum: ["I", "II"],
+                  description: "I for documents other than exhibits; II for exhibits.",
+                },
+              },
+              required: ["doc_id", "description", "part"],
+            },
+          },
+        },
+        required: ["title", "items"],
       },
     },
   },
