@@ -14,6 +14,9 @@ COPY backend/package*.json ./
 RUN npm ci
 COPY backend/ ./
 COPY packages/contracts /packages/contracts
+# Workflow packs bundled with Spectre (the Bangladesh pack), merged into the
+# catalog by sync:workflows; see SPECTRE_WORKFLOW_PACKS in .env.example.
+COPY workflows /workflows
 RUN npm run build
 
 # --enable-source-maps: every entrypoint in this image (API, worker,

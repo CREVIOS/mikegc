@@ -122,6 +122,7 @@ describe("GitHub workflow catalog preparation", () => {
     try {
       const prepared = await prepareWorkflowCatalog({
         temporaryRoot,
+        bundledPacks: [],
         fetchImpl: githubFetch(await archive()),
       });
       const document = validateWorkflowCatalogDocument(
@@ -190,6 +191,7 @@ describe("GitHub workflow catalog preparation", () => {
       await expect(
         prepareWorkflowCatalog({
           temporaryRoot,
+          bundledPacks: [],
           fetchImpl: githubFetch(await archive({ duplicate: true })),
         }),
       ).rejects.toThrow("duplicate key 'proofread'");
@@ -216,7 +218,7 @@ describe("GitHub workflow catalog preparation", () => {
     );
     try {
       await expect(
-        prepareWorkflowCatalog({ temporaryRoot, fetchImpl }),
+        prepareWorkflowCatalog({ temporaryRoot, fetchImpl, bundledPacks: [] }),
       ).rejects.toThrow("10 MB compressed limit");
       await expect(readdir(temporaryRoot)).resolves.toEqual([]);
     } finally {

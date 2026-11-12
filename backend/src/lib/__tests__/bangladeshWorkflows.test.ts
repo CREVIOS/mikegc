@@ -1,8 +1,8 @@
 // The Bangladesh workflow pack in workflows/bangladesh/ is laid out as the
-// system workflows repository (MIKE_WORKFLOWS_REPOSITORY) expects. This test
-// runs it through the real catalog parser, next to the default workflows the
-// sync requires, so the pack is known to load once copied into that
-// repository.
+// system workflows repository (MIKE_WORKFLOWS_REPOSITORY) expects. The sync
+// merges it into the downloaded catalog by default; a copy already in that
+// repository wins. These tests run it through the real catalog parser, next
+// to the default workflows the sync requires.
 import { mkdtemp, readdir, readFile, rm, stat } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
@@ -52,7 +52,7 @@ async function filesUnder(dir: string): Promise<string[]> {
     return out;
 }
 
-async function archive(): Promise<Buffer> {
+async function archive({ withPack = true } = {}): Promise<Buffer> {
     const zip = new JSZip();
     const root = "workflows-test/";
     for (const [key, type] of DEFAULTS) {
@@ -65,7 +65,7 @@ async function archive(): Promise<Buffer> {
             );
         }
     }
-    for (const file of await filesUnder(PACK_ROOT)) {
+    for (const file of withPack ? await filesUnder(PACK_ROOT) : []) {
         zip.file(`${root}${path.relative(PACK_ROOT, file).split(path.sep).join("/")}`, await readFile(file));
     }
     return Buffer.from(await zip.generateAsync({ type: "nodebuffer" }));
@@ -84,13 +84,55 @@ function githubFetch(zipBytes: Buffer) {
     }) as typeof fetch;
 }
 
+async function bangladeshKeys(options: Parameters<typeof prepareWorkflowCatalog>[0]) {
+    const temporaryRoot = await mkdtemp(path.join(tmpdir(), "bd-workflows-"));
+    try {
+        const prepared = await prepareWorkflowCatalog({ temporaryRoot, ...options });
+        const document = validateWorkflowCatalogDocument(
+            JSON.parse(await readFile(prepared.catalogPath, "utf8")) as unknown,
+        );
+        return document.workflows.map((w) => w.workflow_key).filter((key) => key.startsWith("bd-"));
+    } finally {
+        await rm(temporaryRoot, { recursive: true, force: true });
+    }
+}
+
 describe("Bangladesh workflow pack", () => {
+    it("is merged into a workflows repository that does not have it", async () => {
+        const keys = await bangladeshKeys({ fetchImpl: githubFetch(await archive({ withPack: false })) });
+        expect(keys).toHaveLength(19);
+        expect(keys).toContain("bd-writ-petition");
+        expect(keys).toContain("bd-contract-compliance-review");
+    });
+
+    it("is loaded once when the workflows repository already has a copy", async () => {
+        const keys = await bangladeshKeys({ fetchImpl: githubFetch(await archive()) });
+        expect(keys).toHaveLength(19);
+        expect(new Set(keys).size).toBe(19);
+    });
+
+    it("can be turned off, and a configured pack folder must exist", async () => {
+        vi.stubEnv("SPECTRE_WORKFLOW_PACKS", "none");
+        try {
+            const keys = await bangladeshKeys({ fetchImpl: githubFetch(await archive({ withPack: false })) });
+            expect(keys).toEqual([]);
+        } finally {
+            vi.unstubAllEnvs();
+        }
+        await expect(
+            bangladeshKeys({
+                fetchImpl: githubFetch(await archive({ withPack: false })),
+                bundledPacks: [path.join(tmpdir(), "no-such-pack-folder")],
+            }),
+        ).rejects.toThrow(/does not exist/);
+    });
+
     it("loads through the catalog parser with every workflow", async () => {
         const temporaryRoot = await mkdtemp(path.join(tmpdir(), "bd-workflows-"));
         try {
             const prepared = await prepareWorkflowCatalog({
                 temporaryRoot,
-                fetchImpl: githubFetch(await archive()),
+                fetchImpl: githubFetch(await archive({ withPack: false })),
             });
             const document = validateWorkflowCatalogDocument(
                 JSON.parse(await readFile(prepared.catalogPath, "utf8")) as unknown,

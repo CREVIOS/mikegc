@@ -13,10 +13,13 @@ tabular-review-workflows/bangladesh/<workflow>/SKILL.md
 tabular-review-workflows/bangladesh/<workflow>/table-columns.yaml
 ```
 
-To install them, copy both `bangladesh/` folders into the matching folders of
-your workflows repository, point `MIKE_WORKFLOWS_REPOSITORY` at it, and run the
-workflow sync. `backend/src/lib/__tests__/bangladeshWorkflows.test.ts` loads
-this pack through the catalog parser on every backend test run.
+The workflow sync adds this pack to the catalog it downloads, so nothing needs
+copying: run `npm run sync:workflows --prefix backend` (Compose runs it as
+`workflow-sync`). To maintain the pack in your own workflows repository
+instead, copy both `bangladesh/` folders there; that copy then wins.
+`SPECTRE_WORKFLOW_PACKS=none` leaves the pack out.
+`backend/src/lib/__tests__/bangladeshWorkflows.test.ts` loads this pack through
+the catalog parser on every backend test run.
 
 The workflows rely on the assistant's Laws of Bangladesh tools to check every
 statute they cite. See [Spectre for Bangladesh](../../docs/bangladesh.md).

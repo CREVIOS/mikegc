@@ -5,7 +5,7 @@ license: "Apache-2.0"
 metadata:
   version: "1.0.0"
   author: "Spectre"
-  language: "English"
+  language: "Bangla, English"
   mike-display-name: "Cheque Dishonour (NI Act s.138)"
   mike-type: "assistant"
   mike-availability: "system"

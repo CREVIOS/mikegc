@@ -21,6 +21,7 @@ import { completeVision } from "./llm";
 import type { UserApiKeys } from "./llm/types";
 import { normalizeBangla } from "./bangla/normalize";
 import { safeError } from "./safeError";
+import { environmentKey } from "./envKey";
 
 const DEFAULT_MAX_PAGES = 40;
 const RENDER_SCALE = 2; // about 144 dpi: legible Bangla without huge images
@@ -46,10 +47,7 @@ export type OcrConfig = { model: string; apiKeys: UserApiKeys; maxPages: number 
  */
 export function ocrConfig(env: NodeJS.ProcessEnv = process.env): OcrConfig | null {
     if (env.SPECTRE_OCR_ENABLED?.trim().toLowerCase() === "false") return null;
-    const key = (name: string) => {
-        const value = env[name]?.trim();
-        return value && !/^your-/.test(value) ? value : null;
-    };
+    const key = (name: string) => environmentKey(name, env);
     const apiKeys: UserApiKeys = {
         gemini: key("GEMINI_API_KEY"),
         claude: key("ANTHROPIC_API_KEY"),

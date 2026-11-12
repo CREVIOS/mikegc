@@ -55,6 +55,7 @@ import type {
 import { REASONING_LEVELS } from "./types";
 import { vertexAuthClient } from "./vertexAuth";
 import { UserFacingError } from "../userFacingError";
+import { environmentKey } from "../envKey";
 
 const OPENROUTER_BASE_URL =
   process.env.OPENROUTER_BASE_URL?.trim().replace(/\/+$/, "") ||
@@ -107,9 +108,9 @@ function requiredKey(
 ): string {
   const key =
     override?.trim() ||
-    process.env[environmentVariable]?.trim() ||
+    environmentKey(environmentVariable) ||
     (ENVIRONMENT_KEY_ALIASES[environmentVariable] ?? [])
-      .map((alias) => process.env[alias]?.trim())
+      .map((alias) => environmentKey(alias))
       .find((value) => !!value) ||
     "";
   if (!key) {
@@ -123,12 +124,13 @@ function requiredKey(
 function routerEnvironmentKey(provider: RouterProvider): string | undefined {
   if (provider === "vercel") {
     return (
-      process.env.AI_GATEWAY_API_KEY?.trim() ||
-      process.env.VERCEL_AI_GATEWAY_API_KEY?.trim()
+      environmentKey("AI_GATEWAY_API_KEY") ??
+      environmentKey("VERCEL_AI_GATEWAY_API_KEY") ??
+      undefined
     );
   }
-  if (provider === "opencode-go") return process.env.OPENCODE_API_KEY?.trim();
-  return process.env.OPENROUTER_API_KEY?.trim();
+  if (provider === "opencode-go") return environmentKey("OPENCODE_API_KEY") ?? undefined;
+  return environmentKey("OPENROUTER_API_KEY") ?? undefined;
 }
 
 function routerUserKey(

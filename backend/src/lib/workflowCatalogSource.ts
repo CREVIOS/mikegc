@@ -1,5 +1,5 @@
 import { createHash } from "crypto";
-import { mkdir, mkdtemp, open, readFile, rm, writeFile } from "fs/promises";
+import { mkdir, mkdtemp, open, readdir, readFile, rm, stat, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
 import JSZip, { type JSZipObject } from "jszip";
@@ -114,7 +114,86 @@ export type WorkflowCatalogSourceOptions = {
   githubToken?: string;
   fetchImpl?: typeof fetch;
   temporaryRoot?: string;
+  /**
+   * Workflow pack folders shipped with Spectre, laid out like the workflows
+   * repository (assistant-workflows/…, tabular-review-workflows/…), merged
+   * into the downloaded catalog. Defaults to SPECTRE_WORKFLOW_PACKS, else the
+   * bundled Bangladesh pack.
+   */
+  bundledPacks?: string[];
 };
+
+/** Bundled packs: `workflows/` at the repository root, `/workflows` in the image. */
+const BUNDLED_PACKS_ROOT = path.resolve(__dirname, "../../../workflows");
+const BUNDLED_COLLECTIONS = ["assistant-workflows/", "tabular-review-workflows/"];
+
+function bundledPackDirectories(options: WorkflowCatalogSourceOptions): {
+  directories: string[];
+  required: boolean;
+} {
+  if (options.bundledPacks) return { directories: options.bundledPacks, required: true };
+  const configured = process.env.SPECTRE_WORKFLOW_PACKS?.trim();
+  if (configured && /^(none|false|off)$/i.test(configured)) {
+    return { directories: [], required: false };
+  }
+  if (configured) {
+    return {
+      directories: configured.split(",").map((entry) => path.resolve(entry.trim())).filter(Boolean),
+      required: true,
+    };
+  }
+  return { directories: [path.join(BUNDLED_PACKS_ROOT, "bangladesh")], required: false };
+}
+
+async function packFiles(directory: string): Promise<string[]> {
+  const entries = await readdir(directory, { recursive: true, withFileTypes: true });
+  return entries
+    .filter((entry) => entry.isFile())
+    .map((entry) =>
+      path.relative(directory, path.join(entry.parentPath, entry.name)).split(path.sep).join("/"),
+    )
+    .filter((relative) => BUNDLED_COLLECTIONS.some((collection) => relative.startsWith(collection)))
+    .sort();
+}
+
+/**
+ * Add the bundled packs' files to the downloaded archive. A file the
+ * workflows repository already has at the same path wins, so a pack copied
+ * into that repository is not loaded twice. Returns how many files were added.
+ */
+async function mergeBundledPacks(
+  archivePath: string,
+  options: WorkflowCatalogSourceOptions,
+): Promise<number> {
+  const { directories, required } = bundledPackDirectories(options);
+  if (!directories.length) return 0;
+  const zip = await JSZip.loadAsync(await readFile(archivePath));
+  const first = Object.values(zip.files).find((entry) => !entry.dir)?.name;
+  if (!first?.includes("/")) throw new Error("Workflow archive has no root directory");
+  const root = first.slice(0, first.indexOf("/") + 1);
+  let added = 0;
+  for (const directory of directories) {
+    const exists = await stat(directory).then((info) => info.isDirectory(), () => false);
+    if (!exists) {
+      if (required) throw new Error(`Workflow pack folder ${directory} does not exist`);
+      continue;
+    }
+    for (const relative of await packFiles(directory)) {
+      if (relative.split("/").includes("..")) continue;
+      if (zip.file(`${root}${relative}`)) continue;
+      zip.file(`${root}${relative}`, await readFile(path.join(directory, relative)));
+      added += 1;
+    }
+  }
+  if (added) {
+    await writeFile(
+      archivePath,
+      await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" }),
+      { mode: 0o600 },
+    );
+  }
+  return added;
+}
 
 type ParsedPack = {
   key: string;
@@ -768,6 +847,7 @@ export async function prepareWorkflowCatalog(
     const { repository, ref, commit } =
       await resolveWorkflowSourceCommit(options);
     await downloadArchive(archivePath, repository, commit, options);
+    await mergeBundledPacks(archivePath, options);
     const document = await parseArchive(
       archivePath,
       assetDirectory,

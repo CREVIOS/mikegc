@@ -287,13 +287,14 @@ pack laid out as the system workflows repository expects:
 | Chronology | Assistant |
 | Contract Compliance Review (Bangladesh) | Tabular review |
 
-To install them, copy the pack's `assistant-workflows/bangladesh/` and
-`tabular-review-workflows/bangladesh/` folders into your workflows repository
-(a fork of `open-legal-products/mikegc-workflows`), point
-`MIKE_WORKFLOWS_REPOSITORY` at it, and run the workflow sync. See
-[Contributing](../CONTRIBUTING.md#system-workflows).
-`backend/src/lib/__tests__/bangladeshWorkflows.test.ts` loads the pack through
-the real catalog parser, so it is known to load.
+The workflow sync (`npm run sync:workflows`, run by Compose's `workflow-sync`)
+adds this pack to the catalog it downloads, so the workflows appear on a new
+install without any other step; the backend image carries the pack at
+`/workflows/bangladesh`. A workflows repository that already holds a copy of a
+pack file keeps its own version. `SPECTRE_WORKFLOW_PACKS` names other pack
+folders, or `none` to leave the pack out.
+`backend/src/lib/__tests__/bangladeshWorkflows.test.ts` runs the pack through
+the real catalog parser.
 
 ## Settings
 
@@ -307,6 +308,7 @@ All are optional and go in `backend/.env`.
 | `SPECTRE_BANGLA_FONT` | Nirmala UI | The Unicode Bangla font for generated Word and PowerPoint files. MJ fonts are refused. |
 | `SPECTRE_BDLAWS_ENABLED` | on for Bangladesh | `false` hides the Laws of Bangladesh tools; `true` offers them elsewhere. |
 | `SPECTRE_OPENAI_STORE` | off | `true` lets OpenAI store responses (its default); Spectre otherwise sends `store: false`. |
+| `SPECTRE_WORKFLOW_PACKS` | the Bangladesh pack | Pack folders the workflow sync adds to the catalog, comma-separated, or `none`. |
 | `SPECTRE_OCR_ENABLED` | on when a vision-capable key is set | `false` turns OCR of scanned and garbled PDF pages off. |
 | `SPECTRE_OCR_MODEL` | Gemini, else Anthropic, else OpenAI | The vision model OCR uses. |
 | `SPECTRE_OCR_MAX_PAGES` | 40 | Most pages transcribed per document. |

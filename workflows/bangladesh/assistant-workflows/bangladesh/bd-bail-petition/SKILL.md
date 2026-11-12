@@ -5,7 +5,7 @@ license: "Apache-2.0"
 metadata:
   version: "1.0.0"
   author: "Spectre"
-  language: "English"
+  language: "Bangla, English"
   mike-display-name: "Bail Petition"
   mike-type: "assistant"
   mike-availability: "system"
