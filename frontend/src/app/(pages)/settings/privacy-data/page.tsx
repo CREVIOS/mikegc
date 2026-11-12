@@ -121,7 +121,7 @@ export default function PrivacyDataPage() {
       const status = await getUserExportStatus(export_id);
       if (status.status === "failed") {
         throw new UserVisibleError(
-          "Mike couldn't build the export. Try again, and contact support if it keeps happening.",
+          "Spectre couldn't build the export. Try again, and contact support if it keeps happening.",
           { retryable: true },
         );
       }

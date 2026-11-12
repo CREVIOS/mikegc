@@ -1,12 +1,12 @@
 /**
- * Auth flow E2E coverage for the Mike Word add-in.
+ * Auth flow E2E coverage for the Spectre Word add-in.
  *
  * Exercises the real, user-visible behaviour of the login gate:
  *   - App.tsx loading spinner -> cookie-session gate -> LoginPage / floating shell / Sign out
  *   - auth/LoginPage.tsx submit-disabled gate + error alert
  *   - auth/useAuth.ts session synchronization without exposing bearer tokens
  *
- * The Mike backend auth endpoints are mocked via addin.mockLogin and the shared
+ * The Spectre backend auth endpoints are mocked via addin.mockLogin and the shared
  * fixture. Google dialog messages are supplied by the Office shim, so no live
  * identity provider or backend is contacted.
  */
@@ -28,7 +28,7 @@ test.describe("auth flow", () => {
       page.getByRole("button", { name: "Continue with Google" }),
     ).toBeVisible();
     await expect(page.getByRole("link", { name: "Sign up" })).toBeVisible();
-    await expect(page.getByText("MikeGC", { exact: true })).toBeVisible();
+    await expect(page.getByText("Spectre", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Sign up" })).toHaveCount(0);
     await expect(page.getByText("Loading…")).toBeHidden();
 
@@ -124,7 +124,7 @@ test.describe("auth flow", () => {
     await page.getByRole("button", { name: "Log in" }).click();
 
     // LoginPage no longer echoes the server. The failure is recognised by its
-    // `invalid_credentials` CODE and stated in Mike's own words, so neither
+    // `invalid_credentials` CODE and stated in Spectre's own words, so neither
     // GoTrue's wording nor an "(HTTP 400)" suffix reaches the screen.
     const alert = page.getByRole("alert");
     await expect(alert).toBeVisible();
@@ -373,7 +373,7 @@ test.describe("auth flow", () => {
     // A 5xx body is never echoed, however friendly it looks: 503 reads as a
     // temporary outage.
     await expect(page.getByRole("alert")).toContainText(
-      "Mike is temporarily unavailable",
+      "Spectre is temporarily unavailable",
     );
     await addin.expectAuthedShell();
 

@@ -16,7 +16,7 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/app/lib/authApi", () => ({ getAuthSession, updateAuthPassword }));
 
 vi.mock("@/app/components/site-logo", () => ({
-    SiteLogo: () => <div>Mike</div>,
+    SiteLogo: () => <div>Spectre</div>,
 }));
 
 async function submitPassword(password: string) {
@@ -67,7 +67,7 @@ describe("ResetPasswordPage", () => {
 
         expect(
             await screen.findByText(
-                "Mike couldn't reach the server. Check your connection and try again.",
+                "Spectre couldn't reach the server. Check your connection and try again.",
             ),
         ).toBeInTheDocument();
     });

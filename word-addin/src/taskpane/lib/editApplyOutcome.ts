@@ -29,7 +29,7 @@ export const ALREADY_APPLIED_MESSAGE =
 
 /** Shown when Word faulted and the verification read proved nothing. */
 export const UNVERIFIED_APPLY_MESSAGE =
-  "Mike couldn't confirm whether this change was applied — check the document before retrying.";
+  "Spectre couldn't confirm whether this change was applied — check the document before retrying.";
 
 /**
  * How many applied stable edit IDs a document remembers. Office document
@@ -74,7 +74,7 @@ export type ApplyFailureOutcome =
 /**
  * What to report when the Word batch for one edit threw.
  *
- * - The verification read found the expected revisions: it landed, Mike just
+ * - The verification read found the expected revisions: it landed, Spectre just
  *   lost its review controls.
  * - A mutation was queued but nothing could prove it landed: unknown. No
  *   automatic retry, because retrying an edit that DID land duplicates it.

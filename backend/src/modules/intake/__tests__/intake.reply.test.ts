@@ -316,7 +316,7 @@ describe("a requester's reply in the thread", () => {
     await handleIntakeAgent(memory.db, job());
     expect(mocks.stream).not.toHaveBeenCalled();
   });
-  it("runs the agent over the thread when MikeGC asked to choose a rule, and settles on it", async () => {
+  it("runs the agent over the thread when Spectre asked to choose a rule, and settles on it", async () => {
     setup({ request: { clarify_stage: "rule", clarify_rounds: 1 }, rulePreprocess: true });
     memory.rows("intake_messages").push({
       id: "q1",
@@ -333,7 +333,7 @@ describe("a requester's reply in the thread", () => {
     expect(model.requests[0]!.tools!.map((t) => t.function.name)).toContain("choose_rule");
     expect(prompt).toContain('REQUEST: {"state":"needs_information","rule":"undecided, waiting on the requester\'s answer"}');
     expect(prompt).toContain("--- The thread since the request was recorded ---");
-    expect(prompt).toContain("MikeGC, 2 Nov 2026, 09:15 UTC:\nOne quick question so it gets to the right person:");
+    expect(prompt).toContain("Spectre, 2 Nov 2026, 09:15 UTC:\nOne quick question so it gets to the right person:");
     expect(prompt).toContain("Jane Business (requester)");
     expect(prompt).toContain("Acme is a customer.");
     expect(request()).toMatchObject({ clarify_stage: null, assignee_id: sam, state: "in_review" });
@@ -381,7 +381,7 @@ describe("a requester's reply in the thread", () => {
     setup({ request: { clarify_stage: "rule", clarify_rounds: 2 } });
     modelCalls([replyCall("Still unsure?")]);
     await handleIntakeAgent(memory.db, job());
-    expect(model.results).toEqual([["refused: MikeGC can't ask again on this request: call choose_rule"]]);
+    expect(model.results).toEqual([["refused: Spectre can't ask again on this request: call choose_rule"]]);
     expect(request()).toMatchObject({ clarify_stage: null, assignee_id: null, state: "submitted" });
     expect(memory.rows("intake_outbound")).toEqual([]);
   });
@@ -459,7 +459,7 @@ describe("a requester's reply in the thread", () => {
     expect(memory.rows("intake_inbound")[0]).toMatchObject({
       status: "failed",
       payload: null,
-      error: "MikeGC couldn't record a reply in the request's Slack thread.",
+      error: "Spectre couldn't record a reply in the request's Slack thread.",
     });
   });
 });

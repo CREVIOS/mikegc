@@ -138,10 +138,10 @@ describe("intakeDeliveryStatus", () => {
       intakeDeliveryStatus(
         delivery({
           status: "failed",
-          error: "MikeGC was removed from #legal.",
+          error: "Spectre was removed from #legal.",
         }),
       ),
-    ).toBe("Couldn't send: MikeGC was removed from #legal.");
+    ).toBe("Couldn't send: Spectre was removed from #legal.");
   });
 });
 

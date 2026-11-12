@@ -24,8 +24,8 @@ describe("IntakeActorAvatar", () => {
     expect(mark.querySelector("svg")).not.toBeNull();
   });
 
-  it("shows MikeGC's mark, not initials, for what MikeGC did", () => {
-    const { container } = render(<IntakeActorAvatar name="MikeGC" mikegc />);
+  it("shows Spectre's mark, not initials, for what Spectre did", () => {
+    const { container } = render(<IntakeActorAvatar name="Spectre" mikegc />);
     const mark = container.firstElementChild!;
     expect(mark).toHaveAttribute("aria-hidden", "true");
     expect(mark).toHaveAttribute("data-actor", "mikegc");
@@ -33,7 +33,7 @@ describe("IntakeActorAvatar", () => {
     expect(mark.querySelector("svg.lucide-bot")).not.toBeNull();
   });
 
-  it("draws the same mark beside a request MikeGC created", () => {
+  it("draws the same mark beside a request Spectre created", () => {
     const { container } = render(<IntakeMikeGCMark />);
     const mark = container.firstElementChild!;
     expect(mark).toHaveAttribute("aria-hidden", "true");
@@ -42,18 +42,20 @@ describe("IntakeActorAvatar", () => {
   });
 });
 
-describe("what MikeGC did", () => {
-  it("is an entry with no actor that reads as MikeGC", () => {
-    expect(isMikeGCEvent({ actor_id: null, actor_name: "MikeGC" })).toBe(true);
-    // An automatic change has no name; a member called MikeGC has an ID.
+describe("what Spectre did", () => {
+  it("is an entry with no actor that reads as Spectre", () => {
+    expect(isMikeGCEvent({ actor_id: null, actor_name: "Spectre" })).toBe(true);
+    // An automatic change has no name; a member called Spectre has an ID.
     expect(isMikeGCEvent({ actor_id: null, actor_name: null })).toBe(false);
-    expect(isMikeGCEvent({ actor_id: "u1", actor_name: "MikeGC" })).toBe(false);
+    expect(isMikeGCEvent({ actor_id: "u1", actor_name: "Spectre" })).toBe(false);
+    // Rows the database named before the rename still read as the agent.
+    expect(isMikeGCEvent({ actor_id: null, actor_name: "Mike" + "GC" })).toBe(true);
   });
 
   it("is a request from email or Slack with no creator", () => {
     expect(isMikeGCRequest({ created_by: null, source: "gmail" })).toBe(true);
     expect(isMikeGCRequest({ created_by: null, source: "slack" })).toBe(true);
-    // A typed request whose creator's account was erased is not MikeGC's.
+    // A typed request whose creator's account was erased is not Spectre's.
     expect(isMikeGCRequest({ created_by: null, source: "manual" })).toBe(false);
     expect(isMikeGCRequest({ created_by: "u1", source: "gmail" })).toBe(false);
   });

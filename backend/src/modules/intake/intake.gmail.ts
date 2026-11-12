@@ -34,7 +34,7 @@ const GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me";
 const GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.modify";
 const API_TIMEOUT_MS = 20_000;
 const SEND_TIMEOUT_MS = 120_000;
-const LABEL = "MikeGC";
+const LABEL = "Spectre";
 
 /** A failed Gmail call. `sentence` is what members or admins see. */
 export class GmailApiError extends Error {
@@ -53,7 +53,7 @@ export class GmailApiError extends Error {
 }
 
 const DELEGATION_REFUSED =
-  "Google refused MikeGC access to the intake mailbox. Check the service account's domain-wide delegation for the gmail.modify scope.";
+  "Google refused Spectre access to the intake mailbox. Check the service account's domain-wide delegation for the gmail.modify scope.";
 
 export type GmailServiceAccount = {
   client_email: string;
@@ -178,7 +178,7 @@ async function gmailFetch<T>(
       signal: AbortSignal.timeout(init.long ? SEND_TIMEOUT_MS : API_TIMEOUT_MS),
     });
   } catch {
-    throw new GmailApiError(0, "network_error", false, "MikeGC couldn't reach Gmail.");
+    throw new GmailApiError(0, "network_error", false, "Spectre couldn't reach Gmail.");
   }
   if (response.ok) {
     const text = await response.text();
@@ -194,19 +194,19 @@ async function gmailFetch<T>(
   }
   const status = response.status;
   if (status === 429 || status >= 500)
-    throw new GmailApiError(status, reason, false, "Gmail is busy. MikeGC will try again.");
+    throw new GmailApiError(status, reason, false, "Gmail is busy. Spectre will try again.");
   if (status === 401 || status === 403)
     throw new GmailApiError(status, reason, true, DELEGATION_REFUSED);
   if (status === 404)
-    throw new GmailApiError(status, reason, true, "Gmail couldn't find what MikeGC asked for.");
+    throw new GmailApiError(status, reason, true, "Gmail couldn't find what Spectre asked for.");
   throw new GmailApiError(status, reason, true, "Gmail wouldn't accept this request.");
 }
 
-/** The mailbox's address and current history ID: checks MikeGC can open it. */
+/** The mailbox's address and current history ID: checks Spectre can open it. */
 export async function gmailProfile(mailbox: GmailMailbox): Promise<{ emailAddress: string; historyId: string }> {
   const profile = await gmailFetch<{ emailAddress?: string; historyId?: string }>(mailbox, "/profile");
   if (!profile?.emailAddress || !profile.historyId)
-    throw new GmailApiError(0, "invalid_response", false, "Gmail sent an answer MikeGC couldn't read.");
+    throw new GmailApiError(0, "invalid_response", false, "Gmail sent an answer Spectre couldn't read.");
   return { emailAddress: profile.emailAddress, historyId: String(profile.historyId) };
 }
 
@@ -283,7 +283,7 @@ export async function gmailListSince(mailbox: GmailMailbox, after: Date): Promis
 
 /** A read that couldn't finish; it is tried again, and settings show it. */
 const incomplete = (code: "history_incomplete" | "list_incomplete") =>
-  new GmailApiError(0, code, false, "MikeGC couldn't finish reading the mailbox. It will try again.");
+  new GmailApiError(0, code, false, "Spectre couldn't finish reading the mailbox. It will try again.");
 
 type GmailPart = {
   partId?: string;
@@ -370,7 +370,7 @@ export async function gmailReadMessage(mailbox: GmailMailbox, id: string): Promi
 
 const labelIds = new Map<string, string>();
 
-/** Mark a recorded email with the "MikeGC" label, made on first use. */
+/** Mark a recorded email with the "Spectre" label, made on first use. */
 export async function gmailMarkRecorded(mailbox: GmailMailbox, id: string) {
   try {
     let label = labelIds.get(mailbox.address.toLowerCase());
@@ -464,13 +464,13 @@ export async function gmailSendTest(mailbox: GmailMailbox, to: string, fromName:
     from: { name: fromName, address: mailbox.address },
     to: [to],
     cc: [],
-    subject: "MikeGC is connected to the intake mailbox",
+    subject: "Spectre is connected to the intake mailbox",
     messageId: `test-${Date.now()}@mikegc`,
     inReplyTo: null,
     references: [],
     autoSubmitted: true,
     outboundId: "test",
-    text: "MikeGC can read and send from this intake mailbox. Requests emailed here will be recorded in Intake.",
+    text: "Spectre can read and send from this intake mailbox. Requests emailed here will be recorded in Intake.",
     attachments: [],
   });
   await gmailFetch(mailbox, "/messages/send", { json: { raw: raw.toString("base64url") }, long: true });
@@ -489,8 +489,8 @@ export const outboundMessageId = (outboundId: string) => `${outboundId}@mikegc`;
 /**
  * The Gmail adapter: a reply in the thread, from "Emma Chen via Legal" at
  * the intake address for a member's message or the configured name for
- * MikeGC's, with our own In-Reply-To, References (the 20 newest) and
- * Message-ID, Auto-Submitted on MikeGC's own questions, and the documents
+ * Spectre's, with our own In-Reply-To, References (the 20 newest) and
+ * Message-ID, Auto-Submitted on Spectre's own questions, and the documents
  * that fit within Gmail's 25 MB after encoding.
  */
 export const gmailAdapter: ChannelAdapter = {
@@ -499,7 +499,7 @@ export const gmailAdapter: ChannelAdapter = {
     if (delivered) return { externalId: delivered, documents: message.documents };
     const mailbox = ctx.settings.email_enabled ? gmailMailbox(ctx.settings) : null;
     if (!mailbox)
-      throw new ChannelDeliveryError("The intake mailbox isn't connected, so MikeGC can't email the requester.", true);
+      throw new ChannelDeliveryError("The intake mailbox isn't connected, so Spectre can't email the requester.", true);
     const address = mailbox.address;
     try {
       const thread = mailAddress(link);

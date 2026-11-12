@@ -20,12 +20,12 @@ covers every other model, or all models when neither is.
 - **Anthropic or OpenAI Search**: the provider runs the search and reads the
   pages. The provider bills searches to the API key in use (Anthropic charges
   per search on top of tokens).
-- **A search service** (Mike's search): Mike calls the
+- **A search service** (Spectre's search): Spectre calls the
   [Brave Search](https://brave.com/search/api/),
   [Tavily](https://docs.tavily.com/) or
   [DeepSeek Search](https://api-docs.deepseek.com/guides/search/) API from the
   backend. It works with any model and needs that service's API key. Tavily
-  and DeepSeek also read pages for Mike; with Brave, Mike reads pages itself.
+  and DeepSeek also read pages for Spectre; with Brave, Spectre reads pages itself.
 - **Off**: those models do not search.
 
 A choice never stands in for another. If a search service is chosen and no
@@ -35,15 +35,15 @@ choice is changed. The key field appears once a search service is chosen.
 Gemini's built-in search is not offered, because Google requires its search
 suggestions to be displayed wherever grounded results appear.
 
-Mike asks the provider for at most five searches per request. An answer makes
+Spectre asks the provider for at most five searches per request. An answer makes
 one request per step, so a long answer can search more than five times, and
 OpenAI has no per-request limit. The tool stays offered for the whole answer
-because Anthropic rejects a request that drops it after earlier searches. Mike's
+because Anthropic rejects a request that drops it after earlier searches. Spectre's
 search is limited to eight searches per answer.
 
 ## Reading pages
 
-Whichever search is chosen, the assistant can also open pages with Mike's
+Whichever search is chosen, the assistant can also open pages with Spectre's
 page reader. With Anthropic or OpenAI Search it uses the reader for links the
 user gives and for search results it needs in full. With Tavily or DeepSeek,
 the service reads the page first (DeepSeek reads no PDFs). Otherwise, or when
@@ -81,7 +81,7 @@ because Brave's free plan allows one request per second.
 - **Private addresses.** Pages are fetched through the same guard as MCP
   connectors: loopback, private, link-local and cloud-metadata addresses are
   refused, at every redirect.
-- **Which pages the reader can open.** Only pages a search (Mike's or the AI
+- **Which pages the reader can open.** Only pages a search (Spectre's or the AI
   provider's) returned in the same answer, links to the same site on pages it
   has already read, and links in the user's latest message. Text injected
   into a document or a third-party page cannot send the assistant to an
@@ -97,8 +97,8 @@ because Brave's free plan allows one request per second.
   document text into a query.
 
 With OpenAI search, OpenAI opens pages on its own servers, outside the
-controls on Mike's `read_webpage`. Mike's own network cannot be reached that
-way, but Mike's link allowlist and read limits do not apply to those pages.
+controls on Spectre's `read_webpage`. Spectre's own network cannot be reached that
+way, but Spectre's link allowlist and read limits do not apply to those pages.
 Choose a search service for models where that control matters.
 
 ## Troubleshooting

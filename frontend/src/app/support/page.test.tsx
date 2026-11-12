@@ -46,7 +46,7 @@ describe("SupportPage", () => {
 
         const alert = await screen.findByRole("alert");
         expect(alert).toHaveTextContent(
-            "Mike is temporarily unavailable. Try again in a moment.",
+            "Spectre is temporarily unavailable. Try again in a moment.",
         );
         expect(
             screen.getByRole("link", { name: "Email support directly" }),
@@ -67,7 +67,7 @@ describe("SupportPage", () => {
         await submitFeedback();
 
         expect(await screen.findByRole("alert")).toHaveTextContent(
-            "Mike couldn't reach the server. Check your connection and try again.",
+            "Spectre couldn't reach the server. Check your connection and try again.",
         );
     });
 });

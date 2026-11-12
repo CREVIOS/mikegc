@@ -216,7 +216,7 @@ async function runWriteAction(
       error.status < 500;
     if (attempted && !definite)
       throw new GoogleWorkspaceError(
-        `The outcome is uncertain. Check ${GOOGLE_PROVIDERS[provider].name} before trying again; Mike will not retry it.`,
+        `The outcome is uncertain. Check ${GOOGLE_PROVIDERS[provider].name} before trying again; Spectre will not retry it.`,
       );
     throw error;
   }
@@ -277,7 +277,7 @@ export async function planGoogleWorkspaceCall(
     };
     if (JSON.stringify(item).length > MAX_APPROVAL_CHARS)
       throw new GoogleWorkspaceError(
-        "This action is too large to review in Mike. Use Google directly.",
+        "This action is too large to review in Spectre. Use Google directly.",
       );
     return { type: "approval", item };
   } catch (error) {

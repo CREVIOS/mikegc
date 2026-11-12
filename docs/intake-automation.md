@@ -1,43 +1,43 @@
 # Automated intake
 
-MikeGC can record intake requests itself, so a lawyer doesn't have to retype
+Spectre can record intake requests itself, so a lawyer doesn't have to retype
 what arrived, and holds a conversation with the requester in the thread the
 request came from (see [The requester loop](#the-requester-loop)). It reads
 three kinds of channel:
 
 - **Email (Outlook or Gmail).** Company users email a designated intake
-  address, such as `intake@example.com`. MikeGC connects to that mailbox
+  address, such as `intake@example.com`. Spectre connects to that mailbox
   itself, through Microsoft Graph for Microsoft 365 or the Gmail API for
   Google Workspace, reads new mail from it and replies as it, so replies
   thread natively and land in the mailbox's Sent folder.
-- **Slack.** Anyone in the organization's Slack workspace mentions `@MikeGC`
-  in a channel MikeGC has been added to. A top-level message becomes the
+- **Slack.** Anyone in the organization's Slack workspace mentions `@Spectre`
+  in a channel Spectre has been added to. A top-level message becomes the
   request, and its author is the requester. A mention in a thread sends the
   whole thread, up to the mention, and the thread's first author is the
   requester.
-- **Microsoft Teams.** Anyone mentions `@MikeGC` in a channel of a team the
-  organization's own MikeGC bot has been added to, the same way as in Slack.
+- **Microsoft Teams.** Anyone mentions `@Spectre` in a channel of a team the
+  organization's own Spectre bot has been added to, the same way as in Slack.
 
-MikeGC answers in the thread, thanking the requester and saying who will
+Spectre answers in the thread, thanking the requester and saying who will
 pick the request up ("Thanks, I've passed this to Legal. Sam Lawyer will
 pick it up."). It doesn't link to the request: its page is only for the
 organization's members, and the requester follows the request in the thread.
 
 A message that clearly isn't a request, such as "hi", "how are you" or a
-question about what MikeGC is, gets a short, friendly answer in the same
+question about what Spectre is, gets a short, friendly answer in the same
 thread instead, in Slack, Teams and email alike, and no request is recorded.
 The [intake agent](#the-intake-agent) decides this; any legal question,
 document, deadline or matter is a request, and when unsure it records one. The
 answer never gives legal advice. The next message in that thread reaches
-MikeGC without a mention and is read with MikeGC's earlier answers. After
+Spectre without a mention and is read with Spectre's earlier answers. After
 three answers in one thread, the next message there is recorded as a request.
-Mail in another request's email thread has no thread MikeGC can answer in, so
+Mail in another request's email thread has no thread Spectre can answer in, so
 it is always recorded.
 
 Every other message becomes a **New** or **In progress** request in the
-organization's queue, created by **MikeGC**: MikeGC is not an account, so the
+organization's queue, created by **Spectre**: Spectre is not an account, so the
 request, its "created" entry and the documents it attached all read as
-MikeGC's. The request page notes where it came from ("Created by MikeGC from
+Spectre's. The request page notes where it came from ("Created by Spectre from
 Slack").
 
 An organization's owners and admins set this up in the **Intake** section of
@@ -64,7 +64,7 @@ discards what wasn't saved.
 A channel turned on starts once it is set up: email once its mailbox is
 connected, Slack once both its secrets are saved, Teams once its app ID,
 tenant ID and secret are saved and Microsoft accepts them. Who each request goes to, and
-whether MikeGC preprocesses it, is set on the rules page beside it
+whether Spectre preprocesses it, is set on the rules page beside it
 (`…/settings/intake/rules`). Other members aren't offered either page, and one
 who follows a link to it is told it is for owners and admins; the API refuses
 them too. In Personal, the account's owner finds both in their own
@@ -74,11 +74,11 @@ them too. In Personal, the account's owner finds both in their own
 
 ## The intake agent
 
-The intake agent is how MikeGC handles a message in Slack, Teams, Gmail or
+The intake agent is how Spectre handles a message in Slack, Teams, Gmail or
 Outlook. There is no switch for it, and it runs for all four channels: it
 runs with the **Triage** model chosen under **Intake** in Model Preferences,
 and doesn't run without one. For each message it reads the whole
-conversation (the thread so far and MikeGC's own earlier answers there, or,
+conversation (the thread so far and Spectre's own earlier answers there, or,
 in a request's thread, the request and everything sent and replied since) and
 acts through four tools, offered for every message. Each tool checks whether
 it applies and tells the agent why when it doesn't:
@@ -86,9 +86,9 @@ it applies and tells the agent why when it doesn't:
 - **reply** answers in the thread the message came from. With no request
   yet, it is a short answer to small talk, or up to three questions when no
   rule can be chosen yet (see [Stage 1](#stage-1-choosing-the-rule)). On a
-  recorded request whose rule waits on the requester, it is MikeGC's
-  questions to choose the rule, posted with MikeGC's own opening line.
-  Otherwise, when the requester writes in a request's thread, it is MikeGC's
+  recorded request whose rule waits on the requester, it is Spectre's
+  questions to choose the rule, posted with Spectre's own opening line.
+  Otherwise, when the requester writes in a request's thread, it is Spectre's
   answer: it acknowledges the message, says what it added to the request
   ("I've added the $500k contract value to your request."), or answers a
   question from the request and the thread. An answer doesn't make the
@@ -103,7 +103,7 @@ it applies and tells the agent why when it doesn't:
   date from what the requester writes later ("we now need it by the 14th").
   It never changes a detail a member has edited, the requester, the
   assignee or the state, and never touches a resolved or cancelled request.
-  Each change is a MikeGC note on the request, such as "Updated the due date
+  Each change is a Spectre note on the request, such as "Updated the due date
   to 14 Nov 2026 from the requester's reply."
 - **choose_rule** assigns the request using the organization's **rules**: the
   member of the first rule, in order, whose condition it meets, or no one
@@ -141,23 +141,23 @@ it. A rule saves once
 it has both a condition and a member. Rules need a triage model: without one,
 requests are left unassigned and nothing is preprocessed.
 
-With AI preprocessing on, once MikeGC has recorded a request the rule assigns,
+With AI preprocessing on, once Spectre has recorded a request the rule assigns,
 and attached its documents, it works on the request in the background, before
 the reviewer picks it up. For a request from a thread, it first checks that
 the workflow or playbook has what it needs and asks the requester for
 anything missing (see [Stage 2](#stage-2-what-the-playbook-or-workflow-needs)).
 Then:
 
-- **With a workflow**, MikeGC follows the workflow's instructions to answer
+- **With a workflow**, Spectre follows the workflow's instructions to answer
   the request and suggest changes to its documents.
-- **With a playbook**, MikeGC reviews each document against the playbook, as a
+- **With a playbook**, Spectre reviews each document against the playbook, as a
   playbook review does, and the review appears in that admin's playbook runs.
-- **With neither**, MikeGC answers the request in general terms and suggests
+- **With neither**, Spectre answers the request in general terms and suggests
   the changes a careful in-house lawyer would make.
 
-MikeGC posts its answer as a note on the request, which reads as MikeGC's. It
+Spectre posts its answer as a note on the request, which reads as Spectre's. It
 makes its suggested changes to the request's Word documents as tracked
-changes signed MikeGC, as a new version that reviewers accept or reject like
+changes signed Spectre, as a new version that reviewers accept or reject like
 any other. It marks up only a document as it arrived: one already revised is
 left alone. PDFs and other files are read but not marked up. It waits for a
 document's text to be extracted, and after its last try answers without
@@ -187,7 +187,7 @@ requester, and none when someone else is. A reply has at most 600 characters
 and no links, email addresses, mentions or formatting, and goes only to the
 thread the message came from. If the details are still refused, the request
 is recorded without the target date and requester email rather than not at
-all. When no model is chosen, its key has gone, or the model fails, MikeGC
+all. When no model is chosen, its key has gone, or the model fails, Spectre
 still records the request: the email subject or the first line of the Slack
 message as the subject, the message as the description, the sender as
 requester, no target date, unassigned, with every accepted attachment.
@@ -211,7 +211,7 @@ has gone; preprocessing that can't run says why in its note instead.
 
 ## The requester loop
 
-MikeGC holds a two-way conversation with the requester in the Outlook,
+Spectre holds a two-way conversation with the requester in the Outlook,
 Gmail, Teams or Slack thread a request came from. It does four things
 there:
 
@@ -226,12 +226,12 @@ there:
 
 The requester's answers come back onto the request and move it forward.
 Everything else a lawyer does (notes, assignments, edits, other status
-changes, cancellations) stays inside MikeGC. Requests a member typed have
+changes, cancellations) stays inside Spectre. Requests a member typed have
 no thread, so none of this applies to them.
 
 Questions to choose the rule come before the request is recorded (stage 1);
 questions for its preprocessing come after, so a lawyer can see the request
-while MikeGC waits for those answers. MikeGC asks in at most **two rounds**
+while Spectre waits for those answers. Spectre asks in at most **two rounds**
 in total, across both stages; a round is one message with up to three
 questions, numbered when there is more than one. Asking is always on.
 
@@ -240,11 +240,11 @@ questions, numbered when there is more than one. Asking is always on.
 The agent compares the conversation with the rules' plain-language
 conditions. When no rule clearly matches but one or more is plausible (the
 conditions "supplier contracts" and "customer contracts" both fit an NDA with
-Acme, so MikeGC asks "Is Acme a customer or a supplier?"), or when a
+Acme, so Spectre asks "Is Acme a customer or a supplier?"), or when a
 condition turns on a fact the message doesn't state, such as "contracts over
-$250k", MikeGC asks **before recording anything**: the questions are its
+$250k", Spectre asks **before recording anything**: the questions are its
 reply in the thread, and the requester's answer (no mention needed) is read
-by the agent with the whole conversation and MikeGC's questions. The request
+by the agent with the whole conversation and Spectre's questions. The request
 is recorded once a rule can be chosen, so its subject, summary and due date
 reflect the answers too. After three replies in one thread, the next message
 is recorded whatever it says, and a request that matches no rule is left
@@ -252,7 +252,7 @@ unassigned.
 
 A message with attachments is recorded at once, so its files are kept. Then
 the request is recorded unassigned and **Waiting on requester**, and the
-questions go in MikeGC's acknowledgement; the agent reads each answer over
+questions go in Spectre's acknowledgement; the agent reads each answer over
 the whole thread, updates the request's details from it, and chooses the
 rule or asks once more.
 
@@ -267,7 +267,7 @@ without positions or sample clauses). It asks only what that playbook or
 workflow needs: an agreement that isn't attached, a schedule it refers to,
 which side we are on or which entity is signing, a deadline the workflow asks
 for. If something is missing, the request (already assigned) waits on the
-requester and preprocessing waits too; MikeGC's acknowledgement waits for
+requester and preprocessing waits too; Spectre's acknowledgement waits for
 this check, so its questions go in the same message. When nothing is missing,
 or the rounds have run out, preprocessing runs; in the second case its note
 starts with "Still missing: …". A rule without preprocessing skips stage 2.
@@ -282,7 +282,7 @@ waits on a broken model.
   sender's mail system authenticated them (see [Receiving](#how-it-works)).
 - An answer is recorded on the request as a reply, named for its author and
   channel, and its files become the request's documents, tagged on the reply.
-- An answer to MikeGC's question runs the stage that asked again: the agent
+- An answer to Spectre's question runs the stage that asked again: the agent
   for the rule, the readiness check for preprocessing. When nothing is
   missing, the request returns to the state it would have had (**New** if
   unassigned, **In progress** if assigned).
@@ -319,7 +319,7 @@ by default. The comment being written stays the internal resolution and is
 never sent. Switched on, the dialog shows a **Message** box, filled from the
 comment to start with but written apart from it, and a checklist of the
 request's documents. Documents whose current version is newer than the one
-that arrived, such as MikeGC's redline after a lawyer accepted its changes,
+that arrived, such as Spectre's redline after a lawyer accepted its changes,
 are ticked by default. Sending posts the message, stored as the request's
 `answer` message, and the current version of each ticked document in the
 thread. With no message and no documents, nothing is sent. By email, documents are attached in the order they were
@@ -341,15 +341,15 @@ them apart.
 Each message to the requester shows its delivery under it in the request's
 Messages section: "Sending", "Sent", or "Couldn't send: …" with **Retry**
 and **Copy text**. Transient failures are retried up to five times; a
-permanent one, such as MikeGC removed from the channel, a revoked token or
+permanent one, such as Spectre removed from the channel, a revoked token or
 Graph consent withdrawn, says what to fix.
 
-### Stopping MikeGC
+### Stopping Spectre
 
-While MikeGC waits on an answer, the request's details say "MikeGC is waiting
+While Spectre waits on an answer, the request's details say "Spectre is waiting
 for the requester's answer (round 1 of 2)" with **Stop asking**. That, or any
 other lawyer command on the request (assign, wait, resume, resolve, cancel,
-edit), stops MikeGC asking for good: later answers are recorded but run no
+edit), stops Spectre asking for good: later answers are recorded but run no
 AI. If it was waiting on the readiness check, preprocessing then runs with
 what the request has.
 
@@ -368,13 +368,13 @@ embedded in an email's body, such as signature logos, are left out without
 being listed. Accepted documents become the request's documents, like ones a
 member uploads, and every member can open them: Word and PowerPoint files are
 converted for the viewer the same way, and they are stored under
-`documents/intake-<organization ID>/` because MikeGC is not a user.
+`documents/intake-<organization ID>/` because Spectre is not a user.
 
 The document panel lists each document's versions, to view and download any
 of them. While a request is open, any member who can see it can edit its
 documents (as tracked changes, saved as new versions); once it is resolved or
 cancelled they are read-only again, except to whoever uploaded them. A new
-version of a document MikeGC recorded stays under the organization's
+version of a document Spectre recorded stays under the organization's
 `intake-<organization ID>` folder.
 
 ### Processing a request in the Assistant
@@ -392,13 +392,13 @@ requester's words. While the request is open, the chat can edit its documents
 with tracked changes. If the person loses access to the request, or the
 request is deleted, the chat keeps its messages but reads nothing more of it.
 
-MikeGC's preprocessing note reads in the activity as "MikeGC preprocessed this
+Spectre's preprocessing note reads in the activity as "Spectre preprocessed this
 request" (`intake_messages.purpose = 'preprocessing'`); its other notes, such
 as a related-thread notice, stay comments.
 
 ## Setting up email
 
-Company users email the intake address; MikeGC reads that mailbox and replies
+Company users email the intake address; Spectre reads that mailbox and replies
 as it. One mailbox per organization, on Microsoft 365 or Google Workspace.
 
 ### What counts as a request
@@ -445,17 +445,17 @@ lists that deliver into it are fine.
    scope would no longer limit the app. A new tenant must run
    `Enable-OrganizationCustomization` once before it can create the scope,
    and Exchange can take a while to apply it.
-3. In MikeGC, open **Settings → Intake**, choose **Set up** on Outlook, and
+3. In Spectre, open **Settings → Intake**, choose **Set up** on Outlook, and
    enter the mailbox address, tenant ID, client ID and client secret. When
    Teams is set up, **Use the same app as Teams** (on by default for a first
    connection) connects with the Teams app instead, without typing it again.
-4. MikeGC checks it can open the mailbox, starts reading from now (mail
+4. Spectre checks it can open the mailbox, starts reading from now (mail
    already there isn't recorded), subscribes to new-mail notifications at its
    **notification URL** (`/webhooks/intake/graph/<id>`), and sends you a test
    email. If Microsoft can't reach the notification URL, the settings say so
-   and MikeGC reads the mailbox every 15 minutes instead.
+   and Spectre reads the mailbox every 15 minutes instead.
 
-MikeGC marks recorded mail with the "MikeGC" category.
+Spectre marks recorded mail with the "Spectre" category.
 
 ### Google Workspace (Gmail)
 
@@ -471,54 +471,54 @@ Group can't be connected, but a group can deliver into the account.
    `https://www.googleapis.com/auth/gmail.modify`. The Gmail dialog shows the
    client ID as soon as the key is pasted, or the deployment's when there is
    no key to paste.
-3. In MikeGC, choose **Set up** on Gmail, enter the mailbox address and paste
-   the JSON key. MikeGC reads the mailbox profile to check access, starts
+3. In Spectre, choose **Set up** on Gmail, enter the mailbox address and paste
+   the JSON key. Spectre reads the mailbox profile to check access, starts
    from its current history, and sends you a test email.
 
 The pasted key is the organization's own: it is encrypted at rest like the
 other channel secrets, never shown again, and used before the deployment's.
 Reconnecting with the field left empty keeps it.
 
-MikeGC marks recorded mail with the "MikeGC" label.
+Spectre marks recorded mail with the "Spectre" label.
 
 ## Setting up Slack
 
 Someone allowed to create apps in your Slack workspace does this once per
 organization. Slack verifies the events URL as soon as you enter it, so enter
-the app's credentials in MikeGC first.
+the app's credentials in Spectre first.
 
 1. Open [Slack app management](https://api.slack.com/apps), choose **Create
    New App → From an app manifest**, pick the workspace, and paste
    [`slack-intake-app-manifest.example.json`](slack-intake-app-manifest.example.json).
-   It creates a bot called MikeGC that can read messages that mention it and
+   It creates a bot called Spectre that can read messages that mention it and
    the threads they're in, read and post files, name channels, look up the
    people in them, and reply under a member's name.
 2. Install the app to the workspace. Copy its **Bot User OAuth Token**
    (`xoxb-…`, under **OAuth & Permissions**) and its **Signing Secret** (under
    **Basic Information**).
-3. In MikeGC, open the organization's **Settings → Intake**, choose **Set up**
+3. In Spectre, open the organization's **Settings → Intake**, choose **Set up**
    on the Slack card, paste both, turn on **Record requests from Slack** and
    choose **Save** (or press Enter in a field). Nothing is saved until then;
    Cancel, Close or Escape discards it. Slack turns on once both are saved.
-   MikeGC checks the token with Slack and shows the workspace it belongs to.
+   Spectre checks the token with Slack and shows the workspace it belongs to.
 4. Back in the Slack app, open **Event Subscriptions**, turn events on, and
-   paste MikeGC's **Events Request URL** from the settings page. Slack should
+   paste Spectre's **Events Request URL** from the settings page. Slack should
    show it as verified. Under **Subscribe to bot events**, add
    `app_mention`, `message.channels` and `message.groups`, save, and reinstall
    the app if Slack asks. The message events are how answers in a request's
-   thread reach MikeGC without a mention; messages in threads no request is
+   thread reach Spectre without a mention; messages in threads no request is
    linked to are dropped without being stored.
-5. Invite MikeGC to the channels people ask Legal in (`/invite @MikeGC`).
-   Slack only tells MikeGC about mentions in channels it's a member of.
+5. Invite Spectre to the channels people ask Legal in (`/invite @Spectre`).
+   Slack only tells Spectre about mentions in channels it's a member of.
 
-MikeGC's reply in the thread includes the request's subject and its reviewer,
+Spectre's reply in the thread includes the request's subject and its reviewer,
 so anyone in the channel can see them.
 
 **Upgrading an existing app.** The requester loop needs `files:write` (to
 post documents), `chat:write.customize` (to post under a lawyer's name),
 `channels:read` and `groups:read` (to name the channel), and the two
 `message.*` events. Add them from the manifest and reinstall the app. Until
-then MikeGC still records requests and posts text without documents; the
+then Spectre still records requests and posts text without documents; the
 Slack section names the missing scopes, and a request says "Reinstall the
 Slack app to send documents".
 
@@ -531,7 +531,7 @@ single-tenant. Your Microsoft 365 admin does this once:
 1. In Microsoft Entra ID, register a single-tenant app and create a client
    secret.
 2. Create an Azure Bot resource for that app ID. Set its messaging endpoint to
-   MikeGC's **Teams events URL** from the Teams section
+   Spectre's **Teams events URL** from the Teams section
    (`/webhooks/intake/teams/<id>`) and turn on the Microsoft Teams channel.
 3. Build a Teams app package from
    [`teams-intake-app-manifest.example.json`](teams-intake-app-manifest.example.json)
@@ -539,13 +539,13 @@ single-tenant. Your Microsoft 365 admin does this once:
    organization's app catalog, and add it to the teams whose channels ask
    Legal. It declares the bot in team scope and the resource-specific consent
    permission `ChannelMessage.Read.Group`, which a team owner consents to when
-   adding the app, so MikeGC receives thread replies without a mention.
+   adding the app, so Spectre receives thread replies without a mention.
 4. Optional, for documents: grant the app the Microsoft Graph application
    permission `Sites.Selected` for the chosen teams' sites (preferred over
    tenant-wide `Files.ReadWrite.All`), with admin consent.
-5. In MikeGC, choose **Set up** on the Teams card, paste the app ID, tenant
+5. In Spectre, choose **Set up** on the Teams card, paste the app ID, tenant
    ID and client secret, turn on **Record requests from Teams** and choose
-   **Save**. MikeGC requests a token to check them and shows whether document
+   **Save**. Spectre requests a token to check them and shows whether document
    access works. When Outlook is connected, **Use the same app as Outlook**
    (on by default for a first setup) uses the mailbox's Entra app instead,
    without typing it again.
@@ -553,16 +553,16 @@ single-tenant. Your Microsoft 365 admin does this once:
 Outlook and Teams keep their own Entra app settings, so each channel can have
 its own app; a separate app per channel is safer, since a leaked secret then
 reaches only one. Reusing the other channel's app copies its tenant ID, client
-ID and client secret: MikeGC keeps an encrypted copy for each channel, so
+ID and client secret: Spectre keeps an encrypted copy for each channel, so
 changing one channel's app or secret later doesn't change the other's.
 
-Every request from Teams carries a Bot Connector token, which MikeGC checks
+Every request from Teams carries a Bot Connector token, which Spectre checks
 against Bot Framework's signing keys, the bot's app ID, the activity's service
 URL and the configured tenant before reading it. Files shared in the channel
 are read through Graph when document access works, and listed as not attached
-otherwise. MikeGC's replies go through the Bot Connector; a resolution's
+otherwise. Spectre's replies go through the Bot Connector; a resolution's
 documents are uploaded to the channel's files folder, under
-`MikeGC/<request subject>/`, and linked from the message, so channel members
+`Spectre/<request subject>/`, and linked from the message, so channel members
 open them with their existing access. Without document access, the message
 names them and says to ask Legal for a copy. Whether Teams delivers thread
 replies from private and shared channels depends on Microsoft; standard
@@ -577,21 +577,21 @@ channels are supported.
   Framework's keys (cached, refreshed on an unknown key ID), issued by
   `https://api.botframework.com` to the bot's app ID, within its lifetime
   (five minutes' skew), for the activity's own service URL and the configured
-  tenant. Graph notifications must echo the client state MikeGC set, of which
+  tenant. Graph notifications must echo the client state Spectre set, of which
   it keeps only a SHA-256 hash; they hold no content, so a forged one can only
-  make MikeGC read real mail. Gmail is polled (`intake.mailbox.poll`, a
+  make Spectre read real mail. Gmail is polled (`intake.mailbox.poll`, a
   self-rescheduling job per mailbox), and so is Outlook every 15 minutes as a
   backstop, with its subscription renewed every three days.
 - **Routing.** Each channel's event is either a message in a thread linked to
   a request (`intake_channel_links`), stored in `intake_inbound` as a reply,
-  or a new request: a mention of MikeGC in an unlinked thread, or a new email
+  or a new request: a mention of Spectre in an unlinked thread, or a new email
   to the intake address. Both are handed to the `intake.agent` job, which
   takes the reply branch or the new-message branch by the stored row's kind.
   Anything else (chatter in an unlinked thread, bots' own
   messages, edits and deletions) is acknowledged and dropped after one indexed
   link lookup, without storing its content. An email reply is matched by its
   Outlook `conversationId` or Gmail `threadId`, or else by a Message-ID in its
-  `In-Reply-To` or `References` that MikeGC saw or sent in the thread
+  `In-Reply-To` or `References` that Spectre saw or sent in the thread
   (`intake_email_message_ids`).
 - **Recording.** Each message is stored once in `intake_inbound`, keyed by its
   Slack channel and timestamp, its Teams activity ID or its email
@@ -599,14 +599,14 @@ channels are supported.
   attachments are stored temporarily until the message is handled. The
   `intake.agent` job then runs the intake agent (`intake.agent.ts`) and
   saves its plan on the message, then answers in the thread
-  (`intake_conversations` counts MikeGC's answers and keeps their text) or
+  (`intake_conversations` counts Spectre's answers and keeps their text) or
   records the request with
   `intake_submit_automated`, links its thread with `intake_link_thread`, makes
   its documents and links them with `intake_attach_automated`, and asks
   (`intake_ask_automated`) or acknowledges (`intake_acknowledge_automated`). A
   retried job reuses the request and documents it already made and never
   acknowledges twice. A message that still fails after its retries is
-  recorded as failed, with a reason, in `intake_inbound`, and MikeGC says so
+  recorded as failed, with a reason, in `intake_inbound`, and Spectre says so
   in a Slack thread.
 - **Replies.** The `intake.agent` job's reply branch reads the reply from its channel,
   records it with `intake_reply_automated`, adds its files, and then queues
@@ -616,10 +616,10 @@ channels are supported.
   details it planned, skipping any in the request's `member_edited_fields`,
   `intake_ask_automated` asks once more or
   `intake_settle_clarify_automated` returns a request whose rule is chosen
-  to New or In progress, and `intake_answer_automated` posts MikeGC's answer
+  to New or In progress, and `intake_answer_automated` posts Spectre's answer
   without changing the request's state.
 - **Outbox.** Every requester-facing message (an acknowledgement, a question,
-  MikeGC's answer or a resolution reply) is an `intake_outbound` row written in the same
+  Spectre's answer or a resolution reply) is an `intake_outbound` row written in the same
   transaction as the message it carries, and sent by the `intake.deliver`
   job through its channel's adapter. Before a retry (never on the first
   attempt) the adapter asks the channel whether an earlier attempt landed:
@@ -627,12 +627,12 @@ channels are supported.
   Items, Gmail by its Message-ID (or an `X-MikeGC-Outbound` header in the
   thread), Teams by the bot's message with the same text in the thread. Each
   document's channel ID is saved as it lands, so a retry posts only the rest.
-  Failures store a sentence MikeGC writes from a known code, never a
+  Failures store a sentence Spectre writes from a known code, never a
   provider's response.
 - **Questions are untrusted output.** The thread is untrusted, and the
   questions go to people in the business, so at most three are posted, each
   one line of at most 300 characters; any with a link, an email address, a
-  mention or markup is dropped; each is escaped for its channel; and MikeGC's
+  mention or markup is dropped; each is escaped for its channel; and Spectre's
   own wording frames them ("One quick question so it gets to the right
   person:" while choosing a rule, "A couple of things Legal will need before
   they start:" for the readiness check). The models are asked to phrase them
@@ -681,14 +681,14 @@ the new build. The second turns any note of what a member handles into a rule
 assigning to them, and stops if an organization has more than 100 notes, more
 than the 100 rules it can hold. The third removes the timezone that requests kept with
 their target date, which is overdue once it has passed where the viewer is.
-The fourth adds AI preprocessing to rules and lets MikeGC post notes. The
+The fourth adds AI preprocessing to rules and lets Spectre post notes. The
 fifth removes the switch that turned AI triage off, so it runs for every
 organization, including any that had switched it off. The sixth adds the
 triage model, and the seventh the preprocessing model; settings that already
 exist have neither, so an admin chooses them before triage and preprocessing
 run again. The eighth saves an organization's rules in one transaction, so
 two saves at once can't delete each other's rules. The ninth adds the
-requester loop: thread links, the outbox, replies, MikeGC's clarifying stages
+requester loop: thread links, the outbox, replies, Spectre's clarifying stages
 and rounds, the New reply flag, the lawyer's send options on wait and resolve,
 and **Stop asking**. Its command boundary takes new arguments, so an older
 binary can't work requests once it has run; roll application code forward.
@@ -699,8 +699,8 @@ and the twelfth an organization's own Gmail service account.
 `backend/migrations/20261111_01_intake_agent.sql` adds what the intake agent
 needs: `intake_requests.member_edited_fields`, which `intake_edit_request` now
 fills with each detail a member changes; `intake_update_automated`, which
-changes a request's details as MikeGC; and `intake_conversations.replies`,
-MikeGC's own answers in a thread with no request. Apply it before starting the
+changes a request's details as Spectre; and `intake_conversations.replies`,
+Spectre's own answers in a thread with no request. Apply it before starting the
 new build; the old build keeps working once it has run.
 
 `20261111_03_intake_retire_postmark.sql` removes what was left of Postmark:
@@ -709,7 +709,7 @@ requests recorded through it take the organization's connected mailbox
 mail still waiting is deleted; the `'email'` source and
 `intake_automation.email_reconnect_notice` are dropped. The old webhook URL is
 gone and answers `404`. `20261111_04_intake_answer_automated.sql` adds
-`intake_answer_automated`, which MikeGC's answers in a request's thread use.
+`intake_answer_automated`, which Spectre's answers in a request's thread use.
 Apply both before starting the new build. Jobs queued as `intake.inbound` or
 `intake.reply` by an older build aren't run by the new one, which queues
 `intake.agent`: let the queue drain before upgrading.

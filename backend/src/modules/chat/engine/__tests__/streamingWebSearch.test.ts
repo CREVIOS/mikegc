@@ -77,7 +77,7 @@ describe("runLLMStream web search", () => {
     ["the provider's search", PROVIDER, false, true],
     ["Brave Search", BRAVE, true, true],
   ] as const)(
-    "with %s, advertises Mike's web_search %s and read_webpage %s",
+    "with %s, advertises Spectre's web_search %s and read_webpage %s",
     async (_, webSearch, search, read) => {
       await runLLMStream({ ...baseParams(), webSearch });
 

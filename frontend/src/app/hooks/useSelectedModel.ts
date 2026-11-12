@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReasoningLevel } from "../components/assistant/ModelToggle";
 import {
     canonicalModelId,
+    defaultChatModel,
     isAllowedModelId,
     isRouterModelSelected,
     type RouterSelections,
@@ -15,6 +16,8 @@ export interface SelectedModelSources {
     selectionKey?: string | null;
     chatModel?: string | null;
     lastSelectedModel?: string | null;
+    /** The deployment's configured default chat model, if any. */
+    deploymentDefaultModel?: string | null;
     /**
      * Each router's saved Model Selections, or null while they are unknown
      * (a stored router selection is then left alone). Pass a stable object
@@ -51,7 +54,11 @@ function usableStoredModel(
     return canonical;
 }
 
-/** Resolve chat model → profile last-selected model, without a product default. */
+/**
+ * Resolve chat model → profile last-selected model → the deployment default
+ * (OpenAI first). The default is only offered once the user's keys are known,
+ * so a composer never opens on a model the user cannot run.
+ */
 export function useSelectedModel(
     sources: SelectedModelSources = {},
 ): [string, (id: string) => void] {
@@ -64,6 +71,7 @@ export function useSelectedModel(
             selectionKey: sources.selectionKey,
             chatModel: sources.chatModel,
             lastSelectedModel: sources.lastSelectedModel,
+            deploymentDefaultModel: sources.deploymentDefaultModel,
             routerSelections: sources.routerSelections ?? null,
             apiKeys: sources.apiKeys,
             configuredModelIds,
@@ -72,6 +80,7 @@ export function useSelectedModel(
             sources.selectionKey,
             sources.chatModel,
             sources.lastSelectedModel,
+            sources.deploymentDefaultModel,
             sources.routerSelections,
             sources.apiKeys,
             configuredModelIds,
@@ -100,7 +109,12 @@ export function useSelectedModel(
                 selectionSources.lastSelectedModel,
                 selectionSources,
             ) ??
-            "";
+            (selectionSources.apiKeys
+                ? defaultChatModel(
+                      (id) => usableStoredModel(id, selectionSources) === id,
+                      selectionSources.deploymentDefaultModel,
+                  )
+                : "");
         setModelState(next);
     }, [selectionSources]);
     /* eslint-enable react-hooks/set-state-in-effect */

@@ -13,6 +13,23 @@ const search = {
 };
 
 describe("web activity blocks", () => {
+    it("names a Laws of Bangladesh search as such", () => {
+        render(
+            <WebSearchBlock
+                event={{
+                    type: "web_search",
+                    search_id: "bd-1",
+                    query: "Laws of Bangladesh: Contract Act",
+                    results: [{ url: "https://bdlaws.minlaw.gov.bd/act-26.html", title: "The Contract Act, 1872" }],
+                }}
+            />,
+        );
+        fireEvent.click(
+            screen.getByRole("button", { name: "Searched the Laws of Bangladesh for “Contract Act”" }),
+        );
+        expect(screen.getByRole("link")).toHaveAttribute("href", "https://bdlaws.minlaw.gov.bd/act-26.html");
+    });
+
     it("lists web page results as links that open in a new tab", () => {
         render(<WebSearchBlock event={search} />);
 

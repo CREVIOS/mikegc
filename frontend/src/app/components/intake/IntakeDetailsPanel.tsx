@@ -127,7 +127,7 @@ export function IntakeDetailsPanel({
   onStatus: (action: IntakeStatusAction) => void;
   /** After Resolved is chosen and the menu closes, where focus goes next. */
   onStatusMenuClosed?: () => void;
-  /** Stop MikeGC asking the requester for missing details. */
+  /** Stop Spectre asking the requester for missing details. */
   onStopAsking?: () => void;
 }) {
   const caps = request.capabilities;
@@ -523,7 +523,7 @@ function StatusLabel({
   clarifyStage,
 }: {
   state: IntakeState;
-  /** Waiting on requester says when MikeGC asked. */
+  /** Waiting on requester says when Spectre asked. */
   clarifyStage?: IntakeRequest["clarify_stage"];
 }) {
   return (
@@ -540,7 +540,7 @@ function StatusLabel({
 }
 
 /**
- * MikeGC asked the requester for missing details and is waiting for the
+ * Spectre asked the requester for missing details and is waiting for the
  * answer. Stop asking hands the request back to Legal as it stands.
  */
 function ClarifyNotice({
@@ -558,7 +558,7 @@ function ClarifyNotice({
   return (
     <div className="space-y-1">
       <p className="text-xs text-gray-500">
-        MikeGC is waiting for the requester&apos;s answer (round {round} of{" "}
+        Spectre is waiting for the requester&apos;s answer (round {round} of{" "}
         {maxRounds}).
       </p>
       {onStop && (
@@ -661,7 +661,7 @@ function Person({
   photo?: string | null;
   /** Shown in place of the name, such as "Myself"; the avatar keeps it. */
   label?: string;
-  /** A mark in place of the avatar, such as MikeGC's. */
+  /** A mark in place of the avatar, such as Spectre's. */
   avatar?: ReactNode;
   /** Muted text after the name, such as "from email". */
   note?: string | null;
@@ -904,7 +904,7 @@ const DESCRIPTION_MAX = 20000;
 /**
  * The request's description, with Edit to change it in place. The editor
  * stays open with its text until the saved description matches it. The
- * original message MikeGC appended under its summary reads in Messages;
+ * original message Spectre appended under its summary reads in Messages;
  * Edit changes only the summary and keeps the message as it was.
  */
 export function IntakeDescription({

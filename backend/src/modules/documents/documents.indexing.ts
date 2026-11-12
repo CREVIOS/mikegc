@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { downloadFile } from "../../lib/storage";
 import { extractDocxBodyText } from "../../lib/docxTrackedChanges";
+import { normalizeBangla } from "../../lib/bangla";
 import { extractPdfTextForIndex } from "../../lib/pdfText";
 import { docxToPdf } from "../../lib/convert";
 import { extractPresentationText } from "../../lib/officeText";
@@ -10,8 +11,17 @@ import type { Db, DbJob } from "../../lib/dbq/types";
 import { safeError } from "../../lib/safeError";
 import { logError } from "../../lib/log";
 
-/** Complete text, using the same accepted DOCX view as the edit matcher. */
+/**
+ * Complete text for search, using the same accepted DOCX view as the edit
+ * matcher, with legacy Bijoy Bangla converted and everything in NFC so a
+ * Bangla query matches however the document spelled the word.
+ */
 export async function extractDocumentText(raw: ArrayBuffer, fileType: string) {
+  const extracted = await extractRawDocumentText(raw, fileType);
+  return { ...extracted, text: normalizeBangla(extracted.text) };
+}
+
+async function extractRawDocumentText(raw: ArrayBuffer, fileType: string) {
   const type = fileType.toLowerCase();
   if (type === "pdf") return extractPdfTextForIndex(raw);
   if (requiresLibreOfficeTextExtraction(type)) {
@@ -20,7 +30,7 @@ export async function extractDocumentText(raw: ArrayBuffer, fileType: string) {
   }
   let text: string;
   if (type === "docx") {
-    text = await extractDocxBodyText(Buffer.from(raw));
+    text = await extractDocxBodyText(Buffer.from(raw), { readableBangla: true });
     if (!text) text = (await (await import("mammoth")).extractRawText({ buffer: Buffer.from(raw) })).value;
   } else if (isSpreadsheetDocumentType(type)) {
     text = spreadsheetToLLMText(Buffer.from(raw));

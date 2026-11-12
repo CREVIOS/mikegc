@@ -161,7 +161,7 @@ describe("AppSidebar workspace switcher", () => {
     const user = userEvent.setup();
     render(<AppSidebar isOpen onToggle={vi.fn()} />);
 
-    expect(heading()).toHaveTextContent("MikeGC");
+    expect(heading()).toHaveTextContent("Spectre");
     await openAccountMenu(user);
     expect(screen.getByRole("menuitem", { name: "Settings" })).toBeVisible();
     expect(screen.queryByRole("menuitemradio")).not.toBeInTheDocument();
@@ -184,7 +184,7 @@ describe("AppSidebar workspace switcher", () => {
     render(<AppSidebar isOpen onToggle={vi.fn()} />);
 
     expect(heading()).toHaveTextContent("Acme LLP");
-    expect(heading()).not.toHaveTextContent("MikeGC");
+    expect(heading()).not.toHaveTextContent("Spectre");
     // Still the way home, whatever it is called.
     expect(screen.getByRole("link", { name: "Acme LLP" })).toHaveAttribute(
       "href",
@@ -192,12 +192,12 @@ describe("AppSidebar workspace switcher", () => {
     );
   });
 
-  it("heads the sidebar with plain MikeGC for personal work, even with organizations to switch to", () => {
+  it("heads the sidebar with plain Spectre for personal work, even with organizations to switch to", () => {
     state.organizations = [ACME, BETA];
     state.workspaceId = "personal";
     render(<AppSidebar isOpen onToggle={vi.fn()} />);
 
-    expect(heading()).toHaveTextContent("MikeGC");
+    expect(heading()).toHaveTextContent("Spectre");
     // The wordmark's "GC" takes the blue brand accent.
     expect(within(heading()).getByText("GC")).toHaveClass(
       "text-(--brand-accent-text)",
@@ -205,8 +205,8 @@ describe("AppSidebar workspace switcher", () => {
     expect(screen.queryByText("Personal")).not.toBeInTheDocument();
   });
 
-  it("shows a placeholder, not MikeGC, while a remembered organization's name loads", () => {
-    // "MikeGC" means personal work. Saying it for the moment before the
+  it("shows a placeholder, not Spectre, while a remembered organization's name loads", () => {
+    // "Spectre" means personal work. Saying it for the moment before the
     // organization's name arrives would name the wrong workspace.
     state.organizations = null;
     state.workspaceId = ACME.id;
@@ -215,10 +215,10 @@ describe("AppSidebar workspace switcher", () => {
     expect(
       screen.getByRole("status", { name: "Loading workspace" }),
     ).toBeInTheDocument();
-    expect(screen.queryByText("MikeGC")).not.toBeInTheDocument();
+    expect(screen.queryByText("Spectre")).not.toBeInTheDocument();
   });
 
-  it("sets an organization's name at the size Mike is, in the same fixed header row", () => {
+  it("sets an organization's name at the size Spectre is, in the same fixed header row", () => {
     state.organizations = [ACME];
     state.workspaceId = ACME.id;
     const { unmount } = render(<AppSidebar isOpen onToggle={vi.fn()} />);
@@ -574,6 +574,6 @@ describe("AppSidebar workspace switcher", () => {
     expect(
       vi.mocked(listProjectsPage).mock.calls[0][0]?.workspace,
     ).toBeUndefined();
-    expect(heading()).toHaveTextContent("MikeGC");
+    expect(heading()).toHaveTextContent("Spectre");
   });
 });

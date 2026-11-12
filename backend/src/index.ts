@@ -124,7 +124,7 @@ async function main(): Promise<void> {
     PORT,
     () => {
       console.log(
-        `Mike backend running on port ${PORT} (workers: ${WORKERS_MODE})`,
+        `Spectre backend running on port ${PORT} (workers: ${WORKERS_MODE})`,
       );
       if (WORKERS_MODE === "thread") {
         spawnWorkerThread();

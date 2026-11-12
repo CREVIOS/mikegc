@@ -146,7 +146,7 @@ describe("parseIntakeDescription", () => {
     expect(parsed.entries[0]!.author).toBe("Ravi Sales");
   });
 
-  it("reads the list of what was left off only in MikeGC's words, at the end", () => {
+  it("reads the list of what was left off only in Spectre's words, at the end", () => {
     const parsed = parseIntakeDescription(
       [
         "Summary.",

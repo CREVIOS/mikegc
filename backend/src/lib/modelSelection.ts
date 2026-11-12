@@ -1,6 +1,7 @@
 import type { DelegationModelTier } from "@mike/contracts";
 import {
     builtInModelIds,
+    DEFAULT_CHAT_MODEL_PREFERENCE,
     CLAUDE_LOW_MODELS,
     CLAUDE_MID_MODELS,
     GEMINI_LOW_MODELS,
@@ -122,7 +123,7 @@ type EffectiveChatModelResult =
     | {
           ok: true;
           model: string;
-          source: "request" | "chat" | "last_selected";
+          source: "request" | "chat" | "last_selected" | "default";
       }
     | {
           ok: false;
@@ -132,9 +133,55 @@ type EffectiveChatModelResult =
       };
 
 /**
- * Resolve a chat turn without inventing a product default. An explicit
- * request is authoritative. Otherwise the chat's saved model wins, with the
- * one profile-level last-selected model as the only fallback.
+ * The deployment's configured default chat model: `SPECTRE_DEFAULT_MODEL`
+ * when it names a model Spectre knows, else null. It is only a preference:
+ * it still has to pass the organization's model lists and the user's keys.
+ */
+export function deploymentDefaultChatModel(
+    env: NodeJS.ProcessEnv = process.env,
+): string | null {
+    return resolveModel(env.SPECTRE_DEFAULT_MODEL?.trim() ?? "", "") || null;
+}
+
+/**
+ * The model a chat, review or background task runs on when nothing was
+ * selected: the deployment default, then OpenAI, then each other direct
+ * provider, whichever the user (or the organization the work belongs to) can
+ * actually run. Null when none of them is usable.
+ */
+export async function defaultModelForKeys(args: {
+    apiKeys: UserApiKeys;
+    userId: string;
+    db: Db;
+    orgId?: string | null;
+    env?: NodeJS.ProcessEnv;
+}): Promise<string | null> {
+    const configured = deploymentDefaultChatModel(args.env);
+    const candidates = [
+        ...(configured ? [configured] : []),
+        ...DEFAULT_CHAT_MODEL_PREFERENCE.filter((model) => model !== configured),
+    ];
+    for (const candidate of candidates) {
+        const selected = await resolveRequestedModel(
+            candidate,
+            "",
+            args.userId,
+            args.db,
+            "fallback",
+            args.orgId,
+        );
+        if (selected && hasApiKeyForModel(selected, args.apiKeys)) {
+            return selected;
+        }
+    }
+    return null;
+}
+
+/**
+ * Resolve a chat turn. An explicit request is authoritative. Otherwise the
+ * chat's saved model wins, then the profile-level last-selected model, then
+ * the deployment default (OpenAI unless `SPECTRE_DEFAULT_MODEL` says
+ * otherwise) so a new user can chat without picking a model first.
  */
 export async function resolveEffectiveChatModel(args: {
     requested?: string | null;
@@ -216,6 +263,9 @@ export async function resolveEffectiveChatModel(args: {
         }
     }
 
+    const fallback = await defaultModelForKeys(args);
+    if (fallback) return { ok: true, model: fallback, source: "default" };
+
     return {
         ok: false,
         status: 400,
@@ -229,7 +279,7 @@ export async function resolveEffectiveChatModel(args: {
  *
  * A saved title preference is an explicit override. Otherwise first-party
  * chat models map to that provider's cheapest title-tier model. Routers and
- * local models reuse the exact chat model because Mike cannot safely infer a
+ * local models reuse the exact chat model because Spectre cannot safely infer a
  * cheaper equivalent within an external/dynamic catalog.
  */
 export function titleModelForChat(

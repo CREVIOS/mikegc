@@ -37,7 +37,7 @@ export type {
 } from "@mike/contracts";
 
 /**
- * Mike API client — all browser requests use the same-origin `/api` gateway.
+ * Spectre API client — all browser requests use the same-origin `/api` gateway.
  * Authentication is carried only by the backend-managed HttpOnly cookie.
  */
 
@@ -856,6 +856,8 @@ export interface UserProfile extends RouterProfileLists {
     subagentModel: string | null;
     subagentReasoning: NonNullable<Message["reasoning"]> | null;
     lastSelectedChatModel: string | null;
+    /** The deployment's configured default chat model; absent on an older API. */
+    defaultChatModel?: string | null;
     lastSelectedReasoningLevel: NonNullable<Message["reasoning"]>;
     mfaOnLogin: boolean;
     legalResearchUs: boolean;
@@ -1033,6 +1035,7 @@ export const RESPONSE_STYLE_OPTIONS = {
         "auto",
         "en-US",
         "en-GB",
+        "bn",
         "ar",
         "zh-Hans",
         "zh-Hant",
@@ -4550,7 +4553,7 @@ export function getIntakeRequesters(orgId: string) {
     return apiRequest<IntakeRequester[]>(intakePath(orgId, "/requesters"));
 }
 /**
- * How MikeGC records requests from email and Slack. Only owners and admins
+ * How Spectre records requests from email and Slack. Only owners and admins
  * may read it (403 otherwise); secrets come back only as whether they are set.
  */
 export function getIntakeAutomation(orgId: string) {
@@ -4564,7 +4567,7 @@ export function updateIntakeAutomation(orgId: string, body: IntakeAutomationUpda
     );
 }
 /**
- * Connect the intake mailbox MikeGC reads and replies from: Microsoft 365
+ * Connect the intake mailbox Spectre reads and replies from: Microsoft 365
  * through an Entra app, or Google Workspace through the deployment's service
  * account. The server checks it can reach the mailbox before saving.
  */

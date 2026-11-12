@@ -4,6 +4,7 @@
 // and building the system + history messages the agentic review chat streams
 // over. The streaming loop itself stays in tabular.routes.ts.
 
+import { jurisdictionPracticePrompt } from "../../lib/bangladesh/practicePrompt";
 import {
     loadUserMessageSentTimes,
     parseOptionalModel,
@@ -103,6 +104,8 @@ export function buildTabularMessages(
     tabularStore: TabularCellStore,
     reviewTitle: string,
     time?: MessageTimeContext,
+    /** Bangladesh practice and Bangla writing rules; defaults to the deployment's jurisdiction. */
+    practicePrompt: string = jurisdictionPracticePrompt(null),
 ): unknown[] {
     const docList = tabularStore.documents
         .map((d, i) => `- ROW:${i} "${d.filename}"`)
@@ -111,7 +114,7 @@ export function buildTabularMessages(
         .map((c, i) => `- COL:${i} "${c.name}"`)
         .join("\n");
 
-    const systemContent = `You are Mike, an AI legal assistant. You are helping with the tabular review titled "${reviewTitle}".
+    const systemContent = `You are Spectre, an AI legal assistant. You are helping with the tabular review titled "${reviewTitle}".
 
 The review extracts specific fields from multiple legal documents into a structured table.
 You do NOT have the cell content yet — call read_table_cells to fetch the cells you need before answering.
@@ -141,8 +144,8 @@ Rules:
 - Omit <CITATIONS> if you make no citations
 - Do not fabricate cell content
 - Answer in clear, concise prose. You may use markdown formatting.${
-        time ? `\n\n${MESSAGE_TIME_PROMPT}` : ""
-    }`;
+        practicePrompt ? `\n\n${practicePrompt}` : ""
+    }${time ? `\n\n${MESSAGE_TIME_PROMPT}` : ""}`;
 
     const formatted: unknown[] = [{ role: "system", content: systemContent }];
     const stamp = userMessageStamper(messages, time);

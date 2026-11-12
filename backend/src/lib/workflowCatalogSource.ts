@@ -21,7 +21,7 @@ const DEFAULT_QUICK_ACTION_PROMPT =
   "Execute this workflow on the selected documents.";
 const DEFAULT_WORD_QUICK_ACTION_PROMPT =
   "Execute this workflow on this Word document.";
-// MikeGC's quick actions are the three contract workflows. The original Mike
+// Spectre's quick actions are the three contract workflows. The original Spectre
 // defaults are still installed for every user, without quick actions.
 const DEFAULT_WORKFLOWS = [
   { key: "contract-intake", quickAction: true, wordQuickAction: true },
@@ -276,11 +276,11 @@ async function downloadArchive(
   const declaredLength = Number(response.headers.get("content-length") ?? 0);
   if (declaredLength > MAX_ARCHIVE_BYTES) {
     throw new Error(
-      "Mike workflows archive exceeds the 10 MB compressed limit",
+      "Spectre workflows archive exceeds the 10 MB compressed limit",
     );
   }
   if (!response.body) {
-    throw new Error("GitHub returned an empty Mike workflows archive");
+    throw new Error("GitHub returned an empty Spectre workflows archive");
   }
   const archive = await open(archivePath, "wx", 0o600);
   const reader = response.body.getReader();
@@ -293,7 +293,7 @@ async function downloadArchive(
       if (receivedBytes > MAX_ARCHIVE_BYTES) {
         await reader.cancel();
         throw new Error(
-          "Mike workflows archive exceeds the 10 MB compressed limit",
+          "Spectre workflows archive exceeds the 10 MB compressed limit",
         );
       }
       let offset = 0;
@@ -304,7 +304,7 @@ async function downloadArchive(
           value.byteLength - offset,
         );
         if (bytesWritten === 0) {
-          throw new Error("Could not write the Mike workflows archive");
+          throw new Error("Could not write the Spectre workflows archive");
         }
         offset += bytesWritten;
       }

@@ -6,9 +6,9 @@ import { Providers } from "@/app/components/providers";
 
 export const metadata: Metadata = {
     metadataBase: new URL("https://app.mikeoss.com"),
-    title: "MikeGC - Legal AI for In-house Teams",
+    title: "Spectre - Legal AI for Bangladesh",
     description:
-        "AI-powered document review, drafting, and contract playbooks for in-house legal teams.",
+        "AI legal assistant for Bangladeshi lawyers and in-house teams: document review, drafting in Bangla and English, and contract playbooks.",
     icons: {
         icon: [
             { url: "/icon.svg", type: "image/svg+xml" },
@@ -19,24 +19,24 @@ export const metadata: Metadata = {
     openGraph: {
         type: "website",
         url: "https://app.mikeoss.com",
-        siteName: "MikeGC",
-        title: "MikeGC - Legal AI for In-house Teams",
+        siteName: "Spectre",
+        title: "Spectre - Legal AI for Bangladesh",
         description:
-            "AI-powered document review, drafting, and contract playbooks for in-house legal teams.",
+            "AI legal assistant for Bangladeshi lawyers and in-house teams: document review, drafting in Bangla and English, and contract playbooks.",
         images: [
             {
                 url: "/link-image.jpg",
                 width: 1200,
                 height: 651,
-                alt: "MikeGC",
+                alt: "Spectre",
             },
         ],
     },
     twitter: {
         card: "summary_large_image",
-        title: "MikeGC - Legal AI for In-house Teams",
+        title: "Spectre - Legal AI for Bangladesh",
         description:
-            "AI-powered document review, drafting, and contract playbooks for in-house legal teams.",
+            "AI legal assistant for Bangladeshi lawyers and in-house teams: document review, drafting in Bangla and English, and contract playbooks.",
         images: ["/link-image.jpg"],
     },
 };

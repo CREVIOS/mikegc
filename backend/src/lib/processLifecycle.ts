@@ -38,7 +38,7 @@ export async function failBoot(
   effects: LifecycleEffects = processEffects,
 ): Promise<void> {
   effects.report(err, { tags: { component: "boot", stage }, level: "fatal" });
-  effects.logError("Mike backend failed to start:", err);
+  effects.logError("Spectre backend failed to start:", err);
   await effects.flush();
   effects.exit(1);
 }

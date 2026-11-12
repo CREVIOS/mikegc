@@ -197,7 +197,7 @@ async function createRouterAdapter(
       apiKey: key,
       baseURL: OPENROUTER_BASE_URL,
       compatibility: "strict",
-      appName: "Mike",
+      appName: "Spectre",
       appUrl: process.env.FRONTEND_URL,
       fetch: aiSdkFetch,
     });
@@ -534,7 +534,7 @@ async function createConfiguredAdapter(
 
 function unsupportedOpenCodeGoModel(model: string): Error {
   return new Error(
-    `OpenCode Go model ${openCodeGoModelId(model)} requires a protocol Mike does not support yet. Select a model listed under Model Selections for OpenCode Go in Settings → Bring Your Own Keys.`,
+    `OpenCode Go model ${openCodeGoModelId(model)} requires a protocol Spectre does not support yet. Select a model listed under Model Selections for OpenCode Go in Settings → Bring Your Own Keys.`,
   );
 }
 

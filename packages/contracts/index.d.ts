@@ -305,7 +305,7 @@ export type McpToolEvent = {
 export type WebSource = { url: string; title?: string };
 
 export type WebToolErrorCode =
-  /** Mike's search has no key for the chosen search service. */
+  /** Spectre's search has no key for the chosen search service. */
   | "not_configured"
   /** The search API refused the key: invalid, or its plan does not cover the request. */
   | "rejected"
@@ -317,7 +317,7 @@ export type WebToolErrorCode =
 
 /**
  * Web activity in a turn. A search done by the model provider and one done
- * by Mike's own search look the same.
+ * by Spectre's own search look the same.
  */
 export type WebToolEvent =
   | {
@@ -566,7 +566,7 @@ export interface WordDocumentEdit {
 
 export type WordEditResolutionStatus = "accepted" | "rejected";
 
-/** Explicit Google service connections are independent of Mike sign-in. */
+/** Explicit Google service connections are independent of Spectre sign-in. */
 export type GoogleWorkspaceProvider = 'gmail' | 'google-calendar';
 export interface GoogleDriveStatus {
     configured: boolean;
@@ -753,7 +753,7 @@ export interface IntakeRequestSummary extends Omit<IntakeDetails, "description">
   id: string; state: IntakeState; version: number;
   assignee_id: string | null; assignee_name: string | null;
   created_at: string; updated_at: string;
-  /** The stage MikeGC is waiting on the requester's answer for, if any. */
+  /** The stage Spectre is waiting on the requester's answer for, if any. */
   clarify_stage: IntakeClarifyStage | null;
   /** The requester replied after the request was last opened. */
   new_reply: boolean;
@@ -762,12 +762,12 @@ export interface IntakeRequestSummary extends Omit<IntakeDetails, "description">
   capabilities: { assign: boolean; cancel: boolean; delete: boolean };
 }
 export interface IntakeRequestPage { requests: IntakeRequestSummary[]; next_cursor: string | null }
-/** Where a request came from: typed by a member, or recorded by MikeGC from a channel. */
+/** Where a request came from: typed by a member, or recorded by Spectre from a channel. */
 export type IntakeSource = "manual" | "slack" | "outlook" | "gmail" | "teams";
-/** A channel MikeGC holds a conversation with the requester in. */
+/** A channel Spectre holds a conversation with the requester in. */
 export type IntakeChannel = "slack" | "outlook" | "gmail" | "teams";
 /**
- * Which question MikeGC is waiting on the requester to answer: what it needs
+ * Which question Spectre is waiting on the requester to answer: what it needs
  * to choose a triage rule, or what the rule's playbook or workflow needs.
  */
 export type IntakeClarifyStage = "rule" | "readiness";
@@ -792,12 +792,12 @@ export interface IntakeConversation {
 export interface IntakeRequest extends Omit<IntakeRequestSummary, "capabilities">, IntakeDetails {
   org_id: string;
   /**
-   * Null once the creator's account is erased, and for requests MikeGC
-   * recorded, whose creator reads as "MikeGC".
+   * Null once the creator's account is erased, and for requests Spectre
+   * recorded, whose creator reads as "Spectre".
    */
   created_by: string | null; created_by_name: string;
   source: IntakeSource;
-  /** How many of its automatic rounds of questions MikeGC has asked. */
+  /** How many of its automatic rounds of questions Spectre has asked. */
   clarify_rounds: number;
   clarify_max_rounds: number;
   /** When the requester last replied, sent back when the request is opened. */
@@ -811,7 +811,7 @@ export interface IntakeRequest extends Omit<IntakeRequestSummary, "capabilities"
     delete: boolean;
     /** A question or the resolution can be posted in the request's thread. */
     send_to_requester: boolean;
-    /** MikeGC is waiting on the requester and can be stopped. */
+    /** Spectre is waiting on the requester and can be stopped. */
     stop_asking: boolean;
   };
 }
@@ -841,15 +841,15 @@ export interface IntakeExternalAuthor {
 }
 /**
  * A note, resolution or cancellation reason; a question to the requester
- * (a member's, or MikeGC's when automated); or the requester's reply.
+ * (a member's, or Spectre's when automated); or the requester's reply.
  * Legacy answer messages are shown as notes.
  */
 export interface IntakeMessage {
   id: string; kind: "note" | "resolution" | "cancel_reason" | "question" | "reply" | "answer";
   body: string;
-  /** Posted by MikeGC, such as its preprocessing answer; it has no author. */
+  /** Posted by Spectre, such as its preprocessing answer; it has no author. */
   automated?: boolean;
-  /** What a note of MikeGC's is: "preprocessing" for its preprocessing of the request. */
+  /** What a note of Spectre's is: "preprocessing" for its preprocessing of the request. */
   purpose?: "preprocessing" | null;
   /** Null once the author's account is erased, and for a requester's reply. */
   author_id: string | null; author_name: string; created_at: string;
@@ -860,14 +860,14 @@ export interface IntakeMessage {
 }
 /**
  * What a notification reports: the history entry's kind, a member's note,
- * the requester's reply, or MikeGC's preprocessing of the request.
+ * the requester's reply, or Spectre's preprocessing of the request.
  */
 export type IntakeNotificationChange =
   | "submitted" | "assign" | "wait" | "resume" | "resolve" | "cancel" | "reopen"
   | "stop_asking" | "edited" | "document_added" | "note" | "reply" | "preprocessing";
 /**
  * News for the member a request is assigned to, shown as a toast: "new_request"
- * when the request became theirs, "update" for a change someone else, MikeGC or
+ * when the request became theirs, "update" for a change someone else, Spectre or
  * the requester made. Several changes to one request arrive as one.
  */
 export interface IntakeNotification {
@@ -879,9 +879,9 @@ export interface IntakeNotification {
   kind: "new_request" | "update";
   /** The change the toast describes: what made the request theirs, or the latest. */
   change: IntakeNotificationChange;
-  /** Who made it: null for MikeGC's changes and a person whose account is gone. */
+  /** Who made it: null for Spectre's changes and a person whose account is gone. */
   actor_name: string | null;
-  /** Made by MikeGC. */
+  /** Made by Spectre. */
   automated: boolean;
   /** A requester's reply: the channel it came in. */
   channel: IntakeChannel | null;
@@ -904,15 +904,15 @@ export interface IntakeEvent {
 export interface IntakeAutomationSettings {
   email: {
     enabled: boolean;
-    /** The intake mailbox MikeGC reads and replies from, once connected. */
+    /** The intake mailbox Spectre reads and replies from, once connected. */
     provider: IntakeMailProvider | null;
     /** The intake address, such as intake@example.com. */
     mailbox: string | null;
     /** Sender domains accepted, such as "example.com"; empty accepts no one. */
     allowed_domains: string[];
-    /** The sender name on MikeGC's own emails, such as "Legal". */
+    /** The sender name on Spectre's own emails, such as "Legal". */
     from_name: string;
-    /** Microsoft 365: the Entra app MikeGC connects with; the secret is write-only. */
+    /** Microsoft 365: the Entra app Spectre connects with; the secret is write-only. */
     graph: { tenant_id: string | null; client_id: string | null; secret_set: boolean };
     /** Where Microsoft Graph sends new-mail notifications. */
     notification_url: string;
@@ -929,7 +929,7 @@ export interface IntakeAutomationSettings {
     status: {
       /** When the Graph subscription runs out; it is renewed before then. */
       subscription_expires_at: string | null;
-      /** When MikeGC last read the mailbox. */
+      /** When Spectre last read the mailbox. */
       last_read_at: string | null;
       /** Why the connection isn't working, in words an admin can act on. */
       error: string | null;
@@ -941,7 +941,7 @@ export interface IntakeAutomationSettings {
     events_url: string;
     /** Whether a signing secret and bot token are saved. */
     configured: boolean;
-    /** The Slack workspace and MikeGC bot the saved token belongs to. */
+    /** The Slack workspace and Spectre bot the saved token belongs to. */
     team_id: string | null;
     team_name: string | null;
     bot_user_id: string | null;
@@ -958,7 +958,7 @@ export interface IntakeAutomationSettings {
     configured: boolean;
     app_id: string | null;
     tenant_id: string | null;
-    /** Whether MikeGC can read and post documents through Microsoft Graph; null before it is checked. */
+    /** Whether Spectre can read and post documents through Microsoft Graph; null before it is checked. */
     files_access: boolean | null;
   };
   /** The models triage and AI preprocessing run with; neither runs without one. */
@@ -1025,7 +1025,7 @@ export interface IntakeAssignmentRule {
   condition: string;
   assignee_id: string;
   /**
-   * AI preprocessing: MikeGC answers the request in a note and marks up its
+   * AI preprocessing: Spectre answers the request in a note and marks up its
    * Word documents with tracked changes.
    */
   preprocess: boolean;

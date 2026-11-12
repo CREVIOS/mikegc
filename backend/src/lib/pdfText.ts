@@ -9,7 +9,21 @@ export const STANDARD_FONT_DATA_URL = (() => {
   }
 })();
 
+/**
+ * pdf.js's character maps, so text in CID-keyed fonts (common in Bangla and
+ * other non-Latin PDFs) decodes to Unicode instead of being dropped.
+ */
+export const CMAP_URL = (() => {
+  try {
+    const pkgPath = require.resolve("pdfjs-dist/package.json");
+    return path.join(path.dirname(pkgPath), "cmaps") + path.sep;
+  } catch {
+    return undefined;
+  }
+})();
+
 import { docxToPdf } from "./convert";
+import { readablePdfText } from "./bangla";
 import { orderTextItemLines } from "./pdfTextOrder";
 
 type PdfTextItem = {
@@ -255,6 +269,7 @@ async function readPdfPages(buf: ArrayBuffer): Promise<PdfPageText[] | null> {
       // the file once its text has been read.
       data: new Uint8Array(buf).slice(),
       standardFontDataUrl: STANDARD_FONT_DATA_URL,
+      ...(CMAP_URL ? { cMapUrl: CMAP_URL, cMapPacked: true } : {}),
     });
     const pdf = await loadingTask.promise;
     const pages: PdfPageText[] = [];
@@ -270,10 +285,11 @@ async function readPdfPages(buf: ArrayBuffer): Promise<PdfPageText[] | null> {
       const positionedFields = fields
         .map(positionedFormItem)
         .filter((item): item is PdfTextItem => item !== null);
-      const layout = layoutPageText([
-        ...textContent.items,
-        ...positionedFields,
-      ]);
+      // Bangla made readable: legacy Bijoy text converted, vowel signs the
+      // PDF stored in visual order put back in logical order, and NFC.
+      const layout = readablePdfText(
+        layoutPageText([...textContent.items, ...positionedFields]),
+      );
       let pageText = `[Page ${i}]\n${layout}`;
       const unpositionedFields = fields.filter((field) => !field.rect);
       if (unpositionedFields.length) {

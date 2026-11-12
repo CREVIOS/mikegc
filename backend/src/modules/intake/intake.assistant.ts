@@ -164,7 +164,7 @@ export function composeIntakeBrief(
     `Recorded: ${request.created_at}`,
   ];
   const history = messages.slice(-HISTORY_MAX).map((m) => {
-    const who = m.automated ? "MikeGC" : m.author_name;
+    const who = m.automated ? "Spectre" : m.author_name;
     const what =
       m.purpose === "preprocessing"
         ? "preprocessing"

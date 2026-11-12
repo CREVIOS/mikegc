@@ -10,7 +10,7 @@ export const Tones = () => (
         <NoticeCardUI
             tone="error"
             title="Couldn't save your changes"
-            message="Mike couldn't reach the server. Check your connection and try again."
+            message="Spectre couldn't reach the server. Check your connection and try again."
             onDismiss={() => {}}
             actions={
                 <button type="button" className={noticeActionClassName()}>

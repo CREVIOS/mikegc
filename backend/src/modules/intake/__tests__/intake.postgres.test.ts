@@ -1115,14 +1115,14 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
       { created_by: null, name: "Former member", email: null },
     ]);
   });
-  // A message received for intake, before MikeGC records it.
+  // A message received for intake, before Spectre records it.
   const inbound = (id = 70, source = "gmail", org = 10) =>
     sql(`insert into public.intake_inbound(id,org_id,source,external_id,payload)
       values(${q(id)},${q(org)},'${source}','message-${id}','{"text":"Please review"}')`);
   const automated = (message = 70, request = 21, reviewer = "null") =>
     `select public.intake_submit_automated(${q(10)},${q(message)},${q(request)},'Supplier NDA','Summary',` +
     `'Jane Business','jane@acme.test',null,${reviewer});`;
-  it("records MikeGC's request from a received message once, as no member", () => {
+  it("records Spectre's request from a received message once, as no member", () => {
     inbound();
     expect(sql(automated(70, 21, q(3)))).toBe(uid(21));
     // The same message handled again returns the request it already made.
@@ -1132,7 +1132,7 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
       json(`select public.intake_get_request(${q(10)},${q(2)},${q(21)});`),
     ).toMatchObject({
       created_by: null,
-      created_by_name: "MikeGC",
+      created_by_name: "Spectre",
       source: "gmail",
       state: "in_review",
       assignee_id: uid(3),
@@ -1143,7 +1143,7 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
       {
         kind: "submitted",
         actor_id: null,
-        actor_name: "MikeGC",
+        actor_name: "Spectre",
         assignee_name: "person3@example.test",
       },
     ]);
@@ -1156,7 +1156,7 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
       json(`select public.intake_get_request(${q(10)},${q(2)},${q(20)});`),
     ).toMatchObject({ created_by_name: "person2@example.test", source: "manual" });
   });
-  it("leaves MikeGC's request unassigned when its reviewer is not a member", () => {
+  it("leaves Spectre's request unassigned when its reviewer is not a member", () => {
     inbound();
     sql(automated(70, 21, q(6)));
     expect(state(21)).toBe("submitted:1:-");
@@ -1172,7 +1172,7 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
     ).toThrow(/22023/);
     expect(sql("select count(*) from public.intake_requests")).toBe("0");
   });
-  it("attaches MikeGC's documents as the organization's, with no uploader", () => {
+  it("attaches Spectre's documents as the organization's, with no uploader", () => {
     inbound();
     sql(automated());
     sql(`insert into public.documents(id,org_id,user_id,library_kind,status)
@@ -1183,10 +1183,10 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
     sql(attachAutomated(60));
     expect(
       json(`select public.intake_list_documents(${q(10)},${q(3)},${q(21)});`),
-    ).toMatchObject([{ document_id: uid(60), added_by_name: "MikeGC" }]);
+    ).toMatchObject([{ document_id: uid(60), added_by_name: "Spectre" }]);
     expect(readable(60, 4)).toBe("t");
     expect(readable(60, 6)).toBe("f");
-    // A member's upload is linked by the member, never as MikeGC's.
+    // A member's upload is linked by the member, never as Spectre's.
     upload(61);
     expect(() => sql(attachAutomated(61))).toThrow(/P0002/);
   });
@@ -1257,7 +1257,7 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
     expect(sql("select to_regclass('public.intake_member_focus') is null")).toBe("t");
     sql(`delete from public.intake_assignment_rules where org_id=${q(10)}`);
   });
-  it("posts MikeGC's notes once, as MikeGC", () => {
+  it("posts Spectre's notes once, as Spectre", () => {
     inbound();
     sql(automated(70, 21));
     const post = (body: string) =>
@@ -1271,13 +1271,13 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
         id: uid(80),
         kind: "note",
         author_id: null,
-        author_name: "MikeGC",
+        author_name: "Spectre",
         automated: true,
         purpose: "preprocessing",
         body: "AI preprocessing\n\nLooks fine.",
       }),
     ]);
-    // Any other note of MikeGC's is a comment, and nothing else is a purpose.
+    // Any other note of Spectre's is a comment, and nothing else is a purpose.
     sql(`select public.intake_note_automated(${q(10)},${q(21)},${q(83)},'A related thread');`);
     expect(
       sql(`select coalesce(purpose,'-') from public.intake_messages where id=${q(83)}`),
@@ -1332,7 +1332,7 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
     sql(`delete from public.org_members where org_id=${q(10)} and user_id=${q(3)}`);
     expect(sql("select count(*) from public.intake_assignment_rules")).toBe("0");
   });
-  // The requester loop: a request MikeGC recorded from a Slack thread.
+  // The requester loop: a request Spectre recorded from a Slack thread.
   const thread = (request = 21, message = 70, reviewer = "null") => {
     inbound(message, "slack");
     sql(automated(message, request, reviewer));
@@ -1404,7 +1404,7 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
     expect(answer(606, 22)).toBe("f");
     expect(() => answer(608, 99)).toThrow(/P0002/);
   });
-  it("updates MikeGC's request from a reply once, noting what changed", () => {
+  it("updates Spectre's request from a reply once, noting what changed", () => {
     thread();
     expect(agentUpdate(500, "'NDA for Acme'", "'2026-11-14'")).toEqual(["subject", "requested_by_date"]);
     expect(
@@ -1417,7 +1417,7 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
       expect.objectContaining({
         kind: "note",
         automated: true,
-        author_name: "MikeGC",
+        author_name: "Spectre",
         body: 'Updated the subject to "NDA for Acme" and the due date to 14 Nov 2026 from the requester\'s reply.',
       }),
     ]);
@@ -1435,7 +1435,7 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
     sql(`select public.intake_edit_request(${q(10)},${q(3)},${q(600)},${q(21)},${version},'Supplier NDA','Edited by Legal',` +
       `'Jane Business','jane@acme.test',null,null);`);
     expect(sql(`select member_edited_fields from public.intake_requests where id=${q(21)}`)).toBe("{description}");
-    // A field the edit left as it was stays MikeGC's to change.
+    // A field the edit left as it was stays Spectre's to change.
     expect(agentUpdate(510, "'NDA for Acme'")).toEqual(["subject"]);
     expect(
       sql(`select array_to_json(public.intake_update_automated(${q(10)},${q(21)},${q(511)},null,'New summary',null))`),
@@ -1445,7 +1445,7 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
     expect(agentUpdate(512, "null", "'2026-12-01'")).toEqual([]);
     expect(sql(`select requested_by_date from public.intake_requests where id=${q(21)}`)).toBe("");
   });
-  it("keeps MikeGC's answers in a thread with no request, within bounds", () => {
+  it("keeps Spectre's answers in a thread with no request, within bounds", () => {
     sql(`insert into public.intake_conversations(org_id,source,thread_key,rounds,replies)
       values(${q(10)},'slack','T1:C1:1',1,'[{"at":"2 Nov 2026, 09:14 UTC","text":"Hi!"}]')`);
     expect(sql(`select replies->0->>'text' from public.intake_conversations`)).toBe("Hi!");
@@ -1488,7 +1488,7 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
       expect.objectContaining({
         kind: "question",
         automated: true,
-        author_name: "MikeGC",
+        author_name: "Spectre",
         delivery: expect.objectContaining({ kind: "acknowledgement", status: "pending" }),
       }),
     ]);
@@ -1626,7 +1626,7 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
     expect(ask(304)).toBe("f");
     thread(22, 71, q(3));
     expect(ask(310, "readiness", 22)).toBe("t");
-    // A lawyer's command stops MikeGC asking, and asks for preprocessing to run now.
+    // A lawyer's command stops Spectre asking, and asks for preprocessing to run now.
     const assigned = json(cmd("assign", 2, 120, 2, `,${q(2)}`, 22));
     expect(assigned).toMatchObject({ preprocess: true, outbound_id: null });
     expect(clarify(22)).toBe("-:1:true");
@@ -1777,10 +1777,10 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
     const { outbound_id: id } = json(
       `select public.intake_wait_request(${q(10)},${q(3)},${q(120)},${q(21)},1,'Which entity?',true);`,
     );
-    sql(`select public.intake_record_delivery(${q(10)},'${id}','failed',null,'MikeGC was removed from #legal-requests.')`);
+    sql(`select public.intake_record_delivery(${q(10)},'${id}','failed',null,'Spectre was removed from #legal-requests.')`);
     expect(
       json(`select public.intake_read_history(${q(10)},${q(2)},${q(21)},false);`)[0].delivery,
-    ).toMatchObject({ status: "failed", error: "MikeGC was removed from #legal-requests." });
+    ).toMatchObject({ status: "failed", error: "Spectre was removed from #legal-requests." });
     expect(sql(`select public.intake_retry_delivery(${q(10)},${q(4)},${q(21)},'${id}')`)).toBe("t");
     expect(sql(`select public.intake_retry_delivery(${q(10)},${q(4)},${q(21)},'${id}')`)).toBe("f");
     expect(() => sql(`select public.intake_retry_delivery(${q(10)},${q(6)},${q(21)},'${id}')`)).toThrow(/P0002/);
@@ -1789,7 +1789,7 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
       "sent:C1:1.2:true",
     );
   });
-  it("stops MikeGC asking only while it waits, putting the request back to work", () => {
+  it("stops Spectre asking only while it waits, putting the request back to work", () => {
     thread(21, 70, q(3));
     expect(() => sql(cmd("stop_asking", 3, 120, 1, "", 21))).toThrow(/P0001/);
     expect(ask(300, "readiness")).toBe("t");
@@ -1886,7 +1886,7 @@ describe.skipIf(!container)("intake real PostgreSQL transactions", () => {
     sql(cmd("assign", 2, 104, 3, ",null"));
     expect(waiting()).toBe("0");
   });
-  it("tells the assignee about others' changes, MikeGC's and the requester's replies, as updates", () => {
+  it("tells the assignee about others' changes, Spectre's and the requester's replies, as updates", () => {
     thread(21, 70, q(3));
     expect(claim(3)).toEqual([
       expect.objectContaining({

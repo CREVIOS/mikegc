@@ -35,7 +35,7 @@ import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 //                        with, such as intake's triage and preprocessing
 //   Bring Your Own Keys  its owners and admins: the organization's model
 //                        provider keys, as in a person's own settings
-//   Intake           its owners and admins: how MikeGC records requests from
+//   Intake           its owners and admins: how Spectre records requests from
 //                    email and Slack, with the rules on a table page of
 //                    their own (intake/rules)
 //

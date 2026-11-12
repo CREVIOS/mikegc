@@ -1,13 +1,13 @@
 # Intake
 
 Intake is the Legal team's internal tracker for contract reviews and legal
-questions from the business. MikeGC is used only by the Legal team, so every
+questions from the business. Spectre is used only by the Legal team, so every
 member of an organization is on the Legal team and works one shared queue.
-Business colleagues never use MikeGC: a lawyer creates the request that arrived
+Business colleagues never use Spectre: a lawyer creates the request that arrived
 by email, chat, phone or in a meeting, and the business person appears only as
-the named requester on that record. An organization can also have MikeGC record
+the named requester on that record. An organization can also have Spectre record
 requests itself from its intake mailbox (Outlook or Gmail) and from Slack and
-Teams messages that mention @MikeGC, and hold a conversation with the requester
+Teams messages that mention @Spectre, and hold a conversation with the requester
 in that thread: asking for missing details, posting a lawyer's questions and
 replying with the resolution; see [Automated intake](intake-automation.md).
 
@@ -118,10 +118,10 @@ validated against that theme's card surface.
    open, resolve it with an optional resolution, cancel it with a required
    reason, reopen it, and delete it. A resolution or cancellation reason
    reads in the timeline beside the change.
-4. On a request MikeGC recorded from a thread, a member can also message the
+4. On a request Spectre recorded from a thread, a member can also message the
    requester there (**Message requester** in the note box, which marks the
    request **Waiting on requester**), send the resolution and chosen
-   documents with **Resolve request**, and stop MikeGC asking for missing
+   documents with **Resolve request**, and stop Spectre asking for missing
    details. The requester's replies appear in the timeline under their name,
    and the queue marks a request with an unopened reply **New reply**. The
    [requester loop](intake-automation.md#the-requester-loop) describes what is
@@ -181,8 +181,8 @@ reports how many changed in the meantime, and leaves those still selected.
 
 Statuses are **New**, **In progress**, **Waiting on requester**, **Resolved**
 and **Cancelled** (stored as `submitted`, `in_review`, `needs_information`,
-`resolved` and `cancelled`). While MikeGC itself waits on the requester's
-answer, the queue reads "Waiting on requester (MikeGC asked)". Assigning a new request moves it to In progress;
+`resolved` and `cancelled`). While Spectre itself waits on the requester's
+answer, the queue reads "Waiting on requester (Spectre asked)". Assigning a new request moves it to In progress;
 unassigning moves it back to New. Resuming or reopening returns a request to
 In progress when it has an assignee and to New otherwise. History records who
 made each change and, for assignments, to whom.
@@ -230,7 +230,7 @@ then copies it to the request.
 
 - Attachments never appear in the Library or in Library search.
 - Every current member of the organization can open, preview, download and use
-  them in Mike's viewer and review tools; outsiders cannot.
+  them in Spectre's viewer and review tools; outsiders cannot.
   `org_private_document_access` grants this, so the API's document checks and
   document text search agree.
 - A departing member's uploads stay with their request: they are neither
@@ -253,14 +253,14 @@ their attention:
 
 - **New Intake Request** when a request becomes theirs: it is created and
   assigned to them by a colleague, assigned or reassigned to them, or recorded
-  and assigned by MikeGC (including when MikeGC assigns it by a rule once the
+  and assigned by Spectre (including when Spectre assigns it by a rule once the
   requester has answered its questions). For example: "**Supplier NDA**: Sam
   Colleague assigned it to you".
 - **Intake request update** when someone else changes a request assigned to
   them: the requester replies, a colleague comments, waits on the requester,
   resumes, resolves, cancels or reopens it, edits its details or adds a
-  document, MikeGC asks the requester for details or finishes preprocessing,
-  or a colleague stops MikeGC asking.
+  document, Spectre asks the requester for details or finishes preprocessing,
+  or a colleague stops Spectre asking.
 
 Nobody is notified of their own changes, and an unassigned request notifies
 nobody. Each toast names the request and what happened, and has **Open**,
@@ -312,7 +312,7 @@ methods on the path stay under the shared budget.
   queue is unsuitable for matters that need separate access restrictions
   between members.
 - Requester names, emails and teams are business records typed by Legal, not
-  MikeGC accounts. They are deleted with the requests.
+  Spectre accounts. They are deleted with the requests.
 - A member who leaves the organization loses access, and their open requests
   are unassigned automatically (In progress becomes New). Resolved and
   cancelled requests keep their historical assignee.
@@ -426,7 +426,7 @@ Apply migrations before starting the new application build:
   (`intake_member_focus`), the messages received (`intake_inbound`), a request's
   `source`, the `automated` mark on events and attachments, and
   `intake_submit_automated` and `intake_attach_automated`, which record a
-  request and its documents as MikeGC.
+  request and its documents as Spectre.
 - `20261103_05_intake_requester_loop.sql`, `20261103_06_intake_mailbox.sql`
   and `20261103_07_intake_teams.sql` add the requester loop, the Outlook and
   Gmail intake mailbox and Teams. See
@@ -437,8 +437,8 @@ Apply migrations before starting the new application build:
   `intake_claim_notifications` and `intake_expire_notifications`.
 - `20261111_01_intake_agent.sql` adds what the
   [intake agent](intake-automation.md#the-intake-agent) needs: the details a
-  member has edited (`member_edited_fields`, which MikeGC never changes),
-  `intake_update_automated`, and MikeGC's own answers in a thread with no
+  member has edited (`member_edited_fields`, which Spectre never changes),
+  `intake_update_automated`, and Spectre's own answers in a thread with no
   request (`intake_conversations.replies`).
 
 Use the existing migration runner documented in [deployment.md](deployment.md).

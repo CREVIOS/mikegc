@@ -60,7 +60,7 @@ describe("Slack request signatures", () => {
 
 describe("Slack markup as plain text", () => {
   const names = new Map([["U123", "Jane Business"]]);
-  it("names people, drops MikeGC's own mention and keeps links readable", () => {
+  it("names people, drops Spectre's own mention and keeps links readable", () => {
     expect(
       slackTextToPlain(
         "<@UBOT> please ask <@U123> about <https://example.com/nda|the NDA> &amp; <mailto:jane@acme.test|jane@acme.test> in <#C1|legal> &lt;today&gt;",

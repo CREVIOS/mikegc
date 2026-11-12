@@ -203,7 +203,7 @@ export function WorkflowPicker({
           setSaveError(
             userMessage(reason, {
               fallback:
-                "Mike couldn't save these instructions. Try again.",
+                "Spectre couldn't save these instructions. Try again.",
             })
           );
         });

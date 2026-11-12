@@ -7,10 +7,10 @@ import type { Editor } from "@docx-editor.dev/core/contracts/editor";
 
 // EigenPal opens its review pane by itself whenever an edit is recorded as a
 // tracked change, and offers no option to stop it: in suggesting mode the
-// first keystroke opened Mike's comment column. That open always lands with a
+// first keystroke opened Spectre's comment column. That open always lands with a
 // new document revision. A deliberate open never edits the document — the
 // toolbar's Comments button — or is announced through `openReviewPane`, for
-// Mike's flows that open the pane right after an edit such as adding a comment.
+// Spectre's flows that open the pane right after an edit such as adding a comment.
 const requested = new WeakSet<Editor>();
 
 /** Open the comment pane on purpose, even in the same step as an edit. */
@@ -27,7 +27,7 @@ export function openReviewPane(editor: Editor) {
 export function useRequestedReviewPane(editor: Editor | null) {
     const engineOpen = editor?.snapshot().reviewPaneOpen ?? false;
     const revision = editor?.getDocumentHandle?.().revision ?? 0;
-    // What the engine last showed, and whether Mike honours it.
+    // What the engine last showed, and whether Spectre honours it.
     const [seen, setSeen] = useState({
         editor,
         engineOpen,

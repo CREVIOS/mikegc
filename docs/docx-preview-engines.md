@@ -79,7 +79,7 @@ switching preserves edits. A fresh server snapshot replaces a clean editor and
 resets its save baseline; pending edits, in-flight saves, and refreshes of the
 editor's own saved bytes retain the current editor and undo history. Reads that
 span a local edit or save cannot replace it with stale content. Reloading with unsaved edits triggers a leave-page
-warning. Existing Mike edit cards still resolve through the backend.
+warning. Existing Spectre edit cards still resolve through the backend.
 
 ## Version and behavior
 
@@ -91,7 +91,7 @@ supply the file. The editor is loaded lazily. Failed font loads show a dismissib
 keeping the document and unsaved edits available; parse/load failures remain
 fatal.
 
-This installation uses only EigenPal's open-source packages. Mike registers
+This installation uses only EigenPal's open-source packages. Spectre registers
 `docxReviewModule` through the public `EditorModule` contract. It composes
 `collectReviewItems` and `revisionItemsOf` exported by the Apache-2.0 core's
 `/store` entry point; the paragraph callback includes only decisions wholly
@@ -120,7 +120,7 @@ edits would render stale cached values.
 To add a comment, select document text and choose **New comment** in the toolbar.
 The composer opens directly below the selected passage and scrolls with it; if
 the selection is not painted (a virtualized page), it opens beside the toolbar
-button instead. Mike retains that selection while the composer has focus and uses the signed-in
+button instead. Spectre retains that selection while the composer has focus and uses the signed-in
 author. The composer uses a flat grey field without a selected-text preview. **Add comment** (or
 Cmd/Ctrl+Enter) writes through the public core's `addComment`; its
 document-change event feeds the existing autosave pipeline without PDF
@@ -134,7 +134,7 @@ and reply, and ends with a **Reply** button. Clicking a bubble scrolls the
 document to its comment. Right-clicking a bubble opens Reply, Edit and Delete.
 Right-clicking a comment highlight in the document opens **View comment**, which
 opens the column and focuses that bubble, and Delete. Highlights carry no comment identity, so
-Mike waits for the engine to activate the comment under the pressed caret and
+Spectre waits for the engine to activate the comment under the pressed caret and
 only opens the menu when the pointer lies on that active highlight. Right-click
 tracked text to accept or reject that exact revision decision; matching uses
 revision ID, author, date, and document part rather than the caret or text.
@@ -156,11 +156,11 @@ fonts and unsupported formatting can change line breaks and pagination. Keep
 the review tests when upgrading the editor packages, since this integration
 depends on their public module and store exports.
 
-Mike's citation highlights use the native search and reveal API for off-screen
+Spectre's citation highlights use the native search and reveal API for off-screen
 text. Tracked changes activate the matching native review item by revision ID.
 EigenPal owns the revision highlight, scrolling, and repainting. If the insertion
 and deletion belong to separate review items, a native text selection spans both
-parts, including the unchanged text between them. Dismissing Mike's edit card
+parts, including the unchanged text between them. Dismissing Spectre's edit card
 clears its highlight while preserving a subsequent user selection or activation.
 
 ## Try the editor without backend services

@@ -26,7 +26,7 @@ import {
 /**
  * What intake's AI works from: the model the organization chose for
  * triage, its assignment rules, and a received message as one shape for
- * every channel. Also the request MikeGC records from a message: its
+ * every channel. Also the request Spectre records from a message: its
  * fallback fields and its description. The intake agent (intake.agent.ts)
  * decides what to do with a message.
  */
@@ -37,20 +37,21 @@ export const SUMMARY_MAX = 4_000;
 // Same rule as the intake_requests check constraint.
 const EMAIL = /^[^@\s]+@[^@\s]+$/;
 /**
- * Fast, low-cost models, in the order new settings start triage on one. Read
+ * Fast, low-cost models, in the order new settings start triage on one:
+ * OpenAI first, as Spectre runs on OpenAI by default. Read
  * when needed, not at import: this module is reached through the user
  * module's facade, whose importers may stand in for the LLM layer.
  */
 const triageModels = () => [
-  ...CLAUDE_LOW_MODELS,
   ...OPENAI_LOW_MODELS,
+  ...CLAUDE_LOW_MODELS,
   ...GEMINI_LOW_MODELS,
   ...MISTRAL_LOW_MODELS,
 ];
 /** Stronger models, in the order new settings start preprocessing on one. */
 const preprocessModels = () => [
-  ...CLAUDE_MID_MODELS,
   ...OPENAI_MID_MODELS,
+  ...CLAUDE_MID_MODELS,
   ...GEMINI_MID_MODELS,
   ...MISTRAL_MID_MODELS,
 ];
@@ -82,7 +83,7 @@ export const CHANNEL_NAMES: Record<InboundMessage["source"], string> = {
 export type TriageRule = {
   condition: string;
   assignee_id: string;
-  /** Whether MikeGC preprocesses what the rule assigns, and following what. */
+  /** Whether Spectre preprocesses what the rule assigns, and following what. */
   preprocess: boolean;
   preprocess_with: { kind: "workflow" | "playbook"; id: string } | null;
 };
@@ -265,7 +266,7 @@ export function isCalendarDate(value: unknown): value is string {
   );
 }
 
-/** The request MikeGC records from the message alone, with no model. */
+/** The request Spectre records from the message alone, with no model. */
 export function fallbackFields(message: InboundMessage) {
   return {
     subject:

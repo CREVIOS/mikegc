@@ -239,7 +239,7 @@ describe("Slack events", () => {
     await slack(threadMessage({ ts: "1762074901.000300", subtype: "file_share" }));
     expect(inbound()).toHaveLength(2);
   });
-  it("takes a reply without a mention in a thread where MikeGC chatted back, as a new message", async () => {
+  it("takes a reply without a mention in a thread where Spectre chatted back, as a new message", async () => {
     memory.rows("intake_conversations").push({
       org_id: org,
       source: "slack",
@@ -261,7 +261,7 @@ describe("Slack events", () => {
         }),
       }),
     ]);
-    // Another thread, where MikeGC never answered, still needs a mention.
+    // Another thread, where Spectre never answered, still needs a mention.
     await slack(threadMessage({ ts: "1762074999.000500", thread_ts: "1762070000.000009" }));
     expect(inbound()).toHaveLength(1);
   });
@@ -275,7 +275,7 @@ describe("Slack events", () => {
       threadMessage({ ts: "1762074000.000001" }),
       threadMessage({ subtype: "message_changed" }),
       threadMessage({ subtype: "message_deleted" }),
-      // MikeGC's own post and another bot's.
+      // Spectre's own post and another bot's.
       threadMessage({ user: "UBOT" }),
       threadMessage({ bot_id: "B1" }),
     ])
@@ -283,7 +283,7 @@ describe("Slack events", () => {
     expect(inbound()).toEqual([]);
     expect(mocks.enqueueDbJob).not.toHaveBeenCalled();
   });
-  it("ignores bots, MikeGC itself, other events and a turned-off Slack", async () => {
+  it("ignores bots, Spectre itself, other events and a turned-off Slack", async () => {
     for (const body of [
       mention({ bot_id: "B1" }),
       mention({ user: "UBOT" }),

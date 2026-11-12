@@ -29,11 +29,15 @@ import {
 } from "../../lib/llm";
 import {
   builtInModelIds,
+  DEFAULT_CHAT_MODEL_PREFERENCE,
   LEGACY_MODEL_IDS,
   providerForModel,
 } from "../../lib/llm/models";
 import type { Provider } from "../../lib/llm/types";
-import { hasApiKeyForModel } from "../../lib/modelSelection";
+import {
+  deploymentDefaultChatModel,
+  hasApiKeyForModel,
+} from "../../lib/modelSelection";
 import { getUserApiKeys, getEffectiveApiKeys } from "../user/user.service";
 import { deleteFile, uploadFile } from "../../lib/storage";
 import { getFileStreamSource } from "../documents/documents.service";
@@ -636,10 +640,17 @@ async function availablePlaybookModels(
   const preferred = profileModelIds.find((modelId) =>
     availableModelIds.includes(modelId),
   );
+  // With nothing saved, the deployment default (OpenAI unless configured
+  // otherwise) leads, before the catalog's own order.
+  const configuredDefault = deploymentDefaultChatModel();
+  const fallback = [
+    ...(configuredDefault ? [configuredDefault] : []),
+    ...DEFAULT_CHAT_MODEL_PREFERENCE,
+  ].find((modelId) => availableModelIds.includes(modelId));
   return {
     apiKeys,
     availableModelIds,
-    defaultModel: preferred || availableModelIds[0] || null,
+    defaultModel: preferred || fallback || availableModelIds[0] || null,
   };
 }
 

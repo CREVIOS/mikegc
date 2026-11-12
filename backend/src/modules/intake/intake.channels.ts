@@ -6,7 +6,7 @@ import { insertInbound, type InboundStoreResult } from "./intake.inboundStore";
 import { intakeRpc } from "./intake.shared";
 
 /**
- * The channel-agnostic half of MikeGC's conversation with a requester. A
+ * The channel-agnostic half of Spectre's conversation with a requester. A
  * request recorded from a channel is linked to its thread; a message in that
  * thread is routed to the request as a reply; a message for the requester is
  * written to the outbox and sent by its channel's adapter. Each channel's
@@ -110,7 +110,7 @@ export interface ChannelAdapter {
 /**
  * A delivery that failed. `permanent` failures need someone to change a
  * setting or the channel, and are not retried; the sentence is what members
- * see on the request, written by MikeGC from a known failure, never a
+ * see on the request, written by Spectre from a known failure, never a
  * provider's response.
  */
 export class ChannelDeliveryError extends Error {
@@ -129,13 +129,13 @@ export function memberSender(name: string, fromName: string): string {
   return `${name} (${fromName})`.slice(0, 80);
 }
 
-/** What MikeGC says when a resolution sends documents without a message. */
+/** What Spectre says when a resolution sends documents without a message. */
 export const DOCUMENTS_ONLY_TEXT = "Here are the documents from Legal.";
 
 /**
  * An acknowledgement as lines of text, each passed through the channel's
  * `escape`: thanks, who will pick the request up, and any questions, whose
- * framing follows on the first line. While MikeGC asks before choosing who
+ * framing follows on the first line. While Spectre asks before choosing who
  * gets the request, it doesn't promise that someone will.
  */
 export function acknowledgementLines(
@@ -154,7 +154,7 @@ export function acknowledgementLines(
 /**
  * A message as plain text, for channels that cannot change the sender of
  * one message: a member's question reads "Emma Chen (Legal) asks: …".
- * MikeGC's own wording frames an acknowledgement.
+ * Spectre's own wording frames an acknowledgement.
  */
 export function plainMessageText(
   message: OutboundMessage,
@@ -321,16 +321,16 @@ export async function routeThreadMessage(
   return Object.assign(ok(status), { payloadOwnership });
 }
 
-/** Where MikeGC can answer instead of recording: chats and email threads. */
+/** Where Spectre can answer instead of recording: chats and email threads. */
 export type ConversationSource = "slack" | "teams" | "gmail" | "outlook";
 
-/** One of MikeGC's answers in a thread with no request, as it was sent. */
+/** One of Spectre's answers in a thread with no request, as it was sent. */
 export type ConversationReply = { at: string; text: string };
-/** Answers kept per thread; MikeGC records the next message after a few. */
+/** Answers kept per thread; Spectre records the next message after a few. */
 const KEPT_REPLIES = 5;
 
 /**
- * A chat or email thread where MikeGC answered instead of recording a
+ * A chat or email thread where Spectre answered instead of recording a
  * request: how many times it has answered there and what it said, or null
  * when it never has.
  */
@@ -357,7 +357,7 @@ export async function findConversation(
   return { rounds: row.rounds, replies };
 }
 
-/** Count one more of MikeGC's answers in a chat or email thread, keeping what it said. */
+/** Count one more of Spectre's answers in a chat or email thread, keeping what it said. */
 export async function rememberConversation(
   db: Db,
   orgId: string,

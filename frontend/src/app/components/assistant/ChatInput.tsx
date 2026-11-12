@@ -254,6 +254,7 @@ function ChatInputForChatImpl(
         selectionKey: chatKey,
         chatModel,
         lastSelectedModel: profile?.lastSelectedChatModel,
+        deploymentDefaultModel: profile?.defaultChatModel,
         routerSelections:
             savedRouterSelections && !apiKeysDegraded
                 ? savedRouterSelections

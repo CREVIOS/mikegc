@@ -44,7 +44,7 @@ export function WorkflowAssets({
           setFiles([]);
           setError(
             userMessage(reason, {
-              fallback: "Mike couldn't load this workflow's files. Try again.",
+              fallback: "Spectre couldn't load this workflow's files. Try again.",
             }),
           );
         }
@@ -67,7 +67,7 @@ export function WorkflowAssets({
     } catch (reason) {
       setError(
         userMessage(reason, {
-          fallback: "Mike couldn't upload that file. Try again.",
+          fallback: "Spectre couldn't upload that file. Try again.",
         }),
       );
     } finally {
@@ -85,7 +85,7 @@ export function WorkflowAssets({
     } catch (reason) {
       setError(
         userMessage(reason, {
-          fallback: "Mike couldn't upload the new version. Try again.",
+          fallback: "Spectre couldn't upload the new version. Try again.",
         }),
       );
     } finally {
@@ -155,7 +155,7 @@ export function WorkflowAssets({
                     .catch((reason: unknown) =>
                       setError(
                         userMessage(reason, {
-                          fallback: "Mike couldn't open that file. Try again.",
+                          fallback: "Spectre couldn't open that file. Try again.",
                         }),
                       ),
                     )
@@ -185,7 +185,7 @@ export function WorkflowAssets({
                           setError(
                             userMessage(reason, {
                               fallback:
-                                "Mike couldn't delete that file. Try again.",
+                                "Spectre couldn't delete that file. Try again.",
                             }),
                           ),
                         )

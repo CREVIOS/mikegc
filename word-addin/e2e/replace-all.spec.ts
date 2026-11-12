@@ -151,7 +151,7 @@ test("a replace-all pass Word faulted on keeps the card unconfirmed, with no Acc
   // Word may have applied the faulted pass, so the card must neither say
   // "the rest couldn't be applied" nor offer to resolve only what it holds.
   await expect(
-    page.getByText(/Mike couldn't confirm whether this change was applied/),
+    page.getByText(/Spectre couldn't confirm whether this change was applied/),
   ).toBeVisible();
   await expect(page.getByText(/the rest couldn’t be applied/)).toHaveCount(0);
   await expect(

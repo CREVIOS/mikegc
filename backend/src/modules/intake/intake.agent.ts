@@ -48,7 +48,7 @@ import {
 
 /** Model steps in one run. A greeting takes one; a clear request one or two. */
 export const AGENT_MAX_STEPS = 4;
-/** Times MikeGC answers in a thread with no request before recording the next message. */
+/** Times Spectre answers in a thread with no request before recording the next message. */
 export const MAX_CHAT_ROUNDS = 3;
 const AGENT_TIMEOUT_MS = 90_000;
 const PROMPT_MESSAGE_CHARS = 30_000;
@@ -66,7 +66,7 @@ const FIELD_NAMES: Record<AgentField, string> = {
   requested_by_date: "the due date",
 };
 
-/** One of MikeGC's earlier answers in a thread with no request. */
+/** One of Spectre's earlier answers in a thread with no request. */
 export type EarlierReply = { at: string; text: string };
 
 /** The request a reply is about, as the agent reads it. */
@@ -79,7 +79,7 @@ export type AgentRequest = {
   member_edited_fields: AgentField[];
   /** The request waits on the requester's answer to choose its rule. */
   ruleUndecided: boolean;
-  /** MikeGC may ask once more: rounds are left and no member stopped it. */
+  /** Spectre may ask once more: rounds are left and no member stopped it. */
   canAsk: boolean;
 };
 
@@ -89,11 +89,11 @@ export type AgentContext =
       kind: "message";
       /** The thread up to the message, as its channel shows it. */
       message: InboundMessage;
-      /** MikeGC's earlier answers in the thread, oldest first. */
+      /** Spectre's earlier answers in the thread, oldest first. */
       earlierReplies: EarlierReply[];
       /** Whether the thread can be answered: not another request's email thread. */
       canReply: boolean;
-      /** How many times MikeGC has answered in the thread. */
+      /** How many times Spectre has answered in the thread. */
       rounds: number;
     }
   | {
@@ -107,7 +107,7 @@ export type AgentContext =
       sentAt: Date;
     };
 
-const SYSTEM_PROMPT = `You are MikeGC, the intake assistant for an in-house legal team. People write to you in Slack, Teams and email. Read the conversation and act on its newest message through your tools. You never answer in plain text: call the tools that apply, then stop. Each tool says whether it worked; when one refuses, do what its answer says.
+const SYSTEM_PROMPT = `You are Spectre, the intake assistant for an in-house legal team. People write to you in Slack, Teams and email. Read the conversation and act on its newest message through your tools. You never answer in plain text: call the tools that apply, then stop. Each tool says whether it worked; when one refuses, do what its answer says.
 
 If REQUEST is none:
 - If the newest message isn't a request (a greeting, thanks, small talk, or a question about you or how to reach Legal), call reply with one to three friendly sentences that say you pass requests to Legal and ask what they need.
@@ -121,7 +121,7 @@ If there is a REQUEST, the requester has written in its thread:
 - Otherwise always end by calling reply, so the requester knows their message arrived: acknowledge it in one or two sentences, and if you updated the request, say in plain words what you added (for example "I've added the $500k contract value to your request."). If they asked something, answer only from REQUEST and the thread.
 
 How to write:
-- reply: like a friendly colleague, to the person as "you", in plain sentences. Never mention rules, conditions, tools or how you work, and never ask what the conversation already answers. Questions before a request is recorded must not say it has been passed on. When you ask questions on a recorded request, write only the questions, one per line: MikeGC adds its own opening line.
+- reply: like a friendly colleague, to the person as "you", in plain sentences. Never mention rules, conditions, tools or how you work, and never ask what the conversation already answers. Questions before a request is recorded must not say it has been passed on. When you ask questions on a recorded request, write only the questions, one per line: Spectre adds its own opening line.
 - subject: a short title, under 100 characters, such as "Review supplier NDA with Acme".
 - summary: two to four plain sentences on what is needed and the key facts (parties, documents, deadline). No legal advice.
 - requester_name, requester_email: who needs the help, usually the sender, or the person a forwarded message is for. Give an email only if it is the sender's or written in the message, else an empty string.
@@ -230,7 +230,7 @@ export function buildAgentPrompt(args: {
       ...(c.size !== null ? { size_kb: Math.ceil(c.size / 1024) } : {}),
     }));
     const body = clip(message.text, PROMPT_MESSAGE_CHARS);
-    const replies = context.earlierReplies.map((r) => ({ author: "MikeGC", at: r.at, text: r.text }));
+    const replies = context.earlierReplies.map((r) => ({ author: "Spectre", at: r.at, text: r.text }));
     const user = [
       `TODAY: ${today(message.sentAt, args.now)} (UTC)`,
       `CHANNEL: ${CHANNEL_NAMES[message.source]}`,
@@ -243,7 +243,7 @@ export function buildAgentPrompt(args: {
       ...(message.subject !== null ? [`Subject: ${message.subject}`] : []),
       "",
       body.length < message.text.length ? `${body}\n[Message shortened.]` : body,
-      ...(replies.length ? ["", "--- MikeGC's earlier replies in this thread ---", threadText(replies)] : []),
+      ...(replies.length ? ["", "--- Spectre's earlier replies in this thread ---", threadText(replies)] : []),
       `DATA ${boundary} END`,
     ].join("\n");
     return { system: SYSTEM_PROMPT, user };
@@ -292,7 +292,7 @@ export function withSummary(description: string, summary: string): string {
   return clip(`${summary}\n\n${original}`, DESCRIPTION_MAX);
 }
 
-/** The request MikeGC records from a message alone, with no model. */
+/** The request Spectre records from a message alone, with no model. */
 export function plainRecord(message: InboundMessage): NonNullable<AgentPlan["record"]> {
   return {
     ...fallbackFields(message),
@@ -354,17 +354,17 @@ class AgentRun {
       // answers, and the request doesn't wait.
       if (context.request.ruleUndecided && !this.plan.rule) {
         if (!this.rules.length) return refused("there are no rules to choose between: call choose_rule with 0");
-        if (!context.request.canAsk) return refused("MikeGC can't ask again on this request: call choose_rule");
+        if (!context.request.canAsk) return refused("Spectre can't ask again on this request: call choose_rule");
         return this.ask(text);
       }
       if (!plain()) return refused(plainRule);
       this.plan.answer = text;
     } else if (this.plan.record) {
-      // Recorded from this message: MikeGC's acknowledgement tells the
+      // Recorded from this message: Spectre's acknowledgement tells the
       // requester, so a reply only asks, to choose the rule.
       if (!context.canReply) return refused("this message can't be answered in its thread: call choose_rule");
       if (!this.rules.length) return refused("there are no rules to choose between, so there is nothing to ask");
-      if (this.plan.rule) return refused("the rule is chosen, and MikeGC's acknowledgement tells the requester");
+      if (this.plan.rule) return refused("the rule is chosen, and Spectre's acknowledgement tells the requester");
       return this.ask(text);
     } else {
       if (!context.canReply) return refused("this message can't be answered in its thread: record it");
@@ -510,7 +510,7 @@ class AgentRun {
     const rule = number === 0 ? null : this.rules[(number as number) - 1]!;
     this.plan.rule = {
       assignee_id: rule?.assignee_id ?? null,
-      // The rule that assigned it decides whether MikeGC preprocesses it.
+      // The rule that assigned it decides whether Spectre preprocesses it.
       preprocess: rule?.preprocess ? { with: rule.preprocess_with, condition: rule.condition } : null,
     };
     return rule ? `assigned by rule ${number as number}` : "left for Legal to assign";

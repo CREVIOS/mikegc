@@ -23,7 +23,7 @@ function apply(store: TreeDocumentStore, ...ops: TreeDocOp[]) {
     expect(store.transact((ctx) => { ops.forEach((op) => ctx.apply(op)); }).ok).toBe(true);
 }
 
-describe("Mike DOCX review module using the public core", () => {
+describe("Spectre DOCX review module using the public core", () => {
     it.each(["acceptAllRevisions", "rejectAllRevisions"] as const)("round-trips a tracked replacement and %s with undo/redo", (op) => {
         const store = new TreeDocumentStore(story("<w:p><w:r><w:t>thirty days</w:t></w:r></w:p>"));
         const paragraphId = [...paragraphOrderOfPart(store.part).keys()][0];

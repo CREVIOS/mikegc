@@ -6,7 +6,7 @@ function positiveInteger(name: string, fallback: number): number {
 }
 export function googleDriveLimits() {
     return {
-        // Match Mike's existing per-file upload default.
+        // Match Spectre's existing per-file upload default.
         downloadBytes:
             positiveInteger("GOOGLE_DRIVE_MAX_FILE_MB", 100) * 1024 * 1024,
         idleMs:

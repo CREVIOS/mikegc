@@ -12,7 +12,7 @@ import { isOrgAdmin } from "@/app/lib/permissions";
 import { PillButtonUI } from "@/shared/ui/PillButtonUI";
 
 /**
- * How MikeGC records requests from email and Slack: its owners' and admins'
+ * How Spectre records requests from email and Slack: its owners' and admins'
  * alone. The section is not offered to a member, and one who follows a link
  * to it is told why.
  */

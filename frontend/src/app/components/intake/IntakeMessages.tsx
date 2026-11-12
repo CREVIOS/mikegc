@@ -24,7 +24,7 @@ import { formatIntakeDateTime } from "./intakeLabels";
 
 /**
  * The messages exchanged with the requester, as opposed to work in the app:
- * questions, their replies, and answers: a resolution's reply, or MikeGC's
+ * questions, their replies, and answers: a resolution's reply, or Spectre's
  * answer to a reply.
  */
 const REQUESTER_KINDS = new Set<IntakeMessage["kind"]>([
@@ -142,7 +142,7 @@ export function IntakeMessages({
       key: message.id,
       at: message.created_at,
       incoming: message.kind === "reply",
-      author: message.automated ? "MikeGC" : message.author_name,
+      author: message.automated ? "Spectre" : message.author_name,
       mikegc: !!message.automated,
       channel:
         message.external_author &&
@@ -323,7 +323,7 @@ export function IntakeMessages({
 
 /**
  * One message as a chat bubble: the requester's side left, ours right;
- * MikeGC's blue and everyone else's grey.
+ * Spectre's blue and everyone else's grey.
  */
 function IntakeMessageBubble({
   entry,
@@ -370,7 +370,7 @@ function IntakeMessageBubble({
           <p
             className={cn(
               "whitespace-pre-wrap rounded-xl px-3.5 py-2.5 text-sm leading-relaxed [overflow-wrap:anywhere]",
-              // MikeGC's own messages in Mike azure; everyone else's grey.
+              // Spectre's own messages in Spectre azure; everyone else's grey.
               entry.mikegc
                 ? "bg-blue-600 text-white"
                 : "bg-gray-100 text-gray-900",

@@ -113,7 +113,7 @@ const ENABLED_FIELD: Record<IntakeChannelId, keyof IntakeAutomationUpdate> = {
 type Change = (patch: Partial<IntakeAutomationDraft>) => void;
 
 /**
- * The channels MikeGC records requests from, as connector tiles: each names
+ * The channels Spectre records requests from, as connector tiles: each names
  * the channel with its logo. A channel that is set up shows its on/off
  * switch, which saves at once, and the tile opens its modal; one that isn't
  * shows Set up. Everything else, from its keys to its sender domains, is in
@@ -794,7 +794,7 @@ function IntakeEmailFields({
             <p>
               {settings.mailbox ?? "The intake mailbox"} is connected through{" "}
               {INTAKE_CHANNEL_NAMES[INTAKE_MAIL_CHANNELS[other]]}.
-              MikeGC reads one intake mailbox, so connecting{" "}
+              Spectre reads one intake mailbox, so connecting{" "}
               {INTAKE_CHANNEL_NAMES[INTAKE_MAIL_CHANNELS[provider]]} replaces
               it.
             </p>
@@ -867,7 +867,7 @@ function IntakeEmailFields({
             className="space-y-2"
           >
             <p className="text-sm text-gray-700">
-              Disconnect? MikeGC stops reading and replying from this mailbox
+              Disconnect? Spectre stops reading and replying from this mailbox
               right away. Recorded requests are kept.
             </p>
             <div className="flex flex-wrap items-center gap-2">
@@ -1148,7 +1148,7 @@ function SameAppFields({
         onChange={noop}
       />
       <p className={ROW_DESCRIPTION_CLASS}>
-        {`MikeGC copies the client secret from ${other}. Changing it in ${other} later doesn't change it here.`}
+        {`Spectre copies the client secret from ${other}. Changing it in ${other} later doesn't change it here.`}
         {extra ? ` ${extra}` : ""}
       </p>
     </>
@@ -1212,7 +1212,7 @@ function IntakeSlackFields({
             </p>
             {settings.bot_user_id && (
               <p className="text-xs text-gray-500 [overflow-wrap:anywhere]">
-                MikeGC bot user {settings.bot_user_id}
+                Spectre bot user {settings.bot_user_id}
               </p>
             )}
           </div>
@@ -1222,7 +1222,7 @@ function IntakeSlackFields({
         <SettingsNotice>
           <p className="font-medium">Reinstall the Slack app to send documents.</p>
           <p>
-            Its token lacks {settings.missing_scopes.join(", ")}. MikeGC still
+            Its token lacks {settings.missing_scopes.join(", ")}. Spectre still
             records requests and posts text, but can&apos;t send documents or
             post under a lawyer&apos;s name. Add the scopes from the manifest
             in the setup guide under OAuth &amp; Permissions, reinstall the
@@ -1233,7 +1233,7 @@ function IntakeSlackFields({
       {settings.configured && !settings.message_events_seen && (
         <SettingsNotice>
           <p>
-            MikeGC hasn&apos;t received a thread message yet. Subscribe the app
+            Spectre hasn&apos;t received a thread message yet. Subscribe the app
             to the message.channels and message.groups bot events so
             requesters&apos; answers reach their request.
           </p>
@@ -1245,7 +1245,7 @@ function IntakeSlackFields({
 
 /**
  * Teams: the switch, the events URL for the Azure Bot, the app's IDs and
- * write-only client secret, and whether MikeGC can send documents.
+ * write-only client secret, and whether Spectre can send documents.
  */
 function IntakeTeamsFields({
   settings,

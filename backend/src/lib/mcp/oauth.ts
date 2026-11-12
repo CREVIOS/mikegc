@@ -469,7 +469,7 @@ export class DbMcpOAuthProvider implements OAuthClientProvider {
     get clientMetadata(): OAuthClientMetadata {
         const env = oauthClientEnvFor(this.connector.server_url);
         return {
-            client_name: "Mike",
+            client_name: "Spectre",
             redirect_uris: [this.redirectUri],
             grant_types: ["authorization_code", "refresh_token"],
             response_types: ["code"],

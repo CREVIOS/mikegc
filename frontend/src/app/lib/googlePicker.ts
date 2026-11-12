@@ -1,6 +1,6 @@
 /**
  * Google Picker: Google's own Drive file chooser, shown as an overlay on the
- * page. Picking a file there is what grants Mike's drive.file connection
+ * page. Picking a file there is what grants Spectre's drive.file connection
  * access to it, so this is the only way an existing Drive file becomes
  * readable by the assistant.
  *

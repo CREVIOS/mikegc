@@ -329,7 +329,7 @@ async function runAgentOnReply(
 
 /**
  * At the rule stage: ask once more, or settle on the chosen rule (or none)
- * and start its preprocessing. True when MikeGC asked.
+ * and start its preprocessing. True when Spectre asked.
  */
 async function settleRule(
   db: Db,
@@ -468,8 +468,8 @@ export async function runReply(
     if (isPermanentSlackError(error) || isPermanentTeamsError(error))
       throw new NonRetryableJobError(
         error instanceof SlackApiError
-          ? "MikeGC couldn't read a reply in Slack."
-          : "MikeGC couldn't read a reply in Teams.",
+          ? "Spectre couldn't read a reply in Slack."
+          : "Spectre couldn't read a reply in Teams.",
       );
     throw error;
   }
@@ -481,7 +481,7 @@ export async function markReplyFailed(db: Db, row: InboundRow): Promise<void> {
     db,
     row.id,
     "failed",
-    `MikeGC couldn't record a reply in the request's ${channelName(row.payload)} thread.`,
+    `Spectre couldn't record a reply in the request's ${channelName(row.payload)} thread.`,
     row.payload,
   ).catch((error) => console.warn("[intake-reply] not settled", safeError(error)));
 }

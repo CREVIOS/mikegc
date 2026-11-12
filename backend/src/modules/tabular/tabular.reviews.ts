@@ -36,7 +36,11 @@ import {
     type ResourcePeopleResult,
 } from "../../lib/resourcePeople";
 import { attachActiveVersionPaths } from "../../lib/documentVersions";
-import { TABULAR_MODEL_REQUIRED_DETAIL } from "../../lib/modelSelection";
+import {
+    defaultModelForKeys,
+    TABULAR_MODEL_REQUIRED_DETAIL,
+} from "../../lib/modelSelection";
+import { getUserModelSettings } from "../user/user.service";
 import { failure, internalFailure } from "../../lib/serviceResult";
 import {
     buildTabularReviewIdsOverviewRpcArgs,
@@ -539,7 +543,7 @@ export async function createTabularReview(
         model,
     } = input;
 
-    if (typeof model !== "string" || !model.trim()) {
+    if (model !== undefined && model !== null && typeof model !== "string") {
         return statusFailure(400, {
             code: "model_required",
             detail: TABULAR_MODEL_REQUIRED_DETAIL,
@@ -581,11 +585,38 @@ export async function createTabularReview(
         standaloneOrgId = standalone.orgId;
     }
 
+    const keyOrgId = project_id ? projectOrgId : standaloneOrgId;
+    // A review started without a model runs on the deployment default
+    // (OpenAI unless configured otherwise), with the keys of the workspace
+    // it belongs to. With no usable default it is still refused.
+    let requestedModel = typeof model === "string" ? model.trim() : "";
+    if (!requestedModel) {
+        try {
+            const { api_keys } = await getUserModelSettings(userId, db, {
+                orgId: keyOrgId,
+            });
+            requestedModel =
+                (await defaultModelForKeys({
+                    apiKeys: api_keys,
+                    userId,
+                    db,
+                    orgId: keyOrgId,
+                })) ?? "";
+        } catch (error) {
+            return internalFailure(error);
+        }
+        if (!requestedModel) {
+            return statusFailure(400, {
+                code: "model_required",
+                detail: TABULAR_MODEL_REQUIRED_DETAIL,
+            });
+        }
+    }
     const selectedModel = await validateSelectedModel(
-        model,
+        requestedModel,
         userId,
         db,
-        project_id ? projectOrgId : standaloneOrgId,
+        keyOrgId,
     );
     if (!selectedModel.ok) return modelFailure(selectedModel);
     let allowedDocumentIds: string[];

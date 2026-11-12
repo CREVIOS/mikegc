@@ -655,7 +655,7 @@ function RunResults({
           This review used extracted text from{" "}
           <span className="font-medium">{run.documentName}</span>. For a
           formatting-preserving Word redline, provide the original DOCX in
-          Assistant; if it is unavailable, Mike can create a text-reconstructed
+          Assistant; if it is unavailable, Spectre can create a text-reconstructed
           DOCX and will warn that formatting may differ.
         </p>
       )}

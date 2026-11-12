@@ -7,7 +7,7 @@
  * Implementations may assume their methods are called only while `enabled` is
  * true, and should let errors propagate to the facade.
  *
- * To ship Mike on a different object store (Azure Blob, GCS, local disk),
+ * To ship Spectre on a different object store (Azure Blob, GCS, local disk),
  * implement this type in one file and pass it to setStorageAdapter() from
  * ../storage.ts before the first request is served. No call site changes.
  */

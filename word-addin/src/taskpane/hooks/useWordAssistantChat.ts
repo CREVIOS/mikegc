@@ -326,7 +326,7 @@ export function useWordAssistantChat({
             console.error("Failed to read the current Word document", error);
             if (requestIsCurrent()) {
               setRequestError(
-                "Mike couldn't read this Word document. Try again.",
+                "Spectre couldn't read this Word document. Try again.",
               );
             }
             return;
@@ -998,7 +998,7 @@ export function useWordAssistantChat({
           // carries what the bubble cannot: the actions on the failure.
           const failureCopy = {
             action: "get a response",
-            fallback: "Mike couldn't finish that answer. Try again.",
+            fallback: "Spectre couldn't finish that answer. Try again.",
           };
           const recovery = failedTurnRecovery({
             wasSend: input.kind === "send",

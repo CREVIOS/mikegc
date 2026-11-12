@@ -1,5 +1,6 @@
 import type { Db } from "../../lib/supabase";
 import { failure, internalFailure, ok, type ServiceResult } from "../../lib/serviceResult";
+import { normalizeBangla } from "../../lib/bangla";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export type DocumentTextMatch = {
@@ -38,7 +39,9 @@ export async function findDocumentText(db: Db, args: {
   }
   const { data, error } = await db.rpc("find_document_text", {
     p_user_id: args.userId, p_user_email: args.userEmail ?? null,
-    p_workspace: args.workspace ?? "personal", p_scope: args.scope, p_query: args.query,
+    // Stored text is NFC (documents.indexing), so the query is too: a Bangla
+    // phrase matches however either side spelled য় or ো.
+    p_workspace: args.workspace ?? "personal", p_scope: args.scope, p_query: normalizeBangla(args.query),
     p_project_id: args.projectId ?? null, p_document_id: args.documentId ?? null,
     p_version_id: args.versionId ?? null, p_limit: limit, p_offset: offset,
   });

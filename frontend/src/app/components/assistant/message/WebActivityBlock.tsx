@@ -5,6 +5,8 @@ import { EventBlock } from "./EventBlocks";
 import { EventDisclosureButton, EventLabel } from "./EventDisclosure";
 
 type WebSearchEvent = Extract<AssistantEvent, { type: "web_search" }>;
+
+const BD_LAWS_QUERY_PREFIX = "Laws of Bangladesh:";
 type WebReadEvent = Extract<AssistantEvent, { type: "web_read" }>;
 
 function webAddress(url: string): { href: string | null; host: string } {
@@ -83,15 +85,24 @@ export function WebSearchBlock({
     showConnector?: boolean;
 }) {
     const [open, setOpen] = useState(false);
-    const query = event.query.trim();
+    // The assistant's Laws of Bangladesh search reports as a web search whose
+    // query names the source (backend bdLawTools.ts).
+    const rawQuery = event.query.trim();
+    const bdLaws = rawQuery.startsWith(BD_LAWS_QUERY_PREFIX);
+    const query = bdLaws ? rawQuery.slice(BD_LAWS_QUERY_PREFIX.length).trim() : rawQuery;
+    const source = bdLaws ? "the Laws of Bangladesh" : "the web";
     const forQuery = query ? <> for &ldquo;{query}&rdquo;</> : null;
     const error = event.error;
     const label: ReactNode = isStreaming ? (
-        <>Searching the web{forQuery}</>
+        <>Searching {source}{forQuery}</>
     ) : error ? (
-        query ? <>Web search failed{forQuery}</> : "Web search unavailable"
+        query ? (
+            <>{bdLaws ? "Laws of Bangladesh search" : "Web search"} failed{forQuery}</>
+        ) : (
+            "Web search unavailable"
+        )
     ) : (
-        <>Searched the web{forQuery}</>
+        <>Searched {source}{forQuery}</>
     );
     const results = event.results;
 

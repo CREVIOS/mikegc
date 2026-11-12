@@ -56,7 +56,7 @@ vi.mock("@/app/contexts/AuthContext", () => ({
 }));
 
 vi.mock("@/app/components/site-logo", () => ({
-    SiteLogo: () => <div>Mike</div>,
+    SiteLogo: () => <div>Spectre</div>,
 }));
 
 describe("LoginPage", () => {
@@ -118,7 +118,7 @@ describe("LoginPage", () => {
         [
             "a dropped connection",
             new TypeError("Failed to fetch"),
-            "Mike couldn't reach the server. Check your connection and try again.",
+            "Spectre couldn't reach the server. Check your connection and try again.",
         ],
     ])("explains %s instead of a generic line", async (_label, thrown, shown) => {
         login.mockRejectedValue(thrown);
@@ -174,7 +174,7 @@ describe("LoginPage", () => {
     it("hides the guest button outside the Mac desktop shell", async () => {
         // window.mikeDesktop only exists inside the Electron shell, and only
         // its local ("everything on this Mac") mode answers with credentials.
-        // In a browser and against Mike Cloud this page must be unchanged.
+        // In a browser and against Spectre Cloud this page must be unchanged.
         render(<LoginPage />);
         expect(
             screen.queryByRole("button", { name: "Continue on this Mac" }),
@@ -259,7 +259,7 @@ describe("LoginPage", () => {
         expect(signup).not.toHaveBeenCalled();
         expect(push).not.toHaveBeenCalled();
         expect(screen.getByRole("alert")).toHaveTextContent(
-            "Mike couldn't reach the server",
+            "Spectre couldn't reach the server",
         );
         login.mockResolvedValueOnce({ user: { id: "guest-1" } });
         await userEvent.click(screen.getByRole("button", { name: "Retry" }));
@@ -275,7 +275,7 @@ it("retries a failed session refresh without submitting the empty login form", a
     retrySession.mockRejectedValueOnce(new TypeError("Failed to fetch")).mockResolvedValueOnce(null);
     render(<LoginPage />);
     await userEvent.click(screen.getByRole("button", { name: "Retry" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Mike couldn't reach the server");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Spectre couldn't reach the server");
     await userEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(retrySession).toHaveBeenCalledTimes(2);
     expect(login).not.toHaveBeenCalled();

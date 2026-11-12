@@ -13,7 +13,7 @@ const ack = (assignee: string | null, text = ""): OutboundMessage => ({
   documents: [],
 });
 
-describe("MikeGC's acknowledgement to the requester", () => {
+describe("Spectre's acknowledgement to the requester", () => {
   it("thanks them and says who will pick the request up, without a link", () => {
     expect(plainMessageText(ack("Sam Lawyer"), { fromName: "Legal", signMember: true })).toBe(
       "Thanks, I've passed this to Legal. Sam Lawyer will pick it up.",

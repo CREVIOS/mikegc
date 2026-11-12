@@ -14,6 +14,7 @@
  * (accepting that insertion) before the new change is emitted.
  */
 
+import { bijoyToUnicode, isBijoyFontName } from "./bangla";
 import JSZip from "jszip";
 import { XMLParser, XMLBuilder } from "fast-xml-parser";
 
@@ -688,7 +689,19 @@ function maxTrackedId(doc: XNode[]): number {
  * `context_after` strings on, since it exactly mirrors the string the
  * anchor matcher operates against.
  */
-export async function extractDocxBodyText(bytes: Buffer): Promise<string> {
+export async function extractDocxBodyText(
+    bytes: Buffer,
+    options: {
+        /**
+         * Convert runs set in a legacy Bijoy font (SutonnyMJ, ...) to Unicode
+         * Bangla. Every other character is left exactly as the document
+         * has it, so a document with no Bijoy runs reads byte for byte as the
+         * edit matcher sees it. A Bijoy document cannot be edited by quoting
+         * its Unicode reading; docs/bangladesh.md says so.
+         */
+        readableBangla?: boolean;
+    } = {},
+): Promise<string> {
     const zip = await JSZip.loadAsync(bytes);
     const docXmlFile = getZipEntry(zip, "word/document.xml");
     if (!docXmlFile) return "";
@@ -697,6 +710,9 @@ export async function extractDocxBodyText(bytes: Buffer): Promise<string> {
     const tree = parser.parse(docXmlRaw) as XNode[];
     const bodyChildren = findBody(tree);
     if (!bodyChildren) return "";
+    const fonts = options.readableBangla
+        ? await loadDocxFontStyles(zip, parser)
+        : null;
 
     const lines: string[] = [];
     const collect = (nodes: XNode[]) => {
@@ -705,7 +721,11 @@ export async function extractDocxBodyText(bytes: Buffer): Promise<string> {
             if (!name) continue;
             if (name === "w:p") {
                 const flat = flattenParagraph(elChildren(n));
-                lines.push(flat.paraText);
+                lines.push(
+                    fonts
+                        ? readableParagraphText(n, flat, fonts)
+                        : flat.paraText,
+                );
             } else if (
                 name === "w:tbl" ||
                 name === "w:tr" ||
@@ -719,6 +739,129 @@ export async function extractDocxBodyText(bytes: Buffer): Promise<string> {
     };
     collect(bodyChildren);
     return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Legacy Bijoy Bangla in DOCX
+// ---------------------------------------------------------------------------
+
+interface DocxFontStyles {
+    /** styleId → the fonts its w:rPr names, and the style it is based on. */
+    styles: Map<string, { fonts: string[]; basedOn: string | null }>;
+    defaultParagraphStyle: string | null;
+    docDefaultFonts: string[];
+}
+
+function childEl(n: XNode | null | undefined, name: string): XNode | null {
+    return n ? (elChildren(n).find((c) => elName(c) === name) ?? null) : null;
+}
+
+/** The Latin-range fonts a w:rPr names (where Bijoy glyphs are drawn). */
+function rPrFonts(rPr: XNode | null): string[] {
+    const rFonts = childEl(rPr, "w:rFonts");
+    if (!rFonts) return [];
+    const a = elAttrs(rFonts);
+    return [a["@_w:ascii"], a["@_w:hAnsi"]].filter(
+        (f): f is string => typeof f === "string" && f.length > 0,
+    );
+}
+
+async function loadDocxFontStyles(
+    zip: JSZip,
+    parser: ReturnType<typeof createParser>,
+): Promise<DocxFontStyles> {
+    const result: DocxFontStyles = {
+        styles: new Map(),
+        defaultParagraphStyle: null,
+        docDefaultFonts: [],
+    };
+    const file = getZipEntry(zip, "word/styles.xml");
+    if (!file) return result;
+    const tree = parser.parse(await file.async("string")) as XNode[];
+    const root = tree.find((n) => elName(n) === "w:styles");
+    for (const n of root ? elChildren(root) : []) {
+        const name = elName(n);
+        if (name === "w:docDefaults") {
+            const rPr = childEl(childEl(n, "w:rPrDefault"), "w:rPr");
+            result.docDefaultFonts = rPrFonts(rPr);
+        } else if (name === "w:style") {
+            const a = elAttrs(n);
+            const id = a["@_w:styleId"];
+            if (!id) continue;
+            const basedOn = elAttrs(childEl(n, "w:basedOn"))["@_w:val"] ?? null;
+            result.styles.set(id, {
+                fonts: rPrFonts(childEl(n, "w:rPr")),
+                basedOn,
+            });
+            if (a["@_w:type"] === "paragraph" && a["@_w:default"] === "1") {
+                result.defaultParagraphStyle = id;
+            }
+        }
+    }
+    return result;
+}
+
+/** The fonts a style sets, following w:basedOn until one sets any. */
+function styleFonts(fonts: DocxFontStyles, styleId: string | null): string[] {
+    const seen = new Set<string>();
+    let id = styleId;
+    while (id && !seen.has(id)) {
+        seen.add(id);
+        const style = fonts.styles.get(id);
+        if (!style) break;
+        if (style.fonts.length) return style.fonts;
+        id = style.basedOn;
+    }
+    return [];
+}
+
+/** Whether a run is drawn in a Bijoy font, by Word's order of precedence. */
+function runIsBijoy(
+    rPr: XNode | null,
+    paragraphStyle: string | null,
+    fonts: DocxFontStyles,
+): boolean {
+    const direct = rPrFonts(rPr);
+    const charStyle = elAttrs(childEl(rPr, "w:rStyle"))["@_w:val"] ?? null;
+    const resolved = direct.length
+        ? direct
+        : styleFonts(fonts, charStyle).length
+          ? styleFonts(fonts, charStyle)
+          : styleFonts(fonts, paragraphStyle ?? fonts.defaultParagraphStyle)
+                .length
+            ? styleFonts(fonts, paragraphStyle ?? fonts.defaultParagraphStyle)
+            : fonts.docDefaultFonts;
+    return resolved.some((font) => isBijoyFontName(font));
+}
+
+/**
+ * A paragraph's text with its Bijoy runs converted. Consecutive Bijoy runs
+ * are converted together, since a vowel sign and its consonant can sit in
+ * different runs.
+ */
+function readableParagraphText(
+    paragraph: XNode,
+    flat: Flattened,
+    fonts: DocxFontStyles,
+): string {
+    const pStyle =
+        elAttrs(childEl(childEl(paragraph, "w:pPr"), "w:pStyle"))["@_w:val"] ??
+        null;
+    let text = "";
+    let pending = "";
+    for (const run of flat.runs) {
+        const runText = run.textNodes.map((t) => t.text).join("");
+        if (!runText) continue;
+        if (runIsBijoy(run.rPr, pStyle, fonts)) {
+            pending += runText;
+        } else {
+            if (pending) text += bijoyToUnicode(pending);
+            pending = "";
+            text += runText;
+        }
+    }
+    if (pending) text += bijoyToUnicode(pending);
+    return text;
 }
 
 /**
@@ -761,7 +904,7 @@ export async function applyTrackedEdits(
     edits: EditInput[],
     opts?: { author?: string },
 ): Promise<ApplyTrackedEditsResult> {
-    const author = opts?.author ?? "Mike";
+    const author = opts?.author ?? "Spectre";
     const now = new Date().toISOString();
 
     const zip = await JSZip.loadAsync(bytes);

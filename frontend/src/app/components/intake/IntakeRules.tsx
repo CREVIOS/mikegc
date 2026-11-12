@@ -253,8 +253,8 @@ function RulesForbidden() {
 }
 
 /**
- * The rules that decide, for requests MikeGC records from email and Slack,
- * who each goes to and whether MikeGC preprocesses it: answers the request
+ * The rules that decide, for requests Spectre records from email and Slack,
+ * who each goes to and whether Spectre preprocesses it: answers the request
  * and marks up its Word documents, following a workflow or playbook if the
  * rule names one. Rules are tried from the top. Laid out as other tables:
  * search and New rule in the header, tabs by AI preprocessing in the toolbar,
@@ -661,7 +661,7 @@ export function IntakeRules({ orgId }: { orgId: string }) {
           <TableEmptyState>
             <EmptyState
               title="No rules yet"
-              description="Requests MikeGC records are left unassigned. Add a rule to assign them, and to have MikeGC preprocess them."
+              description="Requests Spectre records are left unassigned. Add a rule to assign them, and to have Spectre preprocess them."
               action={
                 <PillButtonUI tone="black" size="sm" onClick={add}>
                   New rule
@@ -771,7 +771,7 @@ export function IntakeRules({ orgId }: { orgId: string }) {
             ? "Delete this rule?"
             : `Delete ${deleting?.length ?? 0} rules?`
         }
-        message="Requests MikeGC records from now on won't be assigned or preprocessed by them."
+        message="Requests Spectre records from now on won't be assigned or preprocessed by them."
         confirmLabel="Delete"
         cancelLabel="Keep"
         onCancel={() => setDeleting(null)}
@@ -1175,7 +1175,7 @@ function AssigneeField({
   );
 }
 
-/** Yes or No: whether MikeGC preprocesses what the rule assigns. */
+/** Yes or No: whether Spectre preprocesses what the rule assigns. */
 function PreprocessField({
   number,
   value,
@@ -1246,7 +1246,7 @@ function preprocessLabel(value: IntakePreprocessRule | null, choices: Choices) {
 }
 
 /**
- * The workflow or playbook preprocessing follows, or none, when MikeGC
+ * The workflow or playbook preprocessing follows, or none, when Spectre
  * answers in general terms. Only a rule that preprocesses has one to choose.
  */
 function PreprocessWithField({

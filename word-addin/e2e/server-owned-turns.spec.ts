@@ -421,7 +421,7 @@ test("a local turn remains resumable after transport retries are exhausted", asy
   // The bubble shows the classified sentence, never the thrown transport
   // text ("Chat stream ended before the completion marker.").
   await expect(
-    page.getByText("Mike couldn't finish that answer. Try again.").first(),
+    page.getByText("Spectre couldn't finish that answer. Try again.").first(),
   ).toBeVisible();
   await expect(
     page.getByText(/Chat stream ended before the completion marker/),

@@ -49,6 +49,37 @@ export const SETTINGS_MODELS: readonly ModelOption[] = [
 
 export const DEFAULT_MODEL_ID = "";
 
+/**
+ * The chat models a composer starts on when neither the chat nor the profile
+ * has one, most preferred first: Spectre runs on OpenAI by default and falls
+ * through to whichever other direct provider the user holds a key for. Kept
+ * in sync with backend/src/lib/llm/models.ts DEFAULT_CHAT_MODEL_PREFERENCE
+ * (frontend/src/wordAddin/catalogParity.test.ts pins the two).
+ */
+export const DEFAULT_CHAT_MODEL_PREFERENCE: readonly string[] = [
+  "gpt-6.1-sol",
+  "claude-sonnet-5-5",
+  "gemini-3.8-flash",
+  "mistral-medium-3-5",
+];
+
+/**
+ * The model a composer starts on when nothing was saved: the deployment's
+ * configured default when it is usable, else the first preferred model the
+ * user can run. `isUsable` decides availability, so callers that do not yet
+ * know the user's keys must not call this (it would pick a model the user
+ * cannot run). Returns "" when nothing is usable.
+ */
+export function defaultChatModel(
+  isUsable: (modelId: string) => boolean,
+  deploymentDefault?: string | null,
+): string {
+  const candidates = deploymentDefault
+    ? [canonicalModelId(deploymentDefault), ...DEFAULT_CHAT_MODEL_PREFERENCE]
+    : DEFAULT_CHAT_MODEL_PREFERENCE;
+  return candidates.find((id) => isUsable(id)) ?? "";
+}
+
 export const ALLOWED_MODEL_IDS: ReadonlySet<string> = new Set(
   MODELS.map((model) => model.id),
 );

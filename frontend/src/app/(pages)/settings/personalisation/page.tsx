@@ -141,7 +141,7 @@ function PersonalisationForm({
       <section className="space-y-3">
         <SettingsHeading>Your background</SettingsHeading>
         <SettingsDescription>
-          Tell Mike about your role and practice so responses can be tailored to
+          Tell Spectre about your role and practice so responses can be tailored to
           your professional context.
         </SettingsDescription>
         <GlassCardUI>

@@ -25,7 +25,7 @@ describe("composeIntakeBrief", () => {
         automated: true,
         purpose: "preprocessing",
         author_id: null,
-        author_name: "MikeGC",
+        author_name: "Spectre",
         body: "AI preprocessing: two clauses to check.",
         created_at: "2026-11-03T10:01:00Z",
       },
@@ -49,7 +49,7 @@ describe("composeIntakeBrief", () => {
     expect(brief).toContain("Requester: Jane Business <jane@acme.test> (Procurement)");
     expect(brief).toContain("Reviewer: Lawyer A");
     expect(brief).toContain("Please review the attached NDA.");
-    expect(brief.indexOf("MikeGC, preprocessing")).toBeLessThan(
+    expect(brief.indexOf("Spectre, preprocessing")).toBeLessThan(
       brief.indexOf("Jane Business, reply from the requester in slack"),
     );
     expect(brief).toContain("- NDA.docx (revised since it arrived)");

@@ -32,7 +32,7 @@ export function SettingsPage({
     } catch (reason) {
       setError(
         userMessage(reason, {
-          fallback: "Mike couldn't save that setting. Try again.",
+          fallback: "Spectre couldn't save that setting. Try again.",
         }),
       );
     } finally {
@@ -114,7 +114,7 @@ export function SettingsPage({
                 setError(
                   userMessage(reason, {
                     fallback:
-                      "Mike couldn't delete the device-only chats. Try again.",
+                      "Spectre couldn't delete the device-only chats. Try again.",
                   }),
                 ),
               )

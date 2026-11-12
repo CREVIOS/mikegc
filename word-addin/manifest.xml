@@ -7,9 +7,9 @@
 
   <Id>a1b2c3d4-e5f6-7890-abcd-ef1234567890</Id>
   <Version>1.0.0.1</Version>
-  <ProviderName>MikeGC</ProviderName>
+  <ProviderName>Spectre</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
-  <DisplayName DefaultValue="MikeGC" />
+  <DisplayName DefaultValue="Spectre" />
   <Description DefaultValue="AI-powered legal assistant for Word" />
 
   <IconUrl DefaultValue="https://localhost:3200/assets/icon-32.png" />
@@ -87,11 +87,11 @@
         <bt:Url id="Taskpane.Url" DefaultValue="https://localhost:3200/taskpane.html" />
       </bt:Urls>
       <bt:ShortStrings>
-        <bt:String id="GroupLabel" DefaultValue="MikeGC Legal AI" />
-        <bt:String id="TaskpaneButton.Label" DefaultValue="MikeGC" />
+        <bt:String id="GroupLabel" DefaultValue="Spectre Legal AI" />
+        <bt:String id="TaskpaneButton.Label" DefaultValue="Spectre" />
       </bt:ShortStrings>
       <bt:LongStrings>
-        <bt:String id="TaskpaneButton.Tooltip" DefaultValue="Open the MikeGC AI legal assistant pane" />
+        <bt:String id="TaskpaneButton.Tooltip" DefaultValue="Open the Spectre AI legal assistant pane" />
       </bt:LongStrings>
     </Resources>
   </VersionOverrides>

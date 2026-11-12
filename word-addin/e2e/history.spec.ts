@@ -164,7 +164,7 @@ test("history reports a failed request and retries it", async ({
   const dropdown = page.getByRole("menu");
   // The 503 body is not echoed; the classified outage sentence is shown.
   await expect(dropdown.getByRole("alert")).toContainText(
-    "Mike is temporarily unavailable",
+    "Spectre is temporarily unavailable",
   );
   await dropdown.getByRole("button", { name: "Retry" }).click();
   await expect(dropdown.getByRole("menuitem", { name: /Chat 1/ })).toBeVisible();

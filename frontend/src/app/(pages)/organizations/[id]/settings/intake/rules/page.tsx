@@ -5,7 +5,7 @@ import { useOrganizationSettings } from "@/app/components/organizations/Organiza
 import { isOrgAdmin } from "@/app/lib/permissions";
 
 /**
- * Who intake requests go to and how MikeGC preprocesses them: a table page
+ * Who intake requests go to and how Spectre preprocesses them: a table page
  * of its own, outside the sectioned frame, for owners and admins alone.
  */
 export default function OrganizationIntakeRulesPage() {

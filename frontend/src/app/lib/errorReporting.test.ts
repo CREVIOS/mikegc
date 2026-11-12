@@ -215,7 +215,7 @@ describe("setReportingUser", () => {
 });
 
 describe("browserSentryOptions", () => {
-    it("is ON BY DEFAULT with the Mike project DSN and never turns on PII or replay", () => {
+    it("is ON BY DEFAULT with the Spectre project DSN and never turns on PII or replay", () => {
         const options = browserSentryOptions({ nodeEnv: "test" });
         expect(options.enabled).toBe(true);
         expect(options.dsn).toBe(MIKE_SENTRY_DSN.frontend);

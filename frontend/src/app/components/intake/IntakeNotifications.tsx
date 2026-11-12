@@ -83,7 +83,7 @@ function IntakeNotificationMessage({
 /**
  * Toasts for the signed-in member about the intake requests assigned to
  * them: "New Intake Request" when one becomes theirs, "Intake request
- * update" when someone else, MikeGC or the requester changes one. While the
+ * update" when someone else, Spectre or the requester changes one. While the
  * tab is visible it checks every 30 seconds, and at once when the tab comes
  * back. A check that fails says nothing and tries again later. Mount once,
  * inside the workspace provider.

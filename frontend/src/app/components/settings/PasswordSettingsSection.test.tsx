@@ -119,7 +119,7 @@ describe("PasswordSettingsSection", () => {
         return dialog;
     }
 
-    it("uses Mike's password policy rather than the provider's wording", async () => {
+    it("uses Spectre's password policy rather than the provider's wording", async () => {
         state.setPassword.mockRejectedValue(
             Object.assign(new Error("Password should be at least 6 characters"), {
                 status: 422,
@@ -163,7 +163,7 @@ describe("PasswordSettingsSection", () => {
         await waitFor(() =>
             expect(
                 screen.getByText(
-                    "Mike couldn't reach the server. Check your connection and try again.",
+                    "Spectre couldn't reach the server. Check your connection and try again.",
                 ),
             ).toBeVisible(),
         );

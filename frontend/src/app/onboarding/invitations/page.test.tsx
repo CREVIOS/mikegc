@@ -23,7 +23,7 @@ vi.mock("@/app/lib/mikeApi", async (original) => ({
     listMyOrgInvitations: mocks.list,
     acceptOrgInvitation: mocks.accept,
 }));
-vi.mock("@/app/components/site-logo", () => ({ SiteLogo: () => <div>Mike</div> }));
+vi.mock("@/app/components/site-logo", () => ({ SiteLogo: () => <div>Spectre</div> }));
 
 const invitation = { id: "invite", org_name: "Example LLP", role: "member" };
 

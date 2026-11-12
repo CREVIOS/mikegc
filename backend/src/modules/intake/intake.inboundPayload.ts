@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /**
- * What MikeGC keeps of a received message until it is handled, and the
+ * What Spectre keeps of a received message until it is handled, and the
  * progress a retried job resumes from. The row's payload is cleared once the
  * message is done, failed or ignored; the request then holds its content.
  */
@@ -58,12 +58,12 @@ const preprocessPlan = z.object({
 export const agentPlan = z.object({
   /** Whether a model shaped the plan, or the safe defaults did. */
   agent: z.boolean(),
-  /** MikeGC's answer in a thread with no request; nothing is recorded. */
+  /** Spectre's answer in a thread with no request; nothing is recorded. */
   reply: z.string().nullable().default(null),
-  /** MikeGC's questions on the request, so its rule can be chosen. */
+  /** Spectre's questions on the request, so its rule can be chosen. */
   questions: z.array(z.string()).default([]),
   /**
-   * MikeGC's answer to the requester in a recorded request's thread: what it
+   * Spectre's answer to the requester in a recorded request's thread: what it
    * took from their message, or a reply to it. The request doesn't wait.
    */
   answer: z.string().nullable().default(null),
@@ -93,7 +93,7 @@ export const agentPlan = z.object({
     .default(null),
   /**
    * Details to change on the request a reply is about, each with the words
-   * MikeGC's note uses for it, by field.
+   * Spectre's note uses for it, by field.
    */
   update: z
     .object({
@@ -124,15 +124,15 @@ const progress = {
    * the request is deleted, and this tells that apart from never recorded.
    */
   recorded: z.boolean().optional(),
-  /** Set once MikeGC answered in the chat instead of recording a request. */
+  /** Set once Spectre answered in the chat instead of recording a request. */
   conversed: z.boolean().optional(),
   /** Set once that answer is counted against the thread's rounds. */
   remembered: z.boolean().optional(),
-  /** Set once the Slack thread had MikeGC's answer, before the outbox. */
+  /** Set once the Slack thread had Spectre's answer, before the outbox. */
   replied: z.boolean().optional(),
   /** Set once the request is linked to its thread. */
   linked: z.boolean().optional(),
-  /** Set once MikeGC's acknowledgement (or first questions) is in the outbox. */
+  /** Set once Spectre's acknowledgement (or first questions) is in the outbox. */
   acknowledged: z.boolean().optional(),
   /** Set once AI preprocessing is queued, so it is queued once. */
   preprocessQueued: z.boolean().optional(),
@@ -223,7 +223,7 @@ const teamsThread = {
   channel_name: z.string().nullable().default(null),
 };
 
-/** A Teams message that mentions MikeGC in a thread with no request. */
+/** A Teams message that mentions Spectre in a thread with no request. */
 export const teamsInboundPayload = z.object({
   kind: z.literal("teams"),
   ...teamsThread,
@@ -255,7 +255,7 @@ const replyProgress = {
   recorded: z.boolean().optional(),
   /**
    * The agent's plan for the reply, with the request as the agent read it:
-   * whether its rule was undecided, and MikeGC's rounds of questions so far.
+   * whether its rule was undecided, and Spectre's rounds of questions so far.
    */
   agent: agentPlan.optional(),
   agentStage: z.enum(["rule"]).nullable().optional(),
@@ -266,7 +266,7 @@ const replyProgress = {
   ruleSettled: z.boolean().optional(),
   /** Set once the chosen rule's preprocessing is queued. */
   preprocessQueued: z.boolean().optional(),
-  /** Set once MikeGC's answer is in the request's thread. */
+  /** Set once Spectre's answer is in the request's thread. */
   answered: z.boolean().optional(),
 };
 

@@ -5,7 +5,7 @@ Feature proposal: [#560](https://github.com/open-legal-products/mike/issues/560)
 ## Problem
 
 Library → Templates accepts uploads, but users must find and download a starting
-document outside Mike before they can use it. The public contract collection
+document outside Spectre before they can use it. The public contract collection
 downloaded on 2026-09-30 contains reusable agreements and supporting documents
 from General Legal, Common Paper, and Bonterms.
 
@@ -101,6 +101,6 @@ These files are templates, not legal advice. Check the publisher's current page
 and have qualified counsel review a template before using it for a transaction.
 
 All bundled publisher files are unmodified. Their licenses are separate from
-Mike's software license, and attribution and other notices remain in the files.
+Spectre's software license, and attribution and other notices remain in the files.
 The snapshot was downloaded on 2026-09-30; adding a new publisher requires updating
 the generator's publisher metadata and verifying the supplied files' notices.

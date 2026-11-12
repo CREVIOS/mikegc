@@ -1,6 +1,6 @@
 # Declaring OpenAI-compatible models
 
-Mike ships with a static catalog of hosted models (Anthropic, Google, OpenAI)
+Spectre ships with a static catalog of hosted models (Anthropic, Google, OpenAI)
 and accepts router-prefixed ids for OpenRouter, the Vercel AI Gateway and
 OpenCode Go. A deployment that also runs a self-hosted or third-party
 OpenAI-compatible endpoint declares it with `MIKE_MODEL_CONFIG_JSON`, without
@@ -36,7 +36,7 @@ array:
 
 | Field | Required | Meaning |
 | --- | --- | --- |
-| `id` | yes | The id Mike uses everywhere: model pickers, stored preferences, committee members. |
+| `id` | yes | The id Spectre uses everywhere: model pickers, stored preferences, committee members. |
 | `provider` | yes | Must be `openai-compatible`. Hosted providers are already covered by the static catalog and the router prefixes. |
 | `location` | yes | `local` or `cloud`. Also the default for tool-call tolerance (below). |
 | `label` | no | Display name. Defaults to the id. |
@@ -113,7 +113,7 @@ be recovered.
 
 ## Reasoning replay
 
-Mike sends earlier turns to the model as text only by default. Some
+Spectre sends earlier turns to the model as text only by default. Some
 reasoning models are served with a chat template that expects their own
 earlier thinking back — for example Qwen3.6 on `llama-server` with
 `--chat-template-kwargs '{"preserve_thinking":true}'`. Without it, the model
@@ -133,11 +133,11 @@ Set `replayReasoning: true` on such a model:
 }
 ```
 
-For each earlier assistant message, Mike looks up the stored turn with the same
+For each earlier assistant message, Spectre looks up the stored turn with the same
 visible text and sends that turn's reasoning as `reasoning_content`. Messages
 that match no stored turn, such as an edited history, are sent as text only. So
 is a reply whose text is stored more times than it appears in the history
-sent, because Mike cannot tell which of those turns it is.
+sent, because Spectre cannot tell which of those turns it is.
 Reasoning is never taken from the request body. Models without the flag,
 including every hosted provider, never receive stored reasoning.
 

@@ -83,7 +83,7 @@ describe("network failures", () => {
         });
         expect(error).toBeInstanceOf(NetworkUnreachableError);
         expect(error.message).toBe(
-            "Mike couldn't reach the server at http://localhost:3001. Check your connection and that the server is running, then try again.",
+            "Spectre couldn't reach the server at http://localhost:3001. Check your connection and that the server is running, then try again.",
         );
         const described = describeError(error, { action: "sign in" });
         expect(described.kind).toBe("network");

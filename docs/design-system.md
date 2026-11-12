@@ -1,6 +1,6 @@
 # Design system
 
-Mike uses Tailwind v4 with shadcn-derived `new-york` primitives for selected
+Spectre uses Tailwind v4 with shadcn-derived `new-york` primitives for selected
 controls, alongside its own liquid-glass component system. Lucide supplies the
 icon set. This page documents what already exists so contributors can reuse it
 instead of re-deriving it. It is a description of the current system, not a
@@ -60,7 +60,7 @@ Word add-in's `word-addin/src/taskpane/styles.css` both import that file, so a
 token change reaches both targets. Do not redeclare one of these tokens in either
 entry stylesheet; `DesignTokensUI.test.ts` fails if you do.
 
-### App surfaces (Mike's own)
+### App surfaces (Spectre's own)
 
 These back the "liquid glass" chrome and are the ones most feature code needs.
 
@@ -106,7 +106,7 @@ the meaning ("this is the destructive action") rather than a specific color.
 
 ### Blue is overridden
 
-`@theme inline` redefines part of Tailwind's blue scale to Mike's azure:
+`@theme inline` redefines part of Tailwind's blue scale to Spectre's azure:
 
 ```css
 --color-blue:     rgb(0, 136, 255);
@@ -117,7 +117,7 @@ the meaning ("this is the destructive action") rather than a specific color.
 --color-blue-700: rgb(0, 120, 230);
 ```
 
-`bg-blue-600` is therefore Mike azure, not Tailwind blue. `blue-300`, `-400`,
+`bg-blue-600` is therefore Spectre azure, not Tailwind blue. `blue-300`, `-400`,
 `-500`, `-800` and `-900` are *not* overridden, so the scale is discontinuous —
 stay on the overridden steps for brand blue.
 

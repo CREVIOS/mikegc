@@ -177,7 +177,7 @@ export function NewWorkflowModal({
     } catch (reason) {
       setError(
         userMessage(reason, {
-          fallback: "Mike couldn't create that workflow. Try again.",
+          fallback: "Spectre couldn't create that workflow. Try again.",
         })
       );
     } finally {

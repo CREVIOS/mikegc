@@ -294,14 +294,14 @@ test("keeps review controls when the bookmark holds an unrelated sibling revisio
 
   await reloadAndOpenPersistedChat(addin, page);
 
-  // Word ranges report sibling revisions from the same passage; Mike's own
+  // Word ranges report sibling revisions from the same passage; Spectre's own
   // Added/Deleted pair is still unambiguous, so the card stays actionable.
   const view = page.getByRole("button", { name: "View", exact: true });
   await expect(view).toBeVisible();
   const accept = page.getByRole("button", { name: "Accept", exact: true });
   await expect(accept).toBeVisible();
 
-  // Accepting resolves exactly Mike's pair — never the injected revision.
+  // Accepting resolves exactly Spectre's pair — never the injected revision.
   await accept.click();
   await expect(page.getByText("Accepted.", { exact: true })).toBeVisible();
   const calls = await addin.wordCalls();
@@ -319,7 +319,7 @@ test("stays View-only when the bookmark's revisions no longer identify the edit"
   await mockPersistedChat(addin);
   const bookmark = await applyPersistedEdit(addin, page);
 
-  // A second identical Added revision makes Mike's insertion ambiguous, so
+  // A second identical Added revision makes Spectre's insertion ambiguous, so
   // no revision may be resolved on the user's behalf.
   expect(
     await addin.injectRevisionIntoBookmark(bookmark.name, "Added", REPLACEMENT),
@@ -343,7 +343,7 @@ test("stays View-only when the bookmark's revisions no longer identify the edit"
   expect((await addin.wordDocument()).bookmarks).toHaveLength(1);
 });
 
-test("View never deletes the bookmark of an edit resolved outside Mike", async ({
+test("View never deletes the bookmark of an edit resolved outside Spectre", async ({
   addin,
   page,
 }) => {

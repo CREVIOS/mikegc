@@ -39,7 +39,7 @@ export function intakeNotificationTitle(
 
 function actorOf(notification: IntakeNotification) {
   if (notification.actor_name) return notification.actor_name;
-  if (notification.automated) return "MikeGC";
+  if (notification.automated) return "Spectre";
   return notification.change === "reply" ? "The requester" : "A former member";
 }
 
@@ -57,7 +57,7 @@ function changeLine(notification: IntakeNotification, actor: string) {
   switch (notification.change) {
     case "submitted":
       return automated
-        ? "MikeGC recorded it and assigned it to you"
+        ? "Spectre recorded it and assigned it to you"
         : `${actor} created it and assigned it to you`;
     case "assign":
       return `${actor} assigned it to you`;
@@ -68,10 +68,10 @@ function changeLine(notification: IntakeNotification, actor: string) {
     case "note":
       return `${actor} commented`;
     case "preprocessing":
-      return "MikeGC preprocessed it";
+      return "Spectre preprocessed it";
     case "wait":
       return automated
-        ? "MikeGC asked the requester for details"
+        ? "Spectre asked the requester for details"
         : `${actor} marked it waiting on the requester`;
     case "resume":
       return automated ? "It's back in progress" : `${actor} resumed it`;
@@ -82,7 +82,7 @@ function changeLine(notification: IntakeNotification, actor: string) {
     case "reopen":
       return `${actor} reopened it`;
     case "stop_asking":
-      return `${actor} stopped MikeGC asking the requester`;
+      return `${actor} stopped Spectre asking the requester`;
     case "edited":
       return `${actor} edited the details`;
     case "document_added":

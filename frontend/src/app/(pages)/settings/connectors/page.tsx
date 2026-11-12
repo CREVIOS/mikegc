@@ -86,7 +86,7 @@ const CONNECTOR_ACTION_LABELS = {
 function connectorMessage(error: unknown, action: string): string {
   return describeError(error, {
     action,
-    fallback: `Mike couldn't ${action}. Try again.`,
+    fallback: `Spectre couldn't ${action}. Try again.`,
   }).message;
 }
 

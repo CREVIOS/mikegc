@@ -8,7 +8,7 @@ export type WebPage = {
     text: string;
 };
 
-/** The search service Mike uses for a turn, with the key it runs on. */
+/** The search service Spectre uses for a turn, with the key it runs on. */
 export type WebSearchAccount = { backend: WebSearchBackend; apiKey: string };
 
 export type SearchApiDeps = {
@@ -28,6 +28,6 @@ export type SearchService = {
         apiKey: string,
         deps: SearchApiDeps,
     ): Promise<WebSearchResult[]>;
-    /** Reads a page on the search service's servers instead of Mike's. */
+    /** Reads a page on the search service's servers instead of Spectre's. */
     read?(url: string, apiKey: string, deps: SearchApiDeps): Promise<WebPage>;
 };

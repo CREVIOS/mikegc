@@ -55,7 +55,7 @@ describe("groupIntakeNotifications", () => {
       row(2, { change: "resume", actor_name: null, automated: true, created_at: at(5) }),
     ]);
     expect(reply).toMatchObject({ change: "reply", actor_name: "Jane Business", channel: "slack", more: 0 });
-    // An edit that stopped MikeGC asking.
+    // An edit that stopped Spectre asking.
     const [edit] = groupIntakeNotifications([
       row(1),
       row(2, { change: "edited", created_at: at(9) }),

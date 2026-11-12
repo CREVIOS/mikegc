@@ -9,7 +9,7 @@ import {
   stableId,
 } from "../intake.clarify";
 
-describe("MikeGC's questions to the requester", () => {
+describe("Spectre's questions to the requester", () => {
   it("keeps up to three plain, one-line questions", () => {
     expect(
       sanitizeQuestions([
@@ -50,7 +50,7 @@ describe("MikeGC's questions to the requester", () => {
     expect(sanitizeQuestions("not a list")).toEqual([]);
     expect(sanitizeQuestions(null)).toEqual([]);
   });
-  it("frames the questions in MikeGC's own words, by stage and count", () => {
+  it("frames the questions in Spectre's own words, by stage and count", () => {
     expect(questionBody(["Is Acme a customer?"], "rule")).toBe(
       "One quick question so it gets to the right person:\nIs Acme a customer?",
     );
@@ -79,7 +79,7 @@ describe("the readiness check's prompt", () => {
     const { system, user } = buildReadinessPrompt({
       model,
       request: { subject: "Review NDA", description: "Please review." },
-      thread: [{ author: "MikeGC", at: "2 Nov 2026, 09:00 UTC", text: "Which entity signs?" }],
+      thread: [{ author: "Spectre", at: "2 Nov 2026, 09:00 UTC", text: "Which entity signs?" }],
       documents: [{ name: "nda.docx", text: "a".repeat(25_000) }],
       unread: ["scan.pdf"],
       condition: "The request is about an NDA",
@@ -106,7 +106,7 @@ describe("the readiness check's prompt", () => {
     // The first 20,000 characters of each document.
     expect(user).toContain("a".repeat(20_000) + "\n[Document shortened.]");
     expect(user).not.toContain("a".repeat(20_001));
-    expect(user).toContain("--- Thread ---\nMikeGC, 2 Nov 2026, 09:00 UTC:\nWhich entity signs?");
+    expect(user).toContain("--- Thread ---\nSpectre, 2 Nov 2026, 09:00 UTC:\nWhich entity signs?");
     expect(user).toContain("Couldn't read: scan.pdf");
   });
   it("reads a workflow's instructions", () => {

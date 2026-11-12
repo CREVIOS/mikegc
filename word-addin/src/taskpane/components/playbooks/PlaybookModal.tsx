@@ -50,7 +50,7 @@ export function PlaybookModal({
         setPlaybooks([]);
         setError(
           userMessage(reason, {
-            fallback: "Mike couldn't load your playbooks. Try again.",
+            fallback: "Spectre couldn't load your playbooks. Try again.",
           }),
         );
       })

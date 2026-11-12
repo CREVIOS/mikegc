@@ -6,7 +6,7 @@ import type {
   IntakeSource,
 } from "@mike/contracts";
 
-/** The channels MikeGC talks to requesters in, as Legal names them. */
+/** The channels Spectre talks to requesters in, as Legal names them. */
 export const INTAKE_CHANNEL_LABELS: Record<IntakeChannel, string> = {
   slack: "Slack",
   outlook: "Outlook",
@@ -98,7 +98,7 @@ export function intakeLeftOutDocuments(
 export function intakeDeliveryStatus(delivery: IntakeDelivery): string {
   if (delivery.status === "sent") return "Sent";
   if (delivery.status === "failed")
-    return `Couldn't send: ${delivery.error ?? "MikeGC couldn't send this message."}`;
+    return `Couldn't send: ${delivery.error ?? "Spectre couldn't send this message."}`;
   return "Sending";
 }
 

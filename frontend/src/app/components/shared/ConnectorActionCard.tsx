@@ -3,7 +3,7 @@
 import type { ConnectorApprovalItem } from "@mike/contracts";
 import { ChevronRight } from "lucide-react";
 
-// Readable labels for the argument names Mike's built-in connectors use.
+// Readable labels for the argument names Spectre's built-in connectors use.
 // Anything else (for example an MCP server's own parameters) shows its key.
 const labels: Record<string, string> = {
   to: "To",

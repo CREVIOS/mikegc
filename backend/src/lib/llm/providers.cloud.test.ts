@@ -149,7 +149,7 @@ describe("Amazon Bedrock adapter", () => {
     vi.stubGlobal("fetch", fetchMock);
     await streamWithProvider({
       model,
-      systemPrompt: "You are Mike.",
+      systemPrompt: "You are Spectre.",
       messages: [{ role: "user", content: "Draft the clause." }],
       reasoning,
       apiKeys: {

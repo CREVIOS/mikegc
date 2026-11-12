@@ -258,7 +258,7 @@ export async function slackThreadMessages(
   return messages.sort((a, b) => compareSlackTs(a.ts, b.ts));
 }
 
-/** The metadata event type MikeGC marks its intake messages with. */
+/** The metadata event type Spectre marks its intake messages with. */
 export const SLACK_METADATA_EVENT = "mikegc_intake";
 
 /**
@@ -297,7 +297,7 @@ export async function slackPostMessage(
 const SLACK_TS_PATTERN = /^\d{1,12}\.\d{1,8}$/;
 
 /**
- * The ts of MikeGC's message in a thread carrying `outboundId` in its
+ * The ts of Spectre's message in a thread carrying `outboundId` in its
  * metadata, posted after `oldest`; null when none landed. A thread too busy
  * to search to the end throws "search_incomplete": whether it landed is
  * unknown, and posting again could repeat it.
@@ -509,7 +509,7 @@ export function mentionedUsers(value: string): string[] {
 /**
  * Slack's markup as plain text: `<@U1>` becomes the person's name,
  * `<url|label>` becomes "label (url)", and the escaped `&`, `<` and `>` are
- * restored. Mentions of MikeGC itself are dropped.
+ * restored. Mentions of Spectre itself are dropped.
  */
 export function slackTextToPlain(
   value: string,
@@ -565,7 +565,7 @@ export type SlackAddress = {
 function slackAddress(link: ChannelLink): SlackAddress {
   const a = link.address as Partial<SlackAddress>;
   if (typeof a.channel !== "string" || typeof a.thread_ts !== "string")
-    throw new ChannelDeliveryError("MikeGC lost track of this request's Slack thread.", true);
+    throw new ChannelDeliveryError("Spectre lost track of this request's Slack thread.", true);
   return a as SlackAddress;
 }
 
@@ -575,14 +575,14 @@ export function slackDeliveryError(error: unknown, channelName: string | null): 
   const code = error.code;
   if (SLACK_TOKEN_ERRORS.has(code))
     return new ChannelDeliveryError(
-      "Slack rejected MikeGC's bot token. An admin can save a new one in Intake settings.",
+      "Slack rejected Spectre's bot token. An admin can save a new one in Intake settings.",
       true,
     );
   if (code === "not_in_channel" || code === "channel_not_found" || code === "is_archived")
     return new ChannelDeliveryError(
       channelName
-        ? `Couldn't send: MikeGC was removed from #${channelName}.`
-        : "Couldn't send: MikeGC isn't in that Slack channel. Invite @MikeGC to it.",
+        ? `Couldn't send: Spectre was removed from #${channelName}.`
+        : "Couldn't send: Spectre isn't in that Slack channel. Invite @Spectre to it.",
       true,
     );
   if (code === "thread_not_found" || code === "message_not_found")
@@ -594,12 +594,12 @@ export function slackDeliveryError(error: unknown, channelName: string | null): 
     );
   if (code === "search_incomplete")
     return new ChannelDeliveryError(
-      "MikeGC couldn't tell whether this reached the Slack thread. Check the thread, and copy the text if it isn't there.",
+      "Spectre couldn't tell whether this reached the Slack thread. Check the thread, and copy the text if it isn't there.",
       true,
     );
   if (code === "restricted_action" || code === "msg_too_long" || code === "invalid_blocks")
     return new ChannelDeliveryError("Slack wouldn't accept this message.", true);
-  return new ChannelDeliveryError("MikeGC couldn't reach Slack.", false);
+  return new ChannelDeliveryError("Spectre couldn't reach Slack.", false);
 }
 
 /** The message as Slack text, escaped, with a member's name where Slack can't set it. */
@@ -630,7 +630,7 @@ function slackTsBefore(iso: string | null): string | undefined {
 /**
  * The Slack adapter. A member's question and the resolution are posted
  * under the member's name with chat:write.customize (Slack still shows its
- * APP badge); MikeGC's own messages keep its name. Documents follow the text
+ * APP badge); Spectre's own messages keep its name. Documents follow the text
  * in the thread, each recorded as it lands, so a retry uploads only the rest.
  */
 export const slackAdapter: ChannelAdapter = {
@@ -639,7 +639,7 @@ export const slackAdapter: ChannelAdapter = {
     const token = slackBotToken(ctx.settings);
     if (!token || !ctx.settings.slack_enabled)
       throw new ChannelDeliveryError(
-        "Slack is turned off in Intake settings, so MikeGC can't post in the thread.",
+        "Slack is turned off in Intake settings, so Spectre can't post in the thread.",
         true,
       );
     const address = slackAddress(link);

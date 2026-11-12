@@ -12,7 +12,7 @@ export const Notifications = () => {
             <PillButtonUI tone="black" onClick={() => showToast({
                 tone: "error",
                 title: "Couldn't save your changes",
-                message: "Mike couldn't reach the server. Check your connection and try again.",
+                message: "Spectre couldn't reach the server. Check your connection and try again.",
                 actions: [{ label: "Retry", onClick: () => { showToast({ tone: "success", message: "Changes saved" }); } }],
                 supportHref: "mailto:will@mikeoss.com",
             })}>Show error</PillButtonUI>

@@ -22,7 +22,7 @@ export function intakeModelsHref(orgId: string) {
     ? "/settings/models"
     : `/organizations/${encodeURIComponent(orgId)}/settings/models`;
 }
-/** Who requests go to and how MikeGC preprocesses them: a table page of its own. */
+/** Who requests go to and how Spectre preprocesses them: a table page of its own. */
 export function intakeRulesHref(orgId: string) {
   return `${intakeSettingsHref(orgId)}/rules`;
 }

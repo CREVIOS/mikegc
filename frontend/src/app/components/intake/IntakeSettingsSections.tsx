@@ -331,7 +331,7 @@ export function IntakeTriageRulesSection({
         <div className="min-w-0">
           <p className={ROW_LABEL_CLASS}>Rules</p>
           <p className={cn(ROW_DESCRIPTION_CLASS, "mt-1")}>
-            Who each request goes to, and whether MikeGC preprocesses it. Triage
+            Who each request goes to, and whether Spectre preprocesses it. Triage
             and preprocessing use the models chosen in{" "}
             <Link
               href={modelsHref}

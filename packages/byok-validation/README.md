@@ -1,7 +1,7 @@
 # Shared BYOK validation cases
 
 `cases.json` is the shared conformance suite for the rules that decide which
-user-supplied Bring Your Own Keys values Mike accepts. It is data, not code:
+user-supplied Bring Your Own Keys values Spectre accepts. It is data, not code:
 it has no build step and nothing imports it at runtime.
 
 The backend is the authority for every rule. The web app keeps a browser copy

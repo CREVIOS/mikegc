@@ -47,7 +47,7 @@ export async function claimIntakeNotifications(
  * One notification per request, newest last. A request that became the
  * member's is new to them whatever else happened; otherwise the latest change
  * is described by what it was for (the reply rather than the request going
- * back to work because of it, the edit rather than MikeGC stopping asking),
+ * back to work because of it, the edit rather than Spectre stopping asking),
  * which is the first thing that change wrote. `more` counts the other changes.
  */
 export function groupIntakeNotifications(

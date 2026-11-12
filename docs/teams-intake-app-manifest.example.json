@@ -10,12 +10,12 @@
         "termsOfUseUrl": "https://your-mikegc.example.com/terms"
     },
     "name": {
-        "short": "MikeGC",
-        "full": "MikeGC intake for Legal"
+        "short": "Spectre",
+        "full": "Spectre intake for Legal"
     },
     "description": {
-        "short": "Mention @MikeGC to send a request to Legal.",
-        "full": "Mention @MikeGC in a channel thread to send it to the Legal team as an intake request. MikeGC answers in the thread, asks for missing details, and posts Legal's resolution there."
+        "short": "Mention @Spectre to send a request to Legal.",
+        "full": "Mention @Spectre in a channel thread to send it to the Legal team as an intake request. Spectre answers in the thread, asks for missing details, and posts Legal's resolution there."
     },
     "icons": {
         "outline": "outline.png",

@@ -208,7 +208,7 @@ export async function sharePlaybook(
     throw new PlaybookRequestError("Choose owner, editor or viewer.");
   const missing = await findMissingUserEmails(db, emails);
   if (missing.length)
-    throw new PlaybookRequestError(`${missing[0]} does not belong to a Mike user.`);
+    throw new PlaybookRequestError(`${missing[0]} does not belong to a Spectre user.`);
   const { error } = await db.from("playbook_shares").upsert(
     emails.map((email) => ({
       playbook_id: playbook.id,

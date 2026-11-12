@@ -5,14 +5,14 @@
  */
 export const SLACK_INTAKE_MANIFEST = {
   display_information: {
-    name: "MikeGC",
+    name: "Spectre",
     description:
-      "Mention @MikeGC to send a message or thread to Legal as an intake request. MikeGC answers in the thread.",
+      "Mention @Spectre to send a message or thread to Legal as an intake request. Spectre answers in the thread.",
     background_color: "#1f2937",
   },
   features: {
     bot_user: {
-      display_name: "MikeGC",
+      display_name: "Spectre",
       always_online: true,
     },
   },

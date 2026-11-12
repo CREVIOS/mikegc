@@ -27,7 +27,7 @@ const settings = {
   gmail_service_account_key_encrypted: null,
 } as unknown as AutomationRow;
 
-describe("Gmail: MikeGC's answer to an email that isn't a request", () => {
+describe("Gmail: Spectre's answer to an email that isn't a request", () => {
   let sent: { raw: string; threadId: string } | null;
   beforeEach(() => {
     process.env.INTAKE_GMAIL_SERVICE_ACCOUNT_KEY = JSON.stringify({
@@ -92,7 +92,7 @@ describe("Gmail: MikeGC's answer to an email that isn't a request", () => {
       },
       null,
     );
-    // Kept as MikeGC normalises Message-IDs, without angle brackets.
+    // Kept as Spectre normalises Message-IDs, without angle brackets.
     expect(result.externalId).toBe("sent-1@mail.gmail.com");
     expect(sent?.threadId).toBe("t-1");
     const raw = Buffer.from(sent!.raw, "base64url").toString("utf8");
@@ -109,7 +109,7 @@ describe("Gmail: MikeGC's answer to an email that isn't a request", () => {
   });
 });
 
-describe("the HTML version of MikeGC's emails", () => {
+describe("the HTML version of Spectre's emails", () => {
   it("keeps paragraphs and line breaks, and escapes everything as text", () => {
     const html = mailHtml("Hi <Pat> & co,\nline two\n\n\nNext paragraph.\r\n");
     expect(html).toContain('<p style="margin:0 0 1em">Hi &lt;Pat&gt; &amp; co,<br>line two</p>');

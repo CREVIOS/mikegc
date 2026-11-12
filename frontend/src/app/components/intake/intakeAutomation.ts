@@ -21,7 +21,7 @@ export type IntakeRuleDraft = {
   key: string;
   condition: string;
   assigneeId: string | null;
-  /** AI preprocessing: MikeGC answers the request and marks up its documents. */
+  /** AI preprocessing: Spectre answers the request and marks up its documents. */
   preprocess: boolean;
   /** The workflow or playbook it follows, with its name when known. */
   preprocessWith: IntakePreprocessRule | null;
@@ -78,7 +78,7 @@ export type IntakeAutomationDraft = {
   domains: string[];
   /** A domain typed but not yet added, which is not saved until it is. */
   domainInput: string;
-  /** The sender name on MikeGC's own emails. */
+  /** The sender name on Spectre's own emails. */
   fromName: string;
   slackEnabled: boolean;
   signingSecret: string;
@@ -222,7 +222,7 @@ export function intakeAutomationChanges(
     update.email_enabled = draft.emailEnabled;
   if (!sameList(draft.domains, settings.email.allowed_domains))
     update.email_allowed_domains = draft.domains;
-  // An empty name is left for its field to correct: MikeGC always signs as someone.
+  // An empty name is left for its field to correct: Spectre always signs as someone.
   const fromName = draft.fromName.trim();
   if (fromName && fromName !== settings.email.from_name)
     update.email_from_name = fromName;

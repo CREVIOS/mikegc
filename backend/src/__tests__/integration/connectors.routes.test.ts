@@ -244,7 +244,7 @@ describe("POST /user/mcp-connectors/:id/refresh-tools", () => {
     it("signals 'authorize this connector' without a 401, so the browser keeps its session", async () => {
         // Regression: this answered 401 { code: "oauth_required" }. Since
         // authentication moved to HttpOnly cookies, the frontend's
-        // authenticatedFetch treats ANY 401 from the API as an expired Mike
+        // authenticatedFetch treats ANY 401 from the API as an expired Spectre
         // session and logs the user out — so every OAuth connector's first
         // refresh (the step that opens the consent popup) bounced the user
         // to the login page instead. The client keys on `code`, not status.
@@ -328,7 +328,7 @@ describe("GET /user/integrations/google-drive", () => {
 });
 
 describe("Google Drive callback and disconnect", () => {
-    it("completes only for the authenticated Mike user", async () => {
+    it("completes only for the authenticated Spectre user", async () => {
         completeGoogleDriveOAuth.mockResolvedValue({ userId: "u1" });
         const res = await request(app).get(
             "/user/integrations/google-drive/oauth/finish?state=s&code=c",

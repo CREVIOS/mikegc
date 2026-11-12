@@ -25,12 +25,12 @@ describe("ToastUI", () => {
             showToast({
                 tone: "error",
                 title: "Couldn't save the document",
-                message: "Mike couldn't reach the server.",
+                message: "Spectre couldn't reach the server.",
             });
         });
         const alert = screen.getByRole("alert");
         expect(alert).toHaveTextContent("Couldn't save the document");
-        expect(alert).toHaveTextContent("Mike couldn't reach the server.");
+        expect(alert).toHaveTextContent("Spectre couldn't reach the server.");
         expect(alert).toHaveClass("liquid-glass-float");
 
         fireEvent.click(

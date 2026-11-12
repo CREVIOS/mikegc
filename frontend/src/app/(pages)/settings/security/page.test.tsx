@@ -71,7 +71,7 @@ describe("SecurityPage", () => {
 
         expect(
             await screen.findByText(
-                "Mike couldn't reach the server. Check your connection and try again.",
+                "Spectre couldn't reach the server. Check your connection and try again.",
             ),
         ).toBeInTheDocument();
     });
@@ -115,6 +115,6 @@ describe("SecurityPage", () => {
         );
 
         await waitFor(() => expect(enrollMfa).toHaveBeenCalledTimes(2));
-        expect(enrollMfa.mock.calls[1][0]).toMatch(/^Mike /);
+        expect(enrollMfa.mock.calls[1][0]).toMatch(/^Spectre /);
     });
 });

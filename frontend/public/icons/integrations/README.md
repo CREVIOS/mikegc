@@ -14,4 +14,4 @@ Unmodified 48×48 SVG assets from Microsoft's Fluent UI brand icon CDN:
 Used to identify their respective optional integrations and intake channels.
 Served locally so viewing Settings does not send a request to Google or
 Microsoft. Google and Microsoft product marks remain the property of their
-owners; they are not Mike artwork.
+owners; they are not Spectre artwork.

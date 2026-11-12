@@ -1,6 +1,6 @@
 # Manual and production deployment
 
-Use this path when connecting Mike to managed Supabase and S3-compatible
+Use this path when connecting Spectre to managed Supabase and S3-compatible
 storage instead of the infrastructure bundled with Docker Compose.
 
 ## Prerequisites
@@ -15,7 +15,7 @@ storage instead of the infrastructure bundled with Docker Compose.
 
 ## Database setup
 
-Every Mike database records the migrations it has applied in
+Every Spectre database records the migrations it has applied in
 `public.schema_migrations`, one row per file in `backend/migrations/`.
 `backend/scripts/migrate.sh` reads that table and applies only the files it
 does not list, in filename order, adding a row after each one succeeds. The
@@ -203,7 +203,7 @@ Use:
 - the Supabase project URL for backend `SUPABASE_URL`;
 - the anon/publishable key for backend `SUPABASE_PUBLISHABLE_KEY`;
 - the service-role key for backend `SUPABASE_SECRET_KEY`; and
-- the internal Mike backend origin for frontend `API_BASE_URL`.
+- the internal Spectre backend origin for frontend `API_BASE_URL`.
 
 Set backend `API_PUBLIC_URL` to the browser-reachable frontend gateway, including
 its `/api` prefix (for example, `https://app.example.com/api`). OAuth providers,
@@ -234,7 +234,7 @@ once to establish the new cookie; tokens are not copied through JavaScript.
 
 ### Object-storage CORS for direct uploads
 
-Mike's upload-session API gives an authenticated browser a short-lived signed
+Spectre's upload-session API gives an authenticated browser a short-lived signed
 `PUT` URL for one specific staging object. The bucket must therefore allow
 browser `PUT` requests from each deployed frontend origin. Configure the
 equivalent of this CORS policy in Cloudflare R2, MinIO, RustFS, or the selected
@@ -303,7 +303,7 @@ key restores the global key as the fallback.
 
 ### Error tracking
 
-Error reports are sent to the Mike project's own Sentry by default, so the
+Error reports are sent to the Spectre project's own Sentry by default, so the
 maintainers can fix failures encountered by forks and self-hosted installs.
 Before network transmission, every runtime rebuilds reports from an explicit
 allowlist: code locations and line numbers, controlled operation labels,
@@ -328,7 +328,7 @@ what is scrubbed, and how to verify are in [observability.md](observability.md).
 ## Authentication email
 
 Supabase Auth sends signup, email-change, and password-recovery messages.
-Configure production SMTP in the Supabase dashboard; Mike does not require a
+Configure production SMTP in the Supabase dashboard; Spectre does not require a
 Resend API key for these messages.
 
 In **Authentication > URL Configuration**, set the Site URL to the deployed
@@ -345,7 +345,7 @@ addresses. Set the minimum password length to 10; this applies when passwords
 are created or changed and does not invalidate existing shorter passwords. The
 same callback handles signup confirmation, confirmed email
 changes, and password-recovery links before sending the user to the appropriate
-Mike page.
+Spectre page.
 
 Review the Supabase email templates after changing the public Site URL, and
 test every link against the deployed frontend before inviting users. Existing
@@ -356,7 +356,7 @@ mirrored into `user_profiles`.
 
 Create a **Web application** OAuth client in Google Auth Platform. Its
 authorized redirect URI is the Supabase Auth callback shown on the Google
-provider page, not Mike's frontend callback. For hosted Supabase it normally
+provider page, not Spectre's frontend callback. For hosted Supabase it normally
 has this form:
 
 ```text
@@ -365,7 +365,7 @@ https://<project-ref>.supabase.co/auth/v1/callback
 
 Enable Google under **Supabase > Authentication > Providers**, then enter the
 Google client ID and secret. In **Authentication > URL Configuration**, allow
-both deployed Mike clients:
+both deployed Spectre clients:
 
 ```text
 https://your-mike.example/auth/callback
@@ -381,7 +381,7 @@ token or request Google Drive or Gmail access.
 
 ## Enterprise SSO (SAML)
 
-Self-hosted Mike can use SAML providers registered in Supabase Auth (GoTrue),
+Self-hosted Spectre can use SAML providers registered in Supabase Auth (GoTrue),
 including Okta, Microsoft Entra ID, and Google Workspace SAML. The login page
 offers an SSO entry point; the backend permits the flow only when SSO is
 enabled. The existing email/password and Google methods remain available; this
@@ -428,7 +428,7 @@ https://auth.example.com/auth/v1/sso/saml/metadata
 ```
 
 Use its entity ID/audience and assertion consumer service (ACS) URL in your
-IdP. The ACS is `https://auth.example.com/auth/v1/sso/saml/acs`, not Mike's
+IdP. The ACS is `https://auth.example.com/auth/v1/sso/saml/acs`, not Spectre's
 frontend callback. Configure the IdP to supply an email attribute and assign
 the intended users or groups to the application.
 
@@ -464,7 +464,7 @@ providers with `GET /auth/v1/admin/sso/providers`; use
 `PUT /auth/v1/admin/sso/providers/<provider-id>` to update an existing provider
 instead of repeating creation. Keep admin access restricted.
 
-### Enable Mike and verify sign-in
+### Enable Spectre and verify sign-in
 
 Set these in `backend/.env` (or the backend service environment), then restart
 the backend. No frontend rebuild is needed:
@@ -481,15 +481,15 @@ discovery. `SSO_ALLOWED_DOMAINS` is an optional comma-separated list of exact
 domains. Use DNS names, or punycode for international domains, without URLs or
 wildcards. Invalid domain settings fail closed. Omitting the allowlist permits
 any domain registered in GoTrue.
-The allowlist controls Mike's sign-in initiation, not account authorization or
+The allowlist controls Spectre's sign-in initiation, not account authorization or
 direct access to GoTrue; enforce membership and access policy at the IdP and
 Auth service.
 
-Mike calls GoTrue's `/sso` API using the server-side Supabase SDK, which sends
+Spectre calls GoTrue's `/sso` API using the server-side Supabase SDK, which sends
 `skip_http_redirect: true` and a PKCE challenge. After IdP authentication,
-GoTrue redirects to Mike's existing `/auth/callback`; the backend exchanges
+GoTrue redirects to Spectre's existing `/auth/callback`; the backend exchanges
 the code using its HttpOnly verifier cookie and establishes the normal session.
-Start sign-in from Mike in the same browser; IdP-initiated flows are outside
+Start sign-in from Spectre in the same browser; IdP-initiated flows are outside
 this integration. The Word add-in's existing authentication remains unchanged.
 
 Before inviting users, verify the metadata contains the public ACS URL, try
@@ -498,8 +498,8 @@ the app, and confirm logout and an unapproved domain behave as expected. SAML
 identities can be separate accounts from existing email/Google identities; do
 not assume matching emails link accounts or transfer project access.
 
-Cloudflare Access or IAP in front of Mike is complementary perimeter access
-control. It does not establish Mike's Supabase session and is not a substitute
+Cloudflare Access or IAP in front of Spectre is complementary perimeter access
+control. It does not establish Spectre's Supabase session and is not a substitute
 for this SAML integration. Ensure the IdP/browser can reach the required SAML
 endpoints through any perimeter controls.
 
@@ -585,7 +585,7 @@ serves `dist/` and streams `/api/*` to the backend while preserving cookies,
 
 ## Background jobs and Redis
 
-Mike runs durable background jobs (document conversion, tabular extraction,
+Spectre runs durable background jobs (document conversion, tabular extraction,
 audit recording, account deletion, storage cleanup, export builds) through one
 of two interchangeable transports:
 

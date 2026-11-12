@@ -153,11 +153,15 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
     const [profileLastSelectedModel, setProfileLastSelectedModel] = useState<
       string | null
     >(null);
+    const [profileDefaultModel, setProfileDefaultModel] = useState<
+      string | null
+    >(null);
     const [profileLoaded, setProfileLoaded] = useState(false);
     const [model, setModel, modelSettingsResolved] = useSelectedModel({
       sessionKey,
       chatModel,
       lastSelectedModel: lastSelectedModel ?? profileLastSelectedModel,
+      deploymentDefaultModel: profileDefaultModel,
       routerSelections: profileLoaded ? routerSelections : null,
       apiKeyStatus: keyStatus,
     });
@@ -305,6 +309,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
         if (profile) {
           setRouterSelections(routerSelectionsFromProfile(profile));
           setProfileLastSelectedModel(profile.lastSelectedChatModel ?? null);
+          setProfileDefaultModel(profile.defaultChatModel ?? null);
           setProfileLastSelectedReasoningLevel(
             profile.lastSelectedReasoningLevel ?? "high",
           );

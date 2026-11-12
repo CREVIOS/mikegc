@@ -63,7 +63,7 @@ describe("ResponseStyleSection", () => {
     await waitFor(() => expect(trigger("Language")).toBeEnabled());
     expect(trigger("Language")).toHaveTextContent("Automatic");
     expect(
-      screen.getByText("Mike replies in the language you write in."),
+      screen.getByText("Spectre replies in the language you write in."),
     ).toBeInTheDocument();
 
     fireEvent.pointerDown(
@@ -87,7 +87,7 @@ describe("ResponseStyleSection", () => {
     await waitFor(() =>
       expect(trigger("Language")).toHaveTextContent("English (UK)"),
     );
-    expect(screen.getByText("Mike replies in English (UK).")).toBeInTheDocument();
+    expect(screen.getByText("Spectre replies in English (UK).")).toBeInTheDocument();
   });
 
   it("saves only the setting that changed", async () => {

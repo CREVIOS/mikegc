@@ -154,7 +154,7 @@ export async function upsertContentGrant(
             return {
                 ok: false,
                 kind: "validation",
-                detail: `${email} does not belong to a Mike user.`,
+                detail: `${email} does not belong to a Spectre user.`,
             };
         if (params.orgId) {
             const { data: membership, error: membershipError } = await db

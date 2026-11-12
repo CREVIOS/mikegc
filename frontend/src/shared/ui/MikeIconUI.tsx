@@ -15,7 +15,7 @@ type IconPalette = {
     innerOpacities: [number, number, number, number];
 };
 
-// The MikeGC blue mark, in the assistant icon's blues. The same fill is
+// The Spectre blue mark, in the assistant icon's blues. The same fill is
 // inlined in frontend/src/app/icon.svg and desktop/assets/icon.html; change
 // all three together.
 const DEFAULT_PALETTE: IconPalette = {

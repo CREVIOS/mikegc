@@ -5,7 +5,7 @@ import type {
 } from "@mike/contracts";
 
 /**
- * The channels MikeGC records requests from, each set up in its own modal.
+ * The channels Spectre records requests from, each set up in its own modal.
  * Outlook and Gmail are two ways to connect the one intake mailbox, so
  * connecting either replaces the other.
  */
@@ -57,7 +57,7 @@ export type IntakeChannelGuide = {
 };
 
 const MAIL_OVERVIEW =
-  "People email requests to an intake address, such as intake@company.com. MikeGC reads new mail there, records each request, and replies from the same address so answers stay in the thread.";
+  "People email requests to an intake address, such as intake@company.com. Spectre reads new mail there, records each request, and replies from the same address so answers stay in the thread.";
 
 const MAIL_FINISH_STEPS: IntakeHelpItem[] = [
   {
@@ -73,7 +73,7 @@ const MAIL_FINISH_STEPS: IntakeHelpItem[] = [
 const MAIL_SETTINGS: IntakeHelpItem[] = [
   {
     title: "Sender name",
-    text: 'MikeGC\'s own emails come from this name at the intake address. A lawyer\'s message reads "Their name via Legal".',
+    text: 'Spectre\'s own emails come from this name at the intake address. A lawyer\'s message reads "Their name via Legal".',
   },
   {
     title: "Allowed sender domains",
@@ -82,10 +82,10 @@ const MAIL_SETTINGS: IntakeHelpItem[] = [
 ];
 
 const CHAT_OVERVIEW = (where: string) =>
-  `People write @MikeGC in ${where} to send a message, or the thread it's in, to Legal. MikeGC asks for missing details, posts a lawyer's questions and replies with the resolution in the same thread.`;
+  `People write @Spectre in ${where} to send a message, or the thread it's in, to Legal. Spectre asks for missing details, posts a lawyer's questions and replies with the resolution in the same thread.`;
 /** The help for reusing the other Microsoft channel's Entra app. */
 const SAME_APP_TEXT = (other: string) =>
-  `Uses the Entra app ${other} is set up with, so its details aren't typed twice. MikeGC keeps its own copy of the client secret: changing it in ${other} later doesn't change it here. A separate app for each channel is safer, since a leaked secret then reaches only one.`;
+  `Uses the Entra app ${other} is set up with, so its details aren't typed twice. Spectre keeps its own copy of the client secret: changing it in ${other} later doesn't change it here. A separate app for each channel is safer, since a leaked secret then reaches only one.`;
 
 export const INTAKE_CHANNEL_GUIDES: Record<IntakeChannelId, IntakeChannelGuide> =
   {
@@ -146,7 +146,7 @@ export const INTAKE_CHANNEL_GUIDES: Record<IntakeChannelId, IntakeChannelGuide> 
         },
         {
           title: "Service account JSON key",
-          text: "The key of the Google Cloud service account MikeGC reads and sends the intake mailbox's mail with. It is write-only: once saved it is never shown. Left empty, MikeGC uses this deployment's service account, if it has one.",
+          text: "The key of the Google Cloud service account Spectre reads and sends the intake mailbox's mail with. It is write-only: once saved it is never shown. Left empty, Spectre uses this deployment's service account, if it has one.",
         },
         {
           title: "Service account client ID",
@@ -160,7 +160,7 @@ export const INTAKE_CHANNEL_GUIDES: Record<IntakeChannelId, IntakeChannelGuide> 
       steps: [
         {
           title: "Create the Slack app",
-          text: "Create an app called MikeGC from {manifest} and install it to your workspace.",
+          text: "Create an app called Spectre from {manifest} and install it to your workspace.",
         },
         {
           title: "Add its keys",
@@ -171,14 +171,14 @@ export const INTAKE_CHANNEL_GUIDES: Record<IntakeChannelId, IntakeChannelGuide> 
           text: "In Event Subscriptions, paste the Events Request URL and subscribe to the app_mention, message.channels and message.groups bot events.",
         },
         {
-          title: "Invite MikeGC",
-          text: "Invite @MikeGC to the channels people ask Legal in.",
+          title: "Invite Spectre",
+          text: "Invite @Spectre to the channels people ask Legal in.",
         },
       ],
       settings: [
         {
           title: "Events Request URL",
-          text: "Where Slack sends MikeGC the messages it is mentioned in.",
+          text: "Where Slack sends Spectre the messages it is mentioned in.",
         },
         {
           title: "Signing Secret and Bot User OAuth Token",
@@ -213,7 +213,7 @@ export const INTAKE_CHANNEL_GUIDES: Record<IntakeChannelId, IntakeChannelGuide> 
       settings: [
         {
           title: "Teams events URL",
-          text: "The Azure Bot's messaging endpoint, where Teams sends MikeGC the messages it is mentioned in.",
+          text: "The Azure Bot's messaging endpoint, where Teams sends Spectre the messages it is mentioned in.",
         },
         {
           title: "Use the same app as Outlook",
@@ -221,7 +221,7 @@ export const INTAKE_CHANNEL_GUIDES: Record<IntakeChannelId, IntakeChannelGuide> 
         },
         {
           title: "Document access",
-          text: "With Microsoft Graph access to files, MikeGC reads files shared in threads and posts documents to the channel's files. Without it, MikeGC posts text only and names the documents.",
+          text: "With Microsoft Graph access to files, Spectre reads files shared in threads and posts documents to the channel's files. Without it, Spectre posts text only and names the documents.",
         },
       ],
     },

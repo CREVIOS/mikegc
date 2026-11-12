@@ -170,7 +170,7 @@ Office.onReady(() => {
     // Whatever threw here — fetch, Office.js, a bad redirect — its text is
     // for the console. The pane shows this sentence.
     const message = describeError(error, {
-      fallback: "Mike couldn't complete Google sign-in. Try again.",
+      fallback: "Spectre couldn't complete Google sign-in. Try again.",
     }).message;
     if (requestId) {
       sendError(requestId, message);

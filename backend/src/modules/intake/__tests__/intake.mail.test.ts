@@ -159,7 +159,7 @@ describe("replies in a request's thread", () => {
 });
 
 describe("building a Gmail reply", () => {
-  it("threads on our own headers and marks MikeGC's own messages", async () => {
+  it("threads on our own headers and marks Spectre's own messages", async () => {
     const raw = (
       await buildMime({
         from: { name: "Emma Chen via Legal", address: "intake@firm.test" },

@@ -6,7 +6,7 @@ import { parseModelJson } from "./intake.shared";
 import type { TriageModel } from "./intake.triage";
 
 /**
- * MikeGC's clarifying questions to the requester. Two stages ask: the
+ * Spectre's clarifying questions to the requester. Two stages ask: the
  * intake agent, when it can't choose a rule without a fact the message
  * doesn't state, and the readiness check before preprocessing, when the
  * rule's playbook or workflow needs something the request lacks. Both end in
@@ -23,7 +23,7 @@ const QUESTION_MAX = 300;
 export type ClarifyStage = "rule" | "readiness";
 
 /**
- * MikeGC's own line before the questions, for why it asks and how many; the
+ * Spectre's own line before the questions, for why it asks and how many; the
  * model never writes it. Choosing a rule asks so the request reaches the
  * right person; the readiness check asks for what Legal's work needs.
  */
@@ -43,7 +43,7 @@ const MENTION_LIKE = /<[@#!]|<\/?at\b|@(?:here|channel|everyone|all)\b/i;
 /** HTML or Slack angle brackets, Markdown links, code, emphasis or headings. */
 const MARKUP_LIKE = /[<>`]|\]\(|\*\*|__|~~|^\s*#|&#?[a-z0-9]+;/i;
 
-/** Whether text has a link, an email address, a mention or markup, which MikeGC never posts. */
+/** Whether text has a link, an email address, a mention or markup, which Spectre never posts. */
 export function hasUnsafeContent(text: string): boolean {
   return (
     URL_LIKE.test(text) ||
@@ -76,7 +76,7 @@ export function sanitizeQuestions(value: unknown): string[] {
 }
 
 /**
- * The question message: MikeGC's framing, then the questions, numbered only
+ * The question message: Spectre's framing, then the questions, numbered only
  * when there is more than one.
  */
 export function questionBody(questions: string[], stage: ClarifyStage): string {
@@ -110,7 +110,7 @@ export function acknowledgementId(requestId: string): string {
 /** A thread message as the stages read it: who said it, when, and what. */
 export type ThreadEntry = { author: string; at: string; text: string };
 
-/** The thread after the request: MikeGC's questions and the requester's replies. */
+/** The thread after the request: Spectre's questions and the requester's replies. */
 export function threadText(entries: ThreadEntry[]): string {
   return entries.map((e) => `${e.author}, ${e.at}:\n${e.text}`).join("\n\n");
 }

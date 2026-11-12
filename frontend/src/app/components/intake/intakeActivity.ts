@@ -38,7 +38,7 @@ function eventAction(event: IntakeEvent): string {
     case "reopen":
       return "reopened this";
     case "stop_asking":
-      return "stopped MikeGC asking the requester";
+      return "stopped Spectre asking the requester";
     case "edited":
       return "edited the details";
     case "document_added":
@@ -63,7 +63,7 @@ const MESSAGE_ACTIONS: Record<IntakeMessage["kind"], string> = {
   note: "commented",
   resolution: "recorded the resolution",
   cancel_reason: "gave the reason for cancelling",
-  // A member's question, or MikeGC's own, sent to the requester.
+  // A member's question, or Spectre's own, sent to the requester.
   question: "asked the requester",
   reply: "replied",
   // A resolution's reply to the requester, which reads in Messages.

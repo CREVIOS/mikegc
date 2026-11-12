@@ -27,12 +27,12 @@ import {
 import { intakeRpc } from "./intake.shared";
 
 /**
- * Documents MikeGC makes from what arrives with a message: a new request's
+ * Documents Spectre makes from what arrives with a message: a new request's
  * attachments, or the files a requester sends in reply. Each is the
  * request's own document, owned by the organization, with no uploader.
  */
 
-/** A document owner segment for MikeGC's files, which have no uploader. */
+/** A document owner segment for Spectre's files, which have no uploader. */
 export const ownerSegment = (orgId: string) => `intake-${orgId}`;
 
 /**
@@ -47,7 +47,7 @@ export class IntakeAutomationError extends Error {
 }
 
 export const RECORDED_INCOMPLETE =
-  "The request was recorded, but MikeGC couldn't add all of its documents or reply in its thread.";
+  "The request was recorded, but Spectre couldn't add all of its documents or reply in its thread.";
 
 /** A channel's file, held to the same limits as an email attachment. */
 export type ChannelFile = {
@@ -89,7 +89,7 @@ export function channelAttachments(
 }
 
 /**
- * Make one attachment MikeGC's document on the request, as an upload is
+ * Make one attachment Spectre's document on the request, as an upload is
  * made: linked before any bytes are written, so it never belongs to no
  * request, then given its version and marked ready. A Word or PowerPoint file
  * is queued for the PDF rendition the viewer opens. A reply's files are

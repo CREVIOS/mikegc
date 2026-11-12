@@ -678,7 +678,33 @@ describe("POST /chat — streaming endpoint", () => {
     expect(releaseMemoryConversationTurn).not.toHaveBeenCalled();
   });
 
-    it("rejects a chat without an explicit model before streaming", async () => {
+    it("starts a chat without a model on the default the user can run", async () => {
+        const res = await request(app)
+            .post("/chat")
+            .set("Authorization", "Bearer test")
+            .send({ messages: VALID_BODY.messages });
+
+        // This user holds only a Gemini key, so the OpenAI default falls through.
+        expect(res.status).toBe(200);
+        expect(runLLMStream).toHaveBeenCalledWith(
+            expect.objectContaining({ model: "gemini-3.8-flash" }),
+        );
+    });
+
+    it("rejects a chat without a model when the user can run no default", async () => {
+        const userSettings = await import("../../modules/user/user.settings.js");
+        vi.mocked(userSettings.getUserModelSettings).mockResolvedValueOnce({
+            legal_research_us: false,
+            web_search: DEFAULT_WEB_SEARCH_SETTINGS,
+            title_model: null,
+            memory_curator_model: null,
+            subagent_model: null,
+            subagent_reasoning: null,
+            last_selected_reasoning_level: null,
+            tabular_model: null,
+            last_selected_chat_model: null,
+            api_keys: {},
+        });
         const res = await request(app)
             .post("/chat")
             .set("Authorization", "Bearer test")
@@ -1243,7 +1269,20 @@ describe("POST /chat — streaming endpoint", () => {
         },
     );
 
-    it("rejects a Word chat without an explicit model before creating storage", async () => {
+    it("rejects a Word chat without a model, when no default can run, before creating storage", async () => {
+        const userSettings = await import("../../modules/user/user.settings.js");
+        vi.mocked(userSettings.getUserModelSettings).mockResolvedValueOnce({
+            legal_research_us: false,
+            web_search: DEFAULT_WEB_SEARCH_SETTINGS,
+            title_model: null,
+            memory_curator_model: null,
+            subagent_model: null,
+            subagent_reasoning: null,
+            last_selected_reasoning_level: null,
+            tabular_model: null,
+            last_selected_chat_model: null,
+            api_keys: {},
+        });
         const res = await request(app)
             .post("/word-chat")
             .set("Authorization", "Bearer test")
@@ -2869,7 +2908,7 @@ describe("chat grants, deletion and roster", () => {
 
         expect(res.status).toBe(400);
         expect(res.body.detail).toBe(
-            "future@example.com does not belong to a Mike user.",
+            "future@example.com does not belong to a Spectre user.",
         );
     });
 

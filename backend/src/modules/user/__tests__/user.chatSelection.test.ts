@@ -77,8 +77,18 @@ describe("cross-surface chat selection", () => {
       }),
     ).toMatchObject({ ok: false, status: 422, code: "missing_api_key" });
   });
-  it("does not invent a model for a user without a selection", async () => {
+  it("starts a user without a selection on the OpenAI default", async () => {
     settings.mockResolvedValue({ ...profile, last_selected_chat_model: null });
+    expect(
+      await resolveUserChatSelection(db, { userId: "actor" }),
+    ).toMatchObject({ ok: true, selectedModel: "gpt-6.1-sol" });
+  });
+  it("requires a selection when the user can run no default model", async () => {
+    settings.mockResolvedValue({
+      ...profile,
+      last_selected_chat_model: null,
+      api_keys: {},
+    });
     expect(
       await resolveUserChatSelection(db, { userId: "actor" }),
     ).toMatchObject({ ok: false, status: 400, code: "model_required" });

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ApiKeyStatus } from "../api/client";
 import {
   canonicalModelId,
+  defaultChatModel,
   isAllowedModelId,
   isRouterModelSelected,
   type RouterSelections,
@@ -12,6 +13,8 @@ interface SelectedModelSources {
   sessionKey: number;
   chatModel?: string | null;
   lastSelectedModel?: string | null;
+  /** The deployment's configured default chat model, if any. */
+  deploymentDefaultModel?: string | null;
   routerSelections?: RouterSelections | null;
   /** Null means the key-status request failed and availability fails open. */
   apiKeyStatus: ApiKeyStatus | null;
@@ -33,7 +36,10 @@ function usableStoredModel(
   return isModelAvailable(model, sources.apiKeyStatus) ? model : null;
 }
 
-/** Resolve the saved chat model first, then the profile's shared last-selected. */
+/**
+ * Resolve the saved chat model first, then the profile's shared last-selected,
+ * then the deployment default (OpenAI first) once key status is known.
+ */
 export function useSelectedModel(
   sources: SelectedModelSources,
 ): [string, (model: string) => void, boolean] {
@@ -61,13 +67,19 @@ export function useSelectedModel(
     const next =
       usableStoredModel(sources.chatModel, sources) ??
       usableStoredModel(sources.lastSelectedModel, sources) ??
-      "";
+      (sources.apiKeyStatus
+        ? defaultChatModel(
+            (id) => usableStoredModel(id, sources) === id,
+            sources.deploymentDefaultModel,
+          )
+        : "");
     setModelState(next);
     setSettingsResolved(true);
   }, [
     sources.sessionKey,
     sources.chatModel,
     sources.lastSelectedModel,
+    sources.deploymentDefaultModel,
     sources.apiKeyStatus,
     routerSelections,
   ]); // eslint-disable-line react-hooks/exhaustive-deps

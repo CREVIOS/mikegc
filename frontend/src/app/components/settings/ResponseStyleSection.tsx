@@ -30,13 +30,13 @@ function languageOptions(
   const options = {
     auto: {
       label: "Automatic",
-      description: "Mike replies in the language you write in.",
+      description: "Spectre replies in the language you write in.",
     },
   } as Record<ResponseLanguage, OptionCopy>;
   for (const [code, name] of Object.entries(names)) {
     options[code as ResponseLanguage] = {
       label: name,
-      description: `Mike replies in ${name}.`,
+      description: `Spectre replies in ${name}.`,
     };
   }
   return options;
@@ -72,7 +72,7 @@ const SETTINGS: {
     options: {
       balanced: {
         label: "Balanced",
-        description: "Mike picks the layout that suits each answer.",
+        description: "Spectre picks the layout that suits each answer.",
       },
       less: {
         label: "Less",
@@ -93,7 +93,7 @@ const SETTINGS: {
       },
       balanced: {
         label: "Balanced",
-        description: "Mike's usual professional tone.",
+        description: "Spectre's usual professional tone.",
       },
       plain: {
         label: "Plain and Simple",
@@ -107,6 +107,7 @@ const SETTINGS: {
     options: languageOptions({
       "en-US": "English (US)",
       "en-GB": "English (UK)",
+      bn: "বাংলা (Bangla)",
       ar: "Arabic",
       "zh-Hans": "Chinese (Simplified)",
       "zh-Hant": "Chinese (Traditional)",
@@ -201,7 +202,7 @@ export function ResponseStyleSection() {
     <section className="space-y-3" aria-labelledby="response-style-heading">
       <SettingsHeading id="response-style-heading">Response style</SettingsHeading>
       <SettingsDescription>
-        Choose how Mike shapes its answers in chats.
+        Choose how Spectre shapes its answers in chats.
       </SettingsDescription>
       <GlassCardUI>
         {loadError ? (
