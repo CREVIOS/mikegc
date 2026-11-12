@@ -417,7 +417,7 @@ describe("useAssistantChat retry", () => {
 
         const toast = result.current.toasts[0];
         expect(toast?.message).toBe(
-            "Mike couldn't finish this answer. Try again.",
+            "Spectre couldn't finish this answer. Try again.",
         );
         expect(retryAction(toast)).toBeDefined();
         expect(toast?.supportHref).toMatch(/^mailto:/);

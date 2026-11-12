@@ -29,11 +29,15 @@ import {
 } from "../../lib/llm";
 import {
   builtInModelIds,
+  DEFAULT_CHAT_MODEL_PREFERENCE,
   LEGACY_MODEL_IDS,
   providerForModel,
 } from "../../lib/llm/models";
 import type { Provider } from "../../lib/llm/types";
-import { hasApiKeyForModel } from "../../lib/modelSelection";
+import {
+  deploymentDefaultChatModel,
+  hasApiKeyForModel,
+} from "../../lib/modelSelection";
 import { getUserApiKeys, getEffectiveApiKeys } from "../user/user.service";
 import { deleteFile, uploadFile } from "../../lib/storage";
 import { getFileStreamSource } from "../documents/documents.service";
@@ -636,10 +640,17 @@ async function availablePlaybookModels(
   const preferred = profileModelIds.find((modelId) =>
     availableModelIds.includes(modelId),
   );
+  // With nothing saved, the deployment default (OpenAI unless configured
+  // otherwise) leads, before the catalog's own order.
+  const configuredDefault = deploymentDefaultChatModel();
+  const fallback = [
+    ...(configuredDefault ? [configuredDefault] : []),
+    ...DEFAULT_CHAT_MODEL_PREFERENCE,
+  ].find((modelId) => availableModelIds.includes(modelId));
   return {
     apiKeys,
     availableModelIds,
-    defaultModel: preferred || availableModelIds[0] || null,
+    defaultModel: preferred || fallback || availableModelIds[0] || null,
   };
 }
 
@@ -992,7 +1003,7 @@ function compilationPrompt(
 
 Rules may contain a standard position, fallback positions, unacceptable positions, guidance, conditions, and escalation actions. A position can be a concept or exact language. Mark sample clause usage as illustrative, preferred, verbatim, accepted, or unacceptable. Use verbatim only when the source clearly requires exact wording. If a clause must be present, set required true. Keep uncertain material in guidance rather than guessing.
 
-The conditions field must always be an array of plain JSON strings, for example ["Applies when annual fees exceed $100,000"]. Never put objects, arrays, numbers, or booleans inside conditions. Express each condition as one readable sentence. Only actions may contain objects, and every action object must contain string fields named scenario and instruction.
+The conditions field must always be an array of plain JSON strings, for example ["Applies when annual fees exceed Tk 1 crore"]. Never put objects, arrays, numbers, or booleans inside conditions. Express each condition as one readable sentence. Only actions may contain objects, and every action object must contain string fields named scenario and instruction.
 
 Return JSON only with this shape:
 {"name":"${requestedName.replace(/["\\]/g, "")}","description":"","representedParty":"","documentTypes":[],"jurisdictions":[],"topics":[{"id":"topic-1","name":"","rules":[{"id":"topic-1-rule-1","name":"","concept":"","scope":"clause|agreement","required":false,"guidance":"","standard":{"name":"Standard","criteria":"","sampleClauses":[{"text":"","usage":"illustrative|preferred|verbatim|accepted|unacceptable","sourceRefs":["P1"]}]}|null,"fallbacks":[],"unacceptable":[],"conditions":[],"actions":[{"scenario":"","instruction":""}],"sourceRefs":["P1"]}]}]}

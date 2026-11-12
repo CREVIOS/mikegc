@@ -1,20 +1,9 @@
+import { onlyLetters, strippedPosToOriginal } from "./quoteLetters";
 export const QUOTE_HIGHLIGHT_CLASS = "docx-text-highlight";
 const IGNORED_TEXT_SELECTOR = ".star-pagination,.case-page-number";
 
-function onlyLetters(s: string): string {
-    return s.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
-}
-
-function toOrigPos(text: string, strippedPos: number): number {
-    let count = 0;
-    for (let k = 0; k < text.length; k++) {
-        if (/[a-zA-Z0-9]/.test(text[k])) {
-            if (count === strippedPos) return k;
-            count++;
-        }
-    }
-    return text.length;
-}
+// Letters, marks and digits in any script (Bangla included) for robust matching.
+const toOrigPos = strippedPosToOriginal;
 
 function collectTextNodes(root: HTMLElement): Text[] {
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {

@@ -447,7 +447,7 @@ describe("reading the mailbox", () => {
       warn.mockRestore();
       expect(settings()).toMatchObject({
         gmail_history_id: "100",
-        email_error: "MikeGC couldn't finish reading the mailbox. It will try again.",
+        email_error: "Spectre couldn't finish reading the mailbox. It will try again.",
       });
     });
     it("reads every page of the Inbox when the history has expired, after taking the history ID", async () => {
@@ -561,7 +561,7 @@ describe("replying from Outlook", () => {
     });
     expect(calls.some((c) => c.url.endsWith("/messages/draft-1/send") && c.method === "POST")).toBe(true);
     expect(memory.rows("intake_outbound")[0]).toMatchObject({ status: "sent", external_id: "<draft-1@firm.test>" });
-    // Later replies thread on the Message-ID MikeGC sent.
+    // Later replies thread on the Message-ID Spectre sent.
     expect(memory.rows("intake_email_message_ids")).toEqual([
       expect.objectContaining({ link_id: "link-1", message_id: "draft-1@firm.test" }),
     ]);

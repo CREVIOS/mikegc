@@ -6,10 +6,10 @@ import { cn } from "@/app/lib/utils";
 const HEADING_FONT_CLASS = "font-light font-serif";
 
 /**
- * The name at the top of the sidebar: "MikeGC" for personal work, or the
+ * The name at the top of the sidebar: "Spectre" for personal work, or the
  * active organization's name.
  *
- * Every name is set at the size "MikeGC" is, so switching workspace does not
+ * Every name is set at the size "Spectre" is, so switching workspace does not
  * change the look of the header. Only a name too long for one line at that
  * size drops to the smaller two-line setting, because the header row keeps a
  * fixed height. Whether it fits is measured rather than guessed from the
@@ -23,7 +23,7 @@ export function SidebarHeading({
 }: {
     name: string;
     className?: string;
-    /** The name styled for display, such as the MikeGC wordmark. Its text
+    /** The name styled for display, such as the Spectre wordmark. Its text
         must be `name`, which is still what gets measured. */
     children?: ReactNode;
 }) {

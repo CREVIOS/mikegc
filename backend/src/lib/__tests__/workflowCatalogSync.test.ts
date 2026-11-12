@@ -119,7 +119,7 @@ describe("workflow catalog synchronization", () => {
     );
     try {
       await expect(
-        syncWorkflowCatalog({ rpc } as never, { temporaryRoot, fetchImpl }),
+        syncWorkflowCatalog({ rpc } as never, { temporaryRoot, fetchImpl, bundledPacks: [] }),
       ).resolves.toEqual({
         workflows: 8,
         assets: 1,
@@ -168,7 +168,7 @@ describe("workflow catalog synchronization", () => {
     );
     try {
       await expect(
-        syncWorkflowCatalog({ rpc } as never, { temporaryRoot, fetchImpl }),
+        syncWorkflowCatalog({ rpc } as never, { temporaryRoot, fetchImpl, bundledPacks: [] }),
       ).rejects.toThrow("require configured S3-compatible storage");
       expect(rpc).not.toHaveBeenCalled();
       await expect(readdir(temporaryRoot)).resolves.toEqual([]);

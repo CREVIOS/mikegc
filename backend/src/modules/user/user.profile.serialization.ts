@@ -1,5 +1,9 @@
 // user profile serialization — implementation behind the module facade.
-import { normalizeOptionalModelPreference, normalizeReasoningLevel } from "../../lib/modelSelection";
+import {
+    deploymentDefaultChatModel,
+    normalizeOptionalModelPreference,
+    normalizeReasoningLevel,
+} from "../../lib/modelSelection";
 import { type ApiKeyStatus } from "./user.apiKeyStore";
 import { ROUTER_SLUGS, type RouterModelSelections } from "../../lib/routerModels";
 import { UserProfileRow, MONTHLY_CREDIT_LIMIT } from "./user.profile.storage";
@@ -57,6 +61,10 @@ export function serializeProfile(
             row.last_selected_chat_model,
             routerModels,
         ),
+        // The deployment's SPECTRE_DEFAULT_MODEL, which a composer with
+        // nothing saved starts on when the user can run it. Null leaves the
+        // composer on the shared OpenAI-first preference.
+        defaultChatModel: deploymentDefaultChatModel(),
         lastSelectedReasoningLevel:
             normalizeReasoningLevel(row.last_selected_reasoning_level) ??
             "high",

@@ -1,0 +1,365 @@
+# Spectre for Bangladesh
+
+Spectre is set up for lawyers and in-house legal teams in Bangladesh. This page
+explains what that changes, how to deploy it with OpenAI, every setting
+involved, and the limits a lawyer should know before relying on it.
+
+- [Deploying with OpenAI](#deploying-with-openai)
+- [Bangladeshi law in answers](#bangladeshi-law-in-answers)
+- [Laws of Bangladesh lookup](#laws-of-bangladesh-lookup)
+- [Bangla text](#bangla-text)
+- [Scanned and broken PDFs (OCR)](#scanned-and-broken-pdfs-ocr)
+- [Citation check](#citation-check)
+- [Tracked changes](#tracked-changes)
+- [HCD paper books](#hcd-paper-books)
+- [Dates and the working week](#dates-and-the-working-week)
+- [Five corporate use cases](#five-corporate-use-cases)
+- [Bangladesh workflows](#bangladesh-workflows)
+- [Settings](#settings)
+- [Limits and what to verify](#limits-and-what-to-verify)
+- [Sources](#sources)
+
+## Deploying with OpenAI
+
+Spectre runs on OpenAI by default and keeps every other provider available.
+
+1. Follow the [quick start](../README.md#quick-start) or
+   [deployment guide](deployment.md).
+2. Set `OPENAI_API_KEY` in `backend/.env`. No other model key is needed.
+3. Start the stack. A new user can chat at once: nobody has to pick a model.
+
+With only an OpenAI key, every surface runs on OpenAI:
+
+| Surface | Model with nothing chosen |
+| --- | --- |
+| Chat, project chat, Word add-in, tabular chat | `gpt-6.1-sol` (or `SPECTRE_DEFAULT_MODEL`) |
+| New tabular review, column-prompt drafting | `gpt-6.1-sol` (or `SPECTRE_DEFAULT_MODEL`) |
+| Playbook import and review | `gpt-6.1-sol` (or `SPECTRE_DEFAULT_MODEL`) |
+| Chat titles, light subagents | `gpt-6-luna` |
+| Standard subagents | `gpt-6.1-sol` |
+| Intake triage and agent | `gpt-6-luna` |
+| Intake document preprocessing | `gpt-6.1-sol` |
+| Memory curator | the chat's model, unless `MEMORY_CURATOR_MODEL` is set |
+| Web search | OpenAI's built-in search, when the user turns web search on |
+
+A saved choice always wins: the chat's model, then the user's last-selected
+model. The default only fills the gap, and only with a model the user (or
+their organization) holds a key for and is allowed to use. If the user has no
+OpenAI key, the default falls through to Claude Sonnet, Gemini Flash, then
+Mistral Medium, whichever they hold a key for. Users can still pick any model
+in the composer, including Anthropic, Gemini, Mistral, routers, cloud
+platforms, OpenAI-compatible endpoints and local Ollama models.
+
+To make OpenAI's flagship the default, set `SPECTRE_DEFAULT_MODEL=gpt-6-astra`.
+
+**OpenAI and client data.** OpenAI's API does not train on API data by default
+and keeps abuse-monitoring logs for up to 30 days. The Responses API also
+stores each response for up to 30 days unless told not to; Spectre tells it not
+to (`store: false`) on every call, so client work is not kept as stored
+responses. Reasoning then travels between steps encrypted, and results of
+OpenAI's own web search are not re-sent to later steps of the same answer; set
+`SPECTRE_OPENAI_STORE=true` to restore OpenAI's default. Zero Data Retention
+for abuse-monitoring logs needs OpenAI's approval. OpenAI has no Bangladesh data-residency region; the nearest
+are India and Singapore. Consider this against the Personal Data Protection
+Act, 2026, which limits cross-border transfers of personal data, and agree it
+with the client where needed.
+
+## Bangladeshi law in answers
+
+Unless a user's profile names another jurisdiction, the assistant works under
+Bangladeshi law. It is told:
+
+- the court system: Appellate and High Court Divisions, subordinate civil and
+  criminal courts, and special tribunals including the Commercial Courts
+  (Commercial Court Act, 2026); that Appellate Division decisions bind every
+  court (Article 111); that Indian and Pakistani decisions are only
+  persuasive; and to say "advocate", not "attorney";
+- how to cite laws ("the Contract Act, 1872 (Act No. IX of 1872), section 23";
+  "চুক্তি আইন, ১৮৭২ এর ধারা ২৩") and cases in DLR, BLD, BLC, MLR, ALR, LNJ,
+  BLT, ADC, CLR and SCOB form, never inventing an authority, and never using
+  CourtListener (United States case law) for Bangladesh;
+- that the law changed heavily from August 2024: about 133 ordinances, most
+  turned into Acts in April 2026, some repealed and 13 lapsed on 11 April 2026.
+  It must check the current status of any law made or changed since 2024;
+- transactional practice: stamp duty and non-judicial stamp paper (rates only
+  from a current source), registration under section 17 of the Registration
+  Act, 1908, notarisation, governing-law and arbitration choices, the Labour
+  Act, and the cheque-dishonour timeline;
+- litigation drafting: legal notices, plaints, written statements, writ
+  petitions and affidavits;
+- money in Taka with lakh and crore grouping, amounts repeated in words, and
+  day-first dates;
+- the Bar Council's canons and the Chief Justice's warning about unverified AI
+  output: answers are drafts for an advocate to check.
+
+The block is in `backend/src/lib/bangladesh/practicePrompt.ts`. It is added to
+chat, project chat, Word chat and tabular chat. A user in another jurisdiction
+(set in their profile) does not get it.
+
+Tabular reviews read Bangladeshi documents correctly: amounts keep lakh/crore
+grouping, Taka, Tk and ৳ are `[[BDT]]`, and Bangla dates and digits are
+written as English dates and ASCII digits so columns sort and compare.
+
+## Laws of Bangladesh lookup
+
+The assistant can search and read the official text of Acts, Ordinances and
+President's Orders on the [Laws of Bangladesh](https://bdlaws.minlaw.gov.bd)
+website of the Legislative and Parliamentary Affairs Division:
+
+- `bd_law_search` searches by title or subject, in English or Bangla, and marks
+  repealed laws;
+- `bd_law_read` reads an Act's table of contents, a section, a chapter or the
+  whole Act, with its number, date, repeal status and amendment notes.
+
+The answer shows these as "Searched the Laws of Bangladesh" and "Read" steps
+with links, and cites each Act or section with a link to its page.
+
+- The tools reach only `https://bdlaws.minlaw.gov.bd`, through the same
+  SSRF guard as connectors, with redirects refused. Pages are cached for an
+  hour per backend process. Each answer may search 10 times and read 20 pages.
+- The site has no API. The client in `backend/src/lib/bdlaws.ts` reads its HTML
+  and decodes its UTF-16 big-endian pages, which the site labels only as
+  "UTF-16".
+- The backend must be able to reach the site. If your network restricts
+  outbound traffic, allow `bdlaws.minlaw.gov.bd`.
+- The tools are on when the default jurisdiction is Bangladesh. Set
+  `SPECTRE_BDLAWS_ENABLED=false` to turn them off.
+
+## Bangla text
+
+**Answers.** Users can choose বাংলা (Bangla) under Settings → Personalisation →
+Response style, or write in Bangla to get Bangla answers. The assistant writes
+standard Bangladeshi Bangla with Bangla Academy spelling, uses the established
+legal terms, ends sentences with the dari (।), uses Bangla digits in Bangla
+prose, and quotes documents exactly as written.
+
+**Generated documents.** Word files give Bangla runs a Unicode Bangla font
+(`SPECTRE_BANGLA_FONT`, Nirmala UI by default, which every Windows since 8 has)
+as the complex-script font, tag them `bn-BD`, and size them like the Latin text
+beside them. PowerPoint themes set the same font for Bangla. The backend image
+installs Noto Sans and Serif Bengali, so Bangla in PDF previews converted by
+LibreOffice renders instead of showing empty boxes.
+
+**Reading documents.**
+
+- *Unicode normalisation.* Stored document text and search queries are NFC,
+  and find-in-document and quote checks compare canonically decomposed text.
+  So য়, ড়, ঢ়, ো and ৌ match however they were typed, and zero-width joiners
+  are ignored. Vowel signs and the hasanta are no longer dropped when quotes
+  are compared, and quotes in Bangla are highlighted in the PDF and Word
+  viewers.
+- *Legacy Bijoy text.* Many government and court documents are typed with the
+  Bijoy keyboard in SutonnyMJ and other "MJ" fonts, which store Bangla as Latin
+  characters ("evsjv‡`k" for বাংলাদেশ). Spectre converts it to Unicode when it
+  reads a document:
+  - in Word files, runs whose font is an MJ font (directly, by character or
+    paragraph style, or by the document's defaults) are converted. SutonnyOMJ
+    is the Unicode release of Sutonny and is left alone. AdarshaLipi runs are
+    converted only when their text also reads as Bijoy, since that family's
+    layout is not certain to match;
+  - in PDFs, which carry no reliable font name in their text, lines that look
+    like Bijoy are converted, and every non-English line on a page that is
+    clearly Bijoy throughout.
+
+  The conversion is in `backend/src/lib/bangla/bijoy.ts`. Its glyph table
+  follows the MIT-licensed bn-ansi-to-unicode package.
+- *PDF visual order.* PDFs often store Bangla vowel signs in drawing order,
+  so extracted text reads "িক" for কি. Spectre detects such pages and restores
+  logical order.
+- *Fonts in the browser.* The web app and Word add-in fall back to Noto Sans
+  Bengali, Nirmala UI, Kohinoor Bangla, Kalpurush, SolaimanLipi or Nikosh for
+  Bangla.
+
+## Scanned and broken PDFs (OCR)
+
+Court and gazette PDFs often have no usable text: scans, scans with an English
+OCR layer laid over Bangla ("fAvta qeges"), and Unicode Bangla re-encoded into
+junk code points. Spectre checks every page's text layer
+(`backend/src/lib/bangla/textLayer.ts`). A page that is empty or garbled is
+rendered with pdf.js and transcribed by a vision model told to transcribe
+exactly, keep Bangla in Unicode, and mark what it cannot read
+(`backend/src/lib/ocr.ts`).
+
+- The model is Gemini when `GEMINI_API_KEY` is set (it leads published Bangla
+  OCR benchmarks), else Anthropic, else OpenAI; `SPECTRE_OCR_MODEL` picks one.
+  OCR uses the deployment's keys, at most `SPECTRE_OCR_MAX_PAGES` pages per
+  document (40 by default), and is cached per page.
+- Every transcribed page starts with a note that it was OCR'd and must be
+  checked against the original before it is quoted.
+- With OCR off (`SPECTRE_OCR_ENABLED=false`) or failing, a garbled page is
+  replaced by a notice that it needs OCR, so junk never reaches the model as
+  the document's text.
+- Handwritten khatians and deeds defeat every current model: treat their
+  transcription as a draft for a person to check.
+
+## Citation check
+
+After every answer, Spectre lists the Bangladeshi law-report citations in it
+(DLR, BLD, BLC, MLR, ADC, ALR, BLT, LNJ, CLR and SCOB forms) and checks each
+against everything the answer read: documents, Laws of Bangladesh pages, web
+pages, and the user's own messages. A citation found in none of them is shown
+under the answer as **not verified**, with a request to check it in the law
+report. This is the guard against invented authorities that Bangladeshi firms
+worry about most (`backend/src/lib/bangladesh/citations.ts`).
+
+## Tracked changes
+
+Edits to Word documents are recorded word by word, as Word's own compare
+records them: a change never splits a word, a Bangla conjunct, or a vowel sign
+from its consonant (কাজ → কাজে is one replaced word, not an inserted "ে").
+Unchanged words around an edit stay unmarked.
+
+## HCD paper books
+
+Ask for a paper book and the assistant uses `build_paper_book` to assemble one
+PDF from documents in the conversation, to the High Court Division Rules as
+amended on 21 November 2012:
+
+- 13 x 8 inch pages with margins of 2 inches left, 1.5 right, 1 top and
+  2 bottom;
+- a serial-numbered, double-spaced index, rendered by LibreOffice so Bangla
+  descriptions are shaped correctly;
+- Part I (documents other than exhibits) then Part II (exhibits), pages
+  numbered continuously from 1 after the index, and a bookmark per entry;
+- a note when the book exceeds 300 pages, which then needs hardboard covers.
+
+PDF, Word and image documents are accepted. Each source page is scaled to fit
+the Rule's text area, which for an A4 page is about 54%; check legibility of
+small print before filing.
+
+## Dates and the working week
+
+For users in Bangladesh's time zone, each message stamp carries the
+Bangla-calendar date (revised calendar: 14 April is 1 Boishakh, 21 February is
+8 Falgun, 16 December is 1 Poush), so the assistant never has to work the
+calendar out. It is told that the working week is Sunday to Thursday when it
+counts working days and deadlines.
+
+## Five corporate use cases
+
+[`docs/examples/bangladesh/`](examples/bangladesh/README.md) has five
+foreign-drafted documents and the Bangladeshi lawyer's markup of each, as real
+Word tracked changes made by Spectre's edit engine:
+
+1. A USD term facility agreement with an offshore lender (Invest Bangladesh and
+   Bangladesh Bank authorisations, withholding tax, RJSC charge registration
+   within 21 days, default interest under section 74).
+2. A telecom vendor master services agreement (VAT and income tax deduction at
+   source, data localisation under the 2026 data protection law, the section 28
+   time bar, BTRC import approvals).
+3. A multinational's appointment letter (who is a "worker" after 2026, 120 days'
+   notice under section 26, probation under section 4, the section 27 restraint
+   bar, governing law).
+4. An exclusive distribution agreement with a foreign principal (post-term
+   non-compete, resale price maintenance under the Competition Act, shortfall
+   penalties, termination notice, SIAC arbitration and interim relief).
+5. A shareholders' agreement with a foreign investor (fair-value pricing under
+   FEID Circular No. 01 of 2026, Form 117, entrenching terms in the Articles,
+   the promoter non-compete).
+
+The same content seeds a demo workspace (`backend/src/lib/bangladesh/demo/`),
+and a test checks that every edit applies on word boundaries.
+
+## Bangladesh workflows
+
+[`workflows/bangladesh/`](../workflows/bangladesh/README.md) holds a workflow
+pack laid out as the system workflows repository expects:
+
+| Workflow | Type |
+| --- | --- |
+| Legal Notice (উকিল নোটিশ) | Assistant |
+| Contract Review (Bangladesh) | Assistant |
+| Employment Contract Review (Bangladesh) | Assistant |
+| Plaint (আরজি) Draft | Assistant |
+| Statute Check (Bangladesh) | Assistant |
+| Legal Translation (Bangla ⇄ English) | Assistant |
+| Cheque Dishonour (NI Act s.138) | Assistant |
+| Data Protection Review (Bangladesh) | Assistant |
+| Writ Petition (Article 102) | Assistant |
+| Affidavit-in-Chief (Order XVIII r.4A) | Assistant |
+| Bail Petition | Assistant |
+| Time Petition (Adjournment) | Assistant |
+| Artha Rin (Money Loan) Suit | Assistant |
+| Land Title Chain | Assistant |
+| Ordinance and Act Comparison | Assistant |
+| Labour Dispute | Assistant |
+| Client Update (Bangla) | Assistant |
+| Chronology | Assistant |
+| Contract Compliance Review (Bangladesh) | Tabular review |
+
+The workflow sync (`npm run sync:workflows`, run by Compose's `workflow-sync`)
+adds this pack to the catalog it downloads, so the workflows appear on a new
+install without any other step; the backend image carries the pack at
+`/workflows/bangladesh`. A workflows repository that already holds a copy of a
+pack file keeps its own version. `SPECTRE_WORKFLOW_PACKS` names other pack
+folders, or `none` to leave the pack out.
+`backend/src/lib/__tests__/bangladeshWorkflows.test.ts` runs the pack through
+the real catalog parser.
+
+## Settings
+
+All are optional and go in `backend/.env`.
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `OPENAI_API_KEY` | none | The deployment's OpenAI key. Users can also save their own. |
+| `SPECTRE_DEFAULT_MODEL` | `gpt-6.1-sol` | The chat model a user with nothing saved starts on, if they can run it. |
+| `SPECTRE_DEFAULT_JURISDICTION` | Bangladesh | The jurisdiction assumed when a user's profile names none. `none` turns the Bangladesh guidance off for them. |
+| `SPECTRE_BANGLA_FONT` | Nirmala UI | The Unicode Bangla font for generated Word and PowerPoint files. MJ fonts are refused. |
+| `SPECTRE_BDLAWS_ENABLED` | on for Bangladesh | `false` hides the Laws of Bangladesh tools; `true` offers them elsewhere. |
+| `SPECTRE_OPENAI_STORE` | off | `true` lets OpenAI store responses (its default); Spectre otherwise sends `store: false`. |
+| `SPECTRE_WORKFLOW_PACKS` | the Bangladesh pack | Pack folders the workflow sync adds to the catalog, comma-separated, or `none`. |
+| `SPECTRE_OCR_ENABLED` | on when a vision-capable key is set | `false` turns OCR of scanned and garbled PDF pages off. |
+| `SPECTRE_OCR_MODEL` | Gemini, else Anthropic, else OpenAI | The vision model OCR uses. |
+| `SPECTRE_OCR_MAX_PAGES` | 40 | Most pages transcribed per document. |
+
+## Limits and what to verify
+
+- **Answers are drafts.** Every answer, citation and document must be checked
+  by an advocate before it is signed, sent or filed.
+- **Case law.** Most Bangladeshi law reports (DLR, BLD, BLC and others) are in
+  print or paid databases; only the Supreme Court's website and SCOB are free.
+  Spectre cannot look a citation up in the reports. It is told not to invent
+  them, and flags any it did not read in a source as not verified.
+- **Statutes.** The Laws of Bangladesh can lag behind the Bangladesh Gazette,
+  and its repeal notes are not complete. Confirm recently made or amended law
+  in the Gazette.
+- **Stamp duty.** Rates change with Finance Acts. Spectre does not state a
+  rate unless it found it in a current source.
+- **OCR.** OCR text can be wrong, more so for faint scans and handwriting;
+  every transcribed page says so. OCR is not run on images uploaded as
+  separate files.
+- **Editing Bijoy documents.** A Word file typed in an MJ font reads as Unicode
+  Bangla, but its tracked edits must quote the file's own characters, so the
+  assistant cannot edit those passages by quoting its Unicode reading. Convert
+  the document to Unicode first.
+- **Highlighting.** Highlighting a quote in a PDF whose text is stored in visual
+  order, or in Bijoy, may not find the passage, because the viewer reads the
+  PDF's own text.
+- **Bangla calendar.** Bangla-calendar dates are written only when asked; the
+  revised calendar fixes Pohela Boishakh on 14 April.
+
+## Sources
+
+The statute facts, URL structure and language rules come from research in
+November 2026 against primary sources, including:
+
+- [Laws of Bangladesh](https://bdlaws.minlaw.gov.bd), including the Personal
+  Data Protection Act, 2026
+  ([act-1692](https://bdlaws.minlaw.gov.bd/act-print-1692.html)), the Cyber
+  Security Act, 2026 ([act-1710](https://bdlaws.minlaw.gov.bd/act-details-1710.html)),
+  the Commercial Court Act, 2026 ([act-1652](https://bdlaws.minlaw.gov.bd/act-1652.html)),
+  the Code of Civil Procedure amendment ([act-1531](https://bdlaws.minlaw.gov.bd/act-1531.html))
+  and the Code of Criminal Procedure amendment
+  ([act-1549](https://bdlaws.minlaw.gov.bd/act-1549.html));
+- the Supreme Court's [judgments portal](https://www.supremecourt.gov.bd/web/?page=judgments.php&menu=00&div_id=1)
+  and the Supreme Court Online Bulletin;
+- the Bangladesh Bar Council's
+  [canons of conduct](https://www.barcouncil.gov.bd/disciplinary-jurisdiction/conduct-of-ethics-of-lawyers/);
+- reporting on the conversion of the interim government's ordinances
+  ([The Daily Star](https://www.thedailystar.net/news/bangladesh/news/20-ordinances-lose-validity-4148621),
+  [The Business Standard](https://www.tbsnews.net/bangladesh/91-bills-passed-convert-yunus-era-ordinances-laws-1408216));
+- the Dhaka University law faculty's
+  [citation guideline](https://law.du.ac.bd/en/wp-content/uploads/2017/08/Guideline-for-Reference.pdf);
+- OpenAI's [supported countries](https://developers.openai.com/api/docs/supported-countries)
+  and [data controls](https://developers.openai.com/api/docs/guides/your-data).

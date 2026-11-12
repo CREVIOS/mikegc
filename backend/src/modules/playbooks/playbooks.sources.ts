@@ -108,7 +108,9 @@ async function extractSourceText(
     text =
       fileType === "pdf"
         ? await extractPdfTextForModel(bytes)
-        : await extractDocxBodyText(Buffer.from(bytes));
+        : await extractDocxBodyText(Buffer.from(bytes), {
+            readableBangla: true,
+          });
   } catch (cause) {
     throw new PlaybookRequestError(
       "The document could not be read. Check that it is a valid .docx or .pdf file.",

@@ -84,7 +84,7 @@ describe("aiSdkFetch", () => {
     const { createOpenAICompatible } =
       await import("@ai-sdk/openai-compatible");
     // The OpenAI-compatible parser forwards malformed input to Core 7, which
-    // emits a dynamic tool-error rather than calling Mike's tool executor.
+    // emits a dynamic tool-error rather than calling Spectre's tool executor.
     const malformedArguments = '{"title":"Example Report","sections":';
     const fetchMock = vi
       .fn()

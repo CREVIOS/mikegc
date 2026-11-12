@@ -7,7 +7,7 @@ import { memoryDb, type MemoryDb } from "../../modules/intake/__tests__/memoryDb
 // The channel webhooks the requester loop adds, through the real app: a
 // Teams activity must carry a Bot Connector token signed by Bot Framework's
 // keys, for the organization's bot and tenant, and is then a new request or a
-// thread reply; Graph's notifications must echo the client state MikeGC set;
+// thread reply; Graph's notifications must echo the client state Spectre set;
 // and each organization's webhook URL has its own rate limit, so one busy
 // Slack channel can't spend another organization's.
 // ---------------------------------------------------------------------------
@@ -90,8 +90,8 @@ const activity = (overrides: Record<string, unknown> = {}) => ({
   channelId: "msteams",
   from: { id: "29:jane", name: "Jane Business", aadObjectId: "aad-jane" },
   conversation: { id: conversation, conversationType: "channel", tenantId: tenant },
-  text: "<at>MikeGC</at> please review the Acme NDA",
-  entities: [{ type: "mention", text: "<at>MikeGC</at>", mentioned: { id: `28:${appId}`, name: "MikeGC" } }],
+  text: "<at>Spectre</at> please review the Acme NDA",
+  entities: [{ type: "mention", text: "<at>Spectre</at>", mentioned: { id: `28:${appId}`, name: "Spectre" } }],
   channelData: {
     tenant: { id: tenant },
     team: { id: "19:team@thread.tacv2", name: "Sales", aadGroupId: "group-1" },
@@ -153,7 +153,7 @@ describe("the Teams webhook", () => {
     expect((await post(reply)).status).toBe(200);
     expect((await post(reply)).status).toBe(200);
     for (const ignored of [
-      activity({ id: "1", from: { id: `28:${appId}`, name: "MikeGC" } }),
+      activity({ id: "1", from: { id: `28:${appId}`, name: "Spectre" } }),
       activity({ id: "2", type: "messageUpdate" }),
       activity({ id: "3", type: "conversationUpdate" }),
       activity({ id: "4", conversation: { id: "a:personal-chat", conversationType: "personal" } }),
@@ -184,7 +184,7 @@ describe("the Graph notification webhook", () => {
     expect(res.text).toBe("Validation: token 1");
     expect(res.headers["x-content-type-options"]).toBe("nosniff");
   });
-  it("reads the mailbox for a notification with MikeGC's client state, and refuses the rest", async () => {
+  it("reads the mailbox for a notification with Spectre's client state, and refuses the rest", async () => {
     expect((await graph().send({ value: [{ clientState: "guess", changeType: "created" }] })).status).toBe(403);
     expect(mocks.enqueueDbJob).not.toHaveBeenCalled();
     expect((await graph().send({ value: [{ clientState: "state-1", changeType: "created" }] })).status).toBe(202);

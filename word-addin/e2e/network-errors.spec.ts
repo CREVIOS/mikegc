@@ -22,7 +22,7 @@ test("a failed sign-in request names the request instead of only 'Load failed'",
   const alert = page.getByRole("alert");
   await expect(alert).toBeVisible();
   const text = await alert.innerText();
-  expect(text).toContain("Mike couldn't reach the server at");
+  expect(text).toContain("Spectre couldn't reach the server at");
   // The origin is named so a self-hoster knows which server is down.
   expect(text).toMatch(/http:\/\/(127\.0\.0\.1|localhost):\d+/);
   expect(text).toContain("Check your connection and that the server is running, then try again");
@@ -30,7 +30,7 @@ test("a failed sign-in request names the request instead of only 'Load failed'",
   expect(text).not.toMatch(/Failed to fetch|Load failed|NetworkError/);
 });
 
-test("a rejected sign-in is stated in Mike's words, not GoTrue's", async ({
+test("a rejected sign-in is stated in Spectre's words, not GoTrue's", async ({
   addin,
   page,
 }) => {
@@ -75,7 +75,7 @@ test("a failed workflow load names the endpoint it could not reach", async ({
 
   // The list says what happened, and the toast adds a Retry.
   await expect(
-    page.getByText(/Mike couldn't reach the server at/).first(),
+    page.getByText(/Spectre couldn't reach the server at/).first(),
   ).toBeVisible();
   const toast = page.getByTestId("toast");
   await expect(toast).toContainText("Couldn't load your workflows");

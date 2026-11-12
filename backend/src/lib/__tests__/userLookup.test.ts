@@ -129,7 +129,7 @@ describe("profileAttributionName", () => {
                     display_name: "  Ada Lovelace  ",
                     email: "ADA@EXAMPLE.COM",
                 },
-                "Mike",
+                "Spectre",
             ),
         ).toBe("Ada Lovelace");
     });
@@ -138,7 +138,7 @@ describe("profileAttributionName", () => {
         expect(
             profileAttributionName(
                 { display_name: "   ", email: "  ADA@EXAMPLE.COM  " },
-                "Mike",
+                "Spectre",
             ),
         ).toBe("ada@example.com");
     });
@@ -147,10 +147,10 @@ describe("profileAttributionName", () => {
         expect(
             profileAttributionName(
                 { display_name: null, email: "   " },
-                "Mike",
+                "Spectre",
             ),
-        ).toBe("Mike");
-        expect(profileAttributionName(null, "Mike")).toBe("Mike");
+        ).toBe("Spectre");
+        expect(profileAttributionName(null, "Spectre")).toBe("Spectre");
     });
 });
 

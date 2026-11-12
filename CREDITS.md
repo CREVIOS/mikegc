@@ -23,7 +23,10 @@ infrastructure, and development workflow, including optional local integrations.
 | [JSZip](https://github.com/Stuk/jszip) | Reading and writing ZIP-based document packages. |
 | [fast-xml-parser](https://github.com/NaturalIntelligence/fast-xml-parser) | Parsing document XML. |
 | [Defuddle](https://github.com/kepano/defuddle) | Extracting the main content of web pages the assistant reads. |
-| [linkedom](https://github.com/WebReflection/linkedom) | Parsing web pages on the backend. |
+| [linkedom](https://github.com/WebReflection/linkedom) | Parsing web pages on the backend, including pages of the Laws of Bangladesh. |
+| [bn-ansi-to-unicode](https://github.com/BinduLogic/bn-ansi-to-unicode) | The Bijoy (SutonnyMJ) glyph table behind Spectre's legacy Bangla converter, `backend/src/lib/bangla/bijoy.ts`. MIT License, Copyright (c) 2022 BinduLogic LLC. The table is adapted; the package is not a dependency. |
+| [pdf-lib](https://github.com/Hopding/pdf-lib) | Assembling High Court Division paper books: merging, page layout, numbering and bookmarks. MIT License. |
+| [Noto Sans and Serif Bengali](https://github.com/notofonts/bengali) | Bangla in PDF renditions, installed in the backend image through Debian's `fonts-noto-core`. SIL Open Font License 1.1. |
 
 ## Application and interface
 

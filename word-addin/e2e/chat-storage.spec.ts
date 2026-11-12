@@ -440,6 +440,6 @@ test("a device-only save failure after a finished answer is reported as a save f
   // re-send the whole turn.
   await expect(page.getByText(/get a response/i)).toHaveCount(0);
   await expect(
-    page.getByText("Mike couldn't finish that answer. Try again."),
+    page.getByText("Spectre couldn't finish that answer. Try again."),
   ).toHaveCount(0);
 });

@@ -41,13 +41,13 @@ const OUTBOUND_PROPERTY =
   "String {00020329-0000-0000-C000-000000000046} Name MikeGCOutboundId";
 /** Attachments larger than this go up in an upload session. */
 const SIMPLE_ATTACHMENT_BYTES = 3 * 1024 * 1024;
-/** Graph's message subscriptions last just under seven days; MikeGC renews at three. */
+/** Graph's message subscriptions last just under seven days; Spectre renews at three. */
 export const GRAPH_SUBSCRIPTION_DAYS = 3;
 
 const CREDENTIALS_REFUSED =
   "Microsoft didn't accept the intake mailbox's app credentials. An admin can check the tenant ID, client ID and secret in Intake settings.";
 const MAILBOX_REFUSED =
-  "Microsoft refused MikeGC access to the intake mailbox. Check the app's Mail.ReadWrite and Mail.Send permissions and its Exchange RBAC scope.";
+  "Microsoft refused Spectre access to the intake mailbox. Check the app's Mail.ReadWrite and Mail.Send permissions and its Exchange RBAC scope.";
 
 export type GraphCredentials = {
   tenantId: string;
@@ -238,7 +238,7 @@ export async function graphDelta(
     status: 0,
     code: "delta_incomplete",
     permanent: false,
-    sentence: "MikeGC couldn't finish reading the mailbox. It will try again.",
+    sentence: "Spectre couldn't finish reading the mailbox. It will try again.",
   });
 }
 
@@ -264,7 +264,7 @@ export async function graphSubscribe(
     },
   );
   if (!created?.id)
-    throw new MicrosoftApiError({ status: 0, code: "invalid_response", permanent: false, sentence: "Microsoft sent an answer MikeGC couldn't read." });
+    throw new MicrosoftApiError({ status: 0, code: "invalid_response", permanent: false, sentence: "Microsoft sent an answer Spectre couldn't read." });
   return { id: created.id, expiresAt: created.expirationDateTime ?? expiresAt };
 }
 
@@ -292,7 +292,7 @@ export async function graphUnsubscribe(credentials: GraphCredentials, subscripti
   }).catch(() => undefined);
 }
 
-/** Mark a recorded email with the "MikeGC" category, so the mailbox shows it. */
+/** Mark a recorded email with the "Spectre" category, so the mailbox shows it. */
 export async function graphMarkRecorded(credentials: GraphCredentials, messageId: string) {
   try {
     const t = await token(credentials);
@@ -302,11 +302,11 @@ export async function graphMarkRecorded(credentials: GraphCredentials, messageId
     const categories = Array.isArray(current?.categories)
       ? current.categories.filter((c): c is string => typeof c === "string")
       : [];
-    if (categories.includes("MikeGC")) return;
+    if (categories.includes("Spectre")) return;
     await microsoftFetch(url, {
       token: t,
       method: "PATCH",
-      json: { categories: [...categories, "MikeGC"] },
+      json: { categories: [...categories, "Spectre"] },
     });
   } catch {
     // A missing category never stops recording.
@@ -319,11 +319,11 @@ export async function graphSendTest(credentials: GraphCredentials, to: string, f
     token: await token(credentials),
     json: {
       message: {
-        subject: "MikeGC is connected to the intake mailbox",
+        subject: "Spectre is connected to the intake mailbox",
         body: {
           contentType: "HTML",
           content: mailHtml(
-            "MikeGC can read and send from this intake mailbox. Requests emailed here will be recorded in Intake.",
+            "Spectre can read and send from this intake mailbox. Requests emailed here will be recorded in Intake.",
           ),
         },
         from: { emailAddress: { address: credentials.mailbox, name: fromName } },
@@ -375,7 +375,7 @@ function outlookError(error: unknown): Error {
   if (error.code === "ErrorInvalidRecipients" || error.code === "ErrorRecipientNotFound")
     return new ChannelDeliveryError("The email couldn't be sent to the requester's address.", true);
   if (error.status === 404)
-    return new ChannelDeliveryError("The email MikeGC replies to was deleted from the intake mailbox.", true);
+    return new ChannelDeliveryError("The email Spectre replies to was deleted from the intake mailbox.", true);
   if (error.code === "ErrorMessageSizeExceeded")
     return new ChannelDeliveryError("The email was too large for the intake mailbox to send.", true);
   return new ChannelDeliveryError(error.sentence, error.permanent);
@@ -386,7 +386,7 @@ function outlookError(error: unknown): Error {
  * addressed to the requester and the others on the thread (never the
  * mailbox), with the documents that fit attached and the rest named.
  * Exchange sets the threading headers itself and accepts only X- headers, so
- * MikeGC's own messages carry X-Auto-Submitted, and the outbox ID is an
+ * Spectre's own messages carry X-Auto-Submitted, and the outbox ID is an
  * extended property that a retry looks for in Sent Items.
  */
 export const outlookAdapter: ChannelAdapter = {
@@ -394,7 +394,7 @@ export const outlookAdapter: ChannelAdapter = {
   async deliver(ctx, link, message, delivered) {
     if (delivered) return { externalId: delivered, documents: message.documents };
     if (!ctx.settings.email_enabled || ctx.settings.email_provider !== "graph")
-      throw new ChannelDeliveryError("The intake mailbox isn't connected, so MikeGC can't email the requester.", true);
+      throw new ChannelDeliveryError("The intake mailbox isn't connected, so Spectre can't email the requester.", true);
     try {
       const credentials = graphCredentials(ctx.settings);
       const thread = mailAddress(link);
@@ -455,7 +455,7 @@ export const outlookAdapter: ChannelAdapter = {
         },
       );
       if (!draft?.id)
-        throw new MicrosoftApiError({ status: 0, code: "invalid_response", permanent: false, sentence: "Microsoft sent an answer MikeGC couldn't read." });
+        throw new MicrosoftApiError({ status: 0, code: "invalid_response", permanent: false, sentence: "Microsoft sent an answer Spectre couldn't read." });
       const draftUrl = `${mailboxUrl(credentials.mailbox)}/messages/${encodeURIComponent(draft.id)}`;
       for (const doc of attached) {
         const bytes = await ctx.readDocument(doc);

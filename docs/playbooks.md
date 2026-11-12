@@ -1,6 +1,6 @@
 # Playbooks
 
-Mike playbooks convert a human-authored Word or PDF negotiation guide into
+Spectre playbooks convert a human-authored Word or PDF negotiation guide into
 structured rules that can review contracts.
 
 ## Data model
@@ -112,7 +112,7 @@ review. A failed save retains the current edits and offers a retry.
 Open **Playbooks**, select **New playbook**, then **Start from scratch**. A
 dialog asks for the playbook's name and, optionally, its represented party,
 document types, jurisdictions, description, and, in an organization, Private
-or Public. Mike then opens the new playbook on **Rules**. It starts with one
+or Public. Spectre then opens the new playbook on **Rules**. It starts with one
 ungrouped rule and no topics. A rule always
 needs a concept, so the first one carries placeholder text to replace.
 
@@ -121,7 +121,7 @@ needs a concept, so the first one carries placeholder text to replace.
 1. Open **Playbooks**, select **New playbook**, then **Import from file**.
 2. Under **Add document**, drop a `.docx` or `.pdf` playbook, or click the
    area to choose a saved file or upload one. Choose a compilation model. Only
-   models with usable credentials are offered, and Mike preselects an
+   models with usable credentials are offered, and Spectre preselects an
    available one. Select **Compile**. The dialog shows that the playbook is
    compiling and opens it when it is ready. Long files can take several
    minutes; you can close the dialog or leave the page meanwhile.
@@ -140,7 +140,7 @@ The importer reads Word headings, paragraphs, and tables before asking the
 model to compile the material. A PDF has no such markup, so each block of text
 separated by a vertical gap becomes one cited paragraph, and a paragraph never
 spans a page. A PDF without a text layer (a scan) is refused with a message
-that it needs OCR. Mike automatically recompiles once when the first response
+that it needs OCR. Spectre automatically recompiles once when the first response
 is not valid JSON, fails schema validation, or cannot be tied back to the
 source. It retains the original file only after
 compilation succeeds. Every imported rule must resolve to at least one real

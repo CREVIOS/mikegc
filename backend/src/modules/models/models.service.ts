@@ -135,7 +135,7 @@ export async function listConfiguredModels(
 
 /**
  * OpenRouter's authenticated catalog, limited to text models that support
- * tool calling because Mike supplies tools on interactive chat requests.
+ * tool calling because Spectre supplies tools on interactive chat requests.
  */
 export async function listOpenRouterModels(
     db: Db,
@@ -199,7 +199,7 @@ export async function listOpenRouterModels(
 
 /**
  * Vercel AI Gateway's public catalog, limited to text models that support tool
- * calling because Mike supplies tools on interactive chat requests. A key must
+ * calling because Spectre supplies tools on interactive chat requests. A key must
  * still be configured before the catalog is exposed in the user's settings.
  */
 export async function listVercelModels(
@@ -295,7 +295,7 @@ export async function listVercelModels(
  * OpenCode Go's catalog spans Chat Completions, Anthropic Messages, and
  * Responses models, but unlike OpenRouter and Vercel it publishes no protocol
  * metadata to filter on. Fail closed against the compatibility lists in
- * lib/llm/models instead of offering Responses models Mike cannot yet use.
+ * lib/llm/models instead of offering Responses models Spectre cannot yet use.
  */
 export async function listOpenCodeGoModels(
     db: Db,

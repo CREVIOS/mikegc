@@ -40,13 +40,13 @@ import { dispatchIntakeJob, intakeRpc, parseModelJson } from "./intake.shared";
 import { resolveIntakeModel, type TriageModel } from "./intake.triage";
 
 /**
- * AI preprocessing of a request MikeGC recorded, when the assignment rule
- * that assigned it asks for it. MikeGC answers the request in a note and
+ * AI preprocessing of a request Spectre recorded, when the assignment rule
+ * that assigned it asks for it. Spectre answers the request in a note and
  * marks up its Word documents with tracked changes, following the rule's
  * workflow or playbook if it names one. It runs as the owner or admin who
  * last saved the intake settings: their access opens the workflow or
  * playbook, and the organization's keys are theirs. The tracked changes are
- * MikeGC's, and reviewers accept or reject them as with any others.
+ * Spectre's, and reviewers accept or reject them as with any others.
  */
 
 export const INTAKE_PREPROCESS_JOB = "intake.preprocess";
@@ -55,14 +55,14 @@ const MODEL_TIMEOUT_MS = 180_000;
 const DOCUMENT_CHARS = 40_000;
 const PROMPT_DOCUMENT_CHARS = 120_000;
 const NOTE_MAX = 20_000;
-const AUTHOR = "MikeGC";
+const AUTHOR = "Spectre";
 
 type PreprocessRef = { kind: "workflow" | "playbook"; id: string };
 
 const jobPayload = z.object({
   orgId: z.uuid(),
   requestId: z.uuid(),
-  /** The note MikeGC posts, named up front so a retry posts it once. */
+  /** The note Spectre posts, named up front so a retry posts it once. */
   noteId: z.uuid(),
   with: z
     .object({ kind: z.enum(["workflow", "playbook"]), id: z.string().min(1) })
@@ -70,7 +70,7 @@ const jobPayload = z.object({
   /** The condition of the rule that matched, which the readiness check reads. */
   condition: z.string().nullable().default(null),
   /**
-   * Which round of MikeGC's questions this run follows: 0 for the first,
+   * Which round of Spectre's questions this run follows: 0 for the first,
    * then one more after each answer. A run for an earlier round is stale.
    */
   round: z.number().int().min(0).max(10).default(0),
@@ -170,7 +170,7 @@ export function preprocessNoteId(requestId: string): string {
 }
 
 /**
- * Queue a request's preprocessing for a round of MikeGC's questions: the
+ * Queue a request's preprocessing for a round of Spectre's questions: the
  * first, or the one after an answer. Each round is its own job.
  */
 export async function queueIntakePreprocess(
@@ -215,7 +215,7 @@ export const preprocessPlan = z.object({
 /**
  * Queue the next round of a request's preprocessing from the plan the
  * readiness check saved on it: after the requester answers, or when a lawyer
- * stops MikeGC asking (it then runs without asking).
+ * stops Spectre asking (it then runs without asking).
  */
 export async function queueNextIntakePreprocess(
   db: Db,
@@ -250,7 +250,7 @@ async function postNote(db: Db, job: JobPayload, body: string) {
     p_request: job.requestId,
     p_note: job.noteId,
     p_body: clip(body.trim(), NOTE_MAX),
-    // The activity reads it as MikeGC preprocessing the request.
+    // The activity reads it as Spectre preprocessing the request.
     p_purpose: "preprocessing",
   });
   if (!posted.ok && posted.kind !== "not_found")
@@ -311,7 +311,7 @@ async function readDocuments(
 type MarkUp = { name: string; changes: number } | { name: string; failed: string };
 
 /**
- * Mark up a Word document MikeGC has not marked up before. One someone has
+ * Mark up a Word document Spectre has not marked up before. One someone has
  * already revised is left as it is: preprocessing reads the document as it
  * arrived. Null when there was nothing to write.
  */
@@ -573,7 +573,7 @@ async function preprocess(
   const thread = await loadThreadEntries(db, job.orgId, job.requestId);
 
   // The readiness check: does the playbook or workflow have what it needs?
-  // It asks only while MikeGC may (a thread, no lawyer yet, a round left);
+  // It asks only while Spectre may (a thread, no lawyer yet, a round left);
   // with the rounds used up it still runs, so the note can say what is
   // still missing.
   let missing: string[] = [];

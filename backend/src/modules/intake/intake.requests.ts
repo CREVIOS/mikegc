@@ -199,7 +199,7 @@ type CommandReceipt = IntakeReceipt & { preprocess?: boolean };
 /**
  * What a committed command leaves to do outside its transaction: send the
  * message it wrote for the requester, and run preprocessing that was waiting
- * on MikeGC's questions when a lawyer stopped them. Both are safe to repeat
+ * on Spectre's questions when a lawyer stopped them. Both are safe to repeat
  * on a replayed receipt. A failure here never fails the command: the outbox
  * row stays pending and the request page offers Retry.
  */

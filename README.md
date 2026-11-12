@@ -1,17 +1,49 @@
-# MikeGC
+# Spectre
 
-![MikeGC](docs/assets/mikegc-banner.jpg)
+Spectre is a legal AI assistant for lawyers and in-house legal teams in
+Bangladesh. It reviews and drafts documents in Bangla and English, knows the
+Bangladeshi court system and citation formats, looks up Acts on the Laws of
+Bangladesh, and uses OpenAI by default while keeping every other supported
+model provider available.
 
-MikeGC is a fork of [Mike (MikeOSS)](https://mikeoss.com), the open-source
-legal AI platform for document review, drafting, and legal research, adapted
-for in-house legal teams.
+Spectre is built on MikeGC, a fork of [Mike (MikeOSS)](https://mikeoss.com),
+the open-source legal AI platform for document review, drafting, and legal
+research.
 
 > [!NOTE]
-> MikeGC is a work in progress. Features and setup may change without notice.
+> Spectre is a work in progress. Features and setup may change without notice.
 
-## Sponsorship
+## Bangladesh
 
-Disclosure: MikeGC is sponsored by
+See [Spectre for Bangladesh](docs/bangladesh.md) for what is adapted, how to
+deploy with OpenAI, and the limits lawyers should know about. In short:
+
+- **OpenAI by default**: set `OPENAI_API_KEY` and every chat, review, title,
+  intake and background task runs on OpenAI with no model to pick first.
+  Anthropic, Gemini, Mistral, routers and local models still work.
+- **Bangladeshi law**: answers follow Bangladeshi law and procedure unless
+  you say otherwise, cite cases in DLR, BLD, BLC, MLR and SCOB form, and flag
+  Acts that the 2024-2026 ordinances changed.
+- **Laws of Bangladesh lookup**: the assistant searches and reads Acts and
+  sections on bdlaws.minlaw.gov.bd and links to them.
+- **Proper Bangla**: Bangla answers, Bangla in generated Word and PowerPoint
+  files, Bangla fonts for PDF conversion, correct matching and highlighting of
+  Bangla quotes, repair of Bangla text extracted from PDFs, and conversion of
+  legacy Bijoy (SutonnyMJ) documents to Unicode.
+- **Scans and broken PDFs**: pages with no usable text are transcribed by a
+  vision model (Bangla OCR), and garbled text layers never reach the model.
+- **Checkable authorities**: every DLR, BLD, BLC or SCOB citation an answer did
+  not read in a source is shown as not verified.
+- **Court-ready output**: word-level Word tracked changes, HCD paper books to
+  the 2012 Rule, Bangla-calendar dates and the Sunday to Thursday week.
+- **Five corporate use cases** with real tracked-change redlines in
+  [docs/examples/bangladesh](docs/examples/bangladesh/README.md), and 19
+  Bangladesh workflows.
+- **Confidentiality**: OpenAI is told not to store responses.
+
+## Upstream sponsorship
+
+Disclosure: MikeGC, on which Spectre is built, is sponsored by
 [GENERAL LEGAL, LLP](https://general.legal).
 
 ## In-house features
@@ -32,12 +64,12 @@ Planned, starting with:
 
 ## Built on Mike
 
-MikeGC keeps the full Mike platform. It combines a Next.js frontend, an Express backend, Supabase Auth/Postgres,
+Spectre keeps the full Mike platform. It combines a Next.js frontend, an Express backend, Supabase Auth/Postgres,
 and Cloudflare R2-compatible object storage.
 
 Website: [mikeoss.com](https://mikeoss.com)
 
-![Mike assistant home screen](docs/assets/mike-home.png)
+![Assistant home screen](docs/assets/mike-home.png)
 
 ## Features
 
@@ -51,7 +83,7 @@ Website: [mikeoss.com](https://mikeoss.com)
 
 ## Quick start
 
-The included Docker Compose stack runs Mike, Supabase, RustFS object storage,
+The included Docker Compose stack runs Spectre, Supabase, RustFS object storage,
 and local email capture without requiring managed infrastructure.
 
 1. Copy the local environment templates:
@@ -89,7 +121,7 @@ authentication behavior, Ollama setup, and first-run guidance.
 
 ### Telemetry
 
-Mike sends scrubbed error reports (no document content, user identities, or
+Spectre sends scrubbed error reports (no document content, user identities, or
 request data) to the project's Sentry by default. Set `SENTRY_DISABLED=true` to
 opt out, or set `SENTRY_DSN` to use your own. See the
 [observability guide](docs/observability.md) for the exact policy, per-runtime
@@ -127,7 +159,7 @@ variables, and the [Sentry data audit](docs/sentry-data-audit.md).
 
 ## System workflows
 
-MikeGC's system assistant and tabular-review workflows are maintained in the
+Spectre's system assistant and tabular-review workflows are maintained in the
 [`open-legal-products/mikegc-workflows`](https://github.com/open-legal-products/mikegc-workflows)
 repository, licensed under Apache 2.0. See
 [Contributing](CONTRIBUTING.md#system-workflows) for how they are packaged and
@@ -135,6 +167,6 @@ synchronized with this application.
 
 ## License
 
-Mike is available under the [GNU Affero General Public License v3.0](LICENSE).
+Spectre, like Mike, is available under the [GNU Affero General Public License v3.0](LICENSE).
 Bundled [public contract templates](docs/preset-templates.md#maintaining-the-catalog)
 retain their publishers' separate licenses and notices.

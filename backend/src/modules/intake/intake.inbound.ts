@@ -193,8 +193,8 @@ async function noteMessagesSeen(db: Db, settings: AutomationRow) {
  * verification challenge is answered as soon as a signing secret is saved,
  * so the URL can be verified before Slack is turned on. While Slack is on,
  * any person's message in a thread linked to a request is that request's
- * reply, and a mention of MikeGC anywhere else is a new request. Everything
- * else (channel chatter, MikeGC's own and other bots' messages, edits and
+ * reply, and a mention of Spectre anywhere else is a new request. Everything
+ * else (channel chatter, Spectre's own and other bots' messages, edits and
  * deletions) is acknowledged and dropped without storing its content.
  */
 export async function receiveSlackEvent(
@@ -232,7 +232,7 @@ export async function receiveSlackEvent(
   const event = slackMessageEvent.safeParse(envelope.data.event);
   if (!event.success) return ok({});
   const message = event.data;
-  // Bots, including MikeGC's own posts, never file requests or reply; edits,
+  // Bots, including Spectre's own posts, never file requests or reply; edits,
   // deletions and joins are not messages a person sent.
   if (
     message.bot_id ||
@@ -244,7 +244,7 @@ export async function receiveSlackEvent(
   const team = envelope.data.team_id ?? settings.slack_team_id ?? "";
   const externalId = `${message.channel}:${message.ts}`;
   const inThread = !!message.thread_ts && message.thread_ts !== message.ts;
-  // A thread where MikeGC answered without recording a request: replies
+  // A thread where Spectre answered without recording a request: replies
   // there reach it without a mention.
   let conversing = false;
   if (inThread) {
@@ -292,7 +292,7 @@ export async function receiveSlackEvent(
       }
     }
   }
-  // Only a mention of MikeGC starts a request, or a reply in its conversation.
+  // Only a mention of Spectre starts a request, or a reply in its conversation.
   if (message.type !== "app_mention" && !conversing) return ok({});
   const payload: SlackInboundPayload = {
     kind: "slack",
@@ -312,7 +312,7 @@ export async function receiveSlackEvent(
  * A Teams activity from the organization's own bot. It must carry a Bot
  * Connector token for the bot's app ID, from the configured tenant. While
  * Teams is on, a person's message in a thread linked to a request is its
- * reply, and a message that mentions MikeGC in any other channel thread is
+ * reply, and a message that mentions Spectre in any other channel thread is
  * a new request; everything else is acknowledged and dropped.
  */
 export async function receiveTeamsActivity(
@@ -387,7 +387,7 @@ export async function receiveTeamsActivity(
     return routed.ok ? ok({ status: routed.data }) : routed;
   }
   if (!teamsMentionsBot(activity, settings.teams_app_id)) {
-    // Unless MikeGC answered in this thread without recording a request.
+    // Unless Spectre answered in this thread without recording a request.
     let conversing;
     try {
       conversing = await findConversation(db, settings.org_id, "teams", `${tenant}:${conversationId}`);

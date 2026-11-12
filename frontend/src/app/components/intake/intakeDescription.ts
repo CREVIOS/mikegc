@@ -1,5 +1,5 @@
 /**
- * The original message MikeGC appends to a request's description when it
+ * The original message Spectre appends to a request's description when it
  * writes a summary (`composeDescription` in the backend's intake.triage.ts):
  *
  *   <summary>
@@ -36,7 +36,7 @@ export interface IntakeOriginalMessage {
   channel: string | null;
   subject: string | null;
   entries: IntakeOriginalEntry[];
-  /** "name: reason" lines for attachments MikeGC left off. */
+  /** "name: reason" lines for attachments Spectre left off. */
   notAttached: string[];
   shortened: boolean;
 }
@@ -64,7 +64,7 @@ const ENTRY_HEAD = new RegExp(String.raw`^(.+), (${TIME}):$`);
 /** Channels whose original message can be a thread of entries; an email is one message. */
 const THREAD_CHANNELS = ["Slack", "Teams"];
 /**
- * A line of MikeGC's list of attachments it left off, in the words of
+ * A line of Spectre's list of attachments it left off, in the words of
  * `SKIPPED_REASON` in the backend's intake.triage.ts.
  */
 const NOT_ATTACHED_LINE =
@@ -122,7 +122,7 @@ export function parseIntakeDescription(
       from = from.slice(0, -` in ${name}`.length);
     }
 
-  // MikeGC's list ends the description, in its own words; the same marker
+  // Spectre's list ends the description, in its own words; the same marker
   // in the requester's text is part of their message.
   let notAttached: string[] = [];
   const tail = rest.lastIndexOf(NOT_ATTACHED);

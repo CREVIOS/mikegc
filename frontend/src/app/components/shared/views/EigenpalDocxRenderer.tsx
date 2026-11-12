@@ -22,7 +22,7 @@ const editorLabels = { formattingBar: { commentsAndChanges: "Comments" } };
 const BODY_PART = "/word/document.xml";
 
 /**
- * The ranges of a native review item that belong to one Mike edit. A native
+ * The ranges of a native review item that belong to one Spectre edit. A native
  * replacement can pair this edit with a neighbouring revision; its leading
  * `replacedRangeCount` ranges are the deletion and the rest the insertion.
  */
@@ -88,7 +88,7 @@ export default function DocxRenderer({ bytes, mode, toolbarVisible = true, filen
                 onFontError={() => setFontWarning(true)}
                 onReady={(editor) => {
                     // Preserve the unobstructed document view on open; the native
-                    // Comments button controls Mike's comment panel.
+                    // Comments button controls Spectre's comment panel.
                     if (editor.snapshot().reviewPaneOpen) editor.exec({ type: "toggleReviewPane" });
                     setReviewEditor(editor);
                     setToolbar(host.current?.querySelector<HTMLElement>(".docx-toolbar") ?? null);

@@ -14,6 +14,7 @@ export const RESPONSE_LANGUAGES = {
     "en-US": "American English",
     "en-GB": "British English",
     ar: "Arabic",
+    bn: "Bangla (Bengali, as written in Bangladesh)",
     "zh-Hans": "Simplified Chinese",
     "zh-Hant": "Traditional Chinese",
     cs: "Czech",

@@ -9,7 +9,37 @@ export const STANDARD_FONT_DATA_URL = (() => {
   }
 })();
 
+/**
+ * pdf.js's character maps, so text in CID-keyed fonts (common in Bangla and
+ * other non-Latin PDFs) decodes to Unicode instead of being dropped.
+ */
+export const CMAP_URL = (() => {
+  try {
+    const pkgPath = require.resolve("pdfjs-dist/package.json");
+    return path.join(path.dirname(pkgPath), "cmaps") + path.sep;
+  } catch {
+    return undefined;
+  }
+})();
+
 import { docxToPdf } from "./convert";
+import { readablePdfText } from "./bangla";
+import { textLayerQuality } from "./bangla/textLayer";
+import {
+  OCR_PAGE_NOTE,
+  ocrConfig,
+  ocrPdfPages,
+  visionTranscriber,
+  type OcrConfig,
+  type Transcribe,
+} from "./ocr";
+
+/** OCR for pages with no usable text layer; omitted or null means none. */
+export type PdfOcrOptions = { config: OcrConfig | null; transcribe?: Transcribe };
+
+/** A garbled page stands in for its text when it cannot be transcribed. */
+export const GARBLED_PAGE_NOTE =
+  "[This page's text layer is garbled (it does not match the printed page), so it was not read. The page needs OCR.]";
 import { orderTextItemLines } from "./pdfTextOrder";
 
 type PdfTextItem = {
@@ -241,7 +271,10 @@ type PdfPageText = {
  * the joined text afterwards: a PDF line that happens to read "[Page 2]" is
  * content, not a page boundary.
  */
-async function readPdfPages(buf: ArrayBuffer): Promise<PdfPageText[] | null> {
+async function readPdfPages(
+  buf: ArrayBuffer,
+  ocr?: PdfOcrOptions,
+): Promise<PdfPageText[] | null> {
   let loadingTask: PdfLoadingTask | undefined;
   try {
     const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs" as string);
@@ -255,6 +288,7 @@ async function readPdfPages(buf: ArrayBuffer): Promise<PdfPageText[] | null> {
       // the file once its text has been read.
       data: new Uint8Array(buf).slice(),
       standardFontDataUrl: STANDARD_FONT_DATA_URL,
+      ...(CMAP_URL ? { cMapUrl: CMAP_URL, cMapPacked: true } : {}),
     });
     const pdf = await loadingTask.promise;
     const pages: PdfPageText[] = [];
@@ -270,10 +304,11 @@ async function readPdfPages(buf: ArrayBuffer): Promise<PdfPageText[] | null> {
       const positionedFields = fields
         .map(positionedFormItem)
         .filter((item): item is PdfTextItem => item !== null);
-      const layout = layoutPageText([
-        ...textContent.items,
-        ...positionedFields,
-      ]);
+      // Bangla made readable: legacy Bijoy text converted, vowel signs the
+      // PDF stored in visual order put back in logical order, and NFC.
+      const layout = readablePdfText(
+        layoutPageText([...textContent.items, ...positionedFields]),
+      );
       let pageText = `[Page ${i}]\n${layout}`;
       const unpositionedFields = fields.filter((field) => !field.rect);
       if (unpositionedFields.length) {
@@ -281,10 +316,29 @@ async function readPdfPages(buf: ArrayBuffer): Promise<PdfPageText[] | null> {
           .map((field) => field.text)
           .join("\n")}`;
       }
+      const garbled = textLayerQuality(layout) === "garbled";
       pages.push({
-        text: pageText,
-        empty: !layout.trim() && unpositionedFields.length === 0,
+        text: garbled ? `[Page ${i}]\n${GARBLED_PAGE_NOTE}` : pageText,
+        empty: garbled || (!layout.trim() && unpositionedFields.length === 0),
       });
+    }
+    // Scanned and garbled pages: transcribe them while the PDF is open.
+    const unreadable = pages.flatMap((page, index) => (page.empty ? [index + 1] : []));
+    if (ocr?.config && unreadable.length) {
+      const transcribed = await ocrPdfPages(
+        pdf as unknown as Parameters<typeof ocrPdfPages>[0],
+        unreadable,
+        {
+          maxPages: ocr.config.maxPages,
+          transcribe: ocr.transcribe ?? visionTranscriber(ocr.config),
+        },
+      );
+      for (const [pageNumber, text] of transcribed) {
+        pages[pageNumber - 1] = {
+          text: `[Page ${pageNumber}]\n${OCR_PAGE_NOTE}\n${text}`,
+          empty: false,
+        };
+      }
     }
     return pages;
   } catch {
@@ -296,8 +350,11 @@ async function readPdfPages(buf: ArrayBuffer): Promise<PdfPageText[] | null> {
 }
 
 /** Strict extraction for persisted search: unreadable is not a successful blank. */
-export async function extractPdfTextForIndex(buf: ArrayBuffer): Promise<{ text: string; textlessPageCount: number }> {
-  const pages = await readPdfPages(buf);
+export async function extractPdfTextForIndex(
+  buf: ArrayBuffer,
+  ocr: PdfOcrOptions = { config: ocrConfig() },
+): Promise<{ text: string; textlessPageCount: number }> {
+  const pages = await readPdfPages(buf, ocr);
   if (!pages) throw new Error("document_text_pdf_unreadable");
   const textlessPageCount = pages.filter((page) => page.empty).length;
   return {
@@ -356,8 +413,11 @@ export function textLayerNotice(
  * scanned PDF is replaced by the notice; a partly scanned one keeps its text
  * with the notice in front.
  */
-export async function extractPdfTextForModel(buf: ArrayBuffer): Promise<string> {
-  const pages = await readPdfPages(buf);
+export async function extractPdfTextForModel(
+  buf: ArrayBuffer,
+  ocr: PdfOcrOptions = { config: ocrConfig() },
+): Promise<string> {
+  const pages = await readPdfPages(buf, ocr);
   if (!pages) return "";
   const text = pages.map((page) => page.text).join("\n\n");
   const emptyPages = pages.flatMap((page, i) => (page.empty ? [i + 1] : []));

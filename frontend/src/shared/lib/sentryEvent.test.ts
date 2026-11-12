@@ -403,7 +403,7 @@ describe("automatic captures of an already-reported error", () => {
 });
 
 describe("resolveDsn", () => {
-    it("is off when disabled, uses an explicit DSN, else the built-in Mike DSN", () => {
+    it("is off when disabled, uses an explicit DSN, else the built-in Spectre DSN", () => {
         expect(resolveDsn({ disabled: "true", dsn: "https://x@y/1", fallback: MIKE_SENTRY_DSN.frontend })).toEqual({ dsn: "", source: "disabled" });
         expect(resolveDsn({ disabled: "TRUE ", fallback: "f" })).toEqual({ dsn: "", source: "disabled" });
         expect(resolveDsn({ disabled: "false", dsn: " https://x@y/1 ", fallback: "f" })).toEqual({ dsn: "https://x@y/1", source: "env" });
@@ -556,7 +556,7 @@ describe("next dev toolchain noise", () => {
         expect(scrubEvent(thrown)).not.toBeNull();
 
         // Logged through Next's console interceptor, but the nested Error
-        // was thrown in Mike's code: its stack keeps the event.
+        // was thrown in Spectre's code: its stack keeps the event.
         const nested = new Error("render failed");
         nested.stack = `Error: render failed\n    at ChatView (${origin}/_next/static/chunks/src_app_chat_page_tsx_9f8e7d._.js:12:5)`;
         const logged: ScrubbableEvent = {

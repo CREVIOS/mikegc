@@ -65,7 +65,7 @@ export function DocumentActions({
         if (cancelled) return;
         setWorkflowsError(
           userMessage(reason, {
-            fallback: "Mike couldn't load your quick actions. Try again.",
+            fallback: "Spectre couldn't load your quick actions. Try again.",
           }),
         );
         notifyError(reason, {

@@ -1,17 +1,17 @@
 # Word add-in development and deployment
 
 This guide contains the detailed setup, deployment, testing, and troubleshooting
-reference for the [Mike Word add-in](../word-addin/README.md).
+reference for the [Spectre Word add-in](../word-addin/README.md).
 
 ## Architecture
 
-The add-in uses the same backend-managed session and Mike API as the web app:
+The add-in uses the same backend-managed session and Spectre API as the web app:
 
-- Password, Google, refresh, and logout operations go through the Mike backend.
-- Chat, workflows, uploads, profiles, and model discovery use the Mike API.
+- Password, Google, refresh, and logout operations go through the Spectre backend.
+- Chat, workflows, uploads, profiles, and model discovery use the Spectre API.
 - Word conversations use dedicated `word_*` tables and do not appear in the
   web assistant's normal chat history.
-- The task pane requires HTTPS, so local development proxies `/api` to Mike
+- The task pane requires HTTPS, so local development proxies `/api` to Spectre
   through `https://localhost:3200`.
 
 Password and Google sign-in both produce the same HttpOnly cookie session.
@@ -71,7 +71,7 @@ steps manually:
 
    Fully quit and reopen Word after installing it.
 
-4. Start the Mike backend:
+4. Start the Spectre backend:
 
    ```bash
    (cd ../backend && npm run dev)
@@ -93,7 +93,7 @@ steps manually:
 
    `WORD_ADDIN_SIDELOAD` applies only to `npm start` and the setup helper.
 
-The task pane appears under **Home → Mike Legal AI → Mike**. `npm run
+The task pane appears under **Home → Spectre Legal AI → Spectre**. `npm run
 dev:server` is retained as an internal alias for the direct webpack command.
 
 ## Manual sideloading
@@ -105,7 +105,7 @@ mkdir -p ~/Library/Containers/com.microsoft.Word/Data/Documents/wef
 cp manifest.xml ~/Library/Containers/com.microsoft.Word/Data/Documents/wef/
 ```
 
-Restart Word, then choose **Insert → Add-ins → My Add-ins → Mike**.
+Restart Word, then choose **Insert → Add-ins → My Add-ins → Spectre**.
 
 ### Word on the web
 
@@ -138,7 +138,7 @@ npm run build
 The build writes task-pane assets and a URL-rewritten manifest to `dist/`.
 The checked-in `manifest.xml` remains configured for localhost.
 
-The add-in host must reverse-proxy `https://word.example.com/api/*` to the Mike
+The add-in host must reverse-proxy `https://word.example.com/api/*` to the Spectre
 backend while preserving `Cookie`, `Origin`, response `Set-Cookie` headers, and
 streaming bodies. Keeping `/api` on the task-pane origin avoids third-party
 cookie restrictions across Word desktop and Word on the web.
@@ -190,7 +190,7 @@ does not copy or delete conversations.
 
 Cloud history is associated with an identifier in the Word document's Office
 settings. That identifier travels with copied files, although server access is
-still scoped to the signed-in Mike account. A same-account **Save As** copy can
+still scoped to the signed-in Spectre account. A same-account **Save As** copy can
 therefore initially share the source document's chat history.
 
 ## Errors and support
@@ -213,7 +213,7 @@ resolves, so a change on either side of the contract fails that suite.
 ## Automated tests
 
 The Playwright suite uses a mocked Office.js host and stubbed backend, so it
-does not require Word, Supabase, or a live Mike API:
+does not require Word, Supabase, or a live Spectre API:
 
 ```bash
 cd word-addin
@@ -314,6 +314,6 @@ Confirm the Word host supports `WordApi 1.6`.
 
 ### Uploads or workflows fail
 
-Confirm the Mike API is reachable at the configured URL, the object-storage
+Confirm the Spectre API is reachable at the configured URL, the object-storage
 bucket exists, and the database contains at least one workflow. Check backend
 logs for the underlying request error.

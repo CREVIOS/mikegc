@@ -50,7 +50,7 @@ export default function SupportPage() {
         {
             value: "question",
             label: "Question",
-            description: "Ask a question about using Mike",
+            description: "Ask a question about using Spectre",
         },
         {
             value: "other",
@@ -106,7 +106,7 @@ export default function SupportPage() {
                 describeError(err, {
                     action: "send your message",
                     fallback:
-                        "Mike couldn't send your message. Try again, or email us directly.",
+                        "Spectre couldn't send your message. Try again, or email us directly.",
                 }),
             );
         } finally {

@@ -6,6 +6,7 @@
 import { completeText } from "../../lib/llm";
 import type { Db } from "../../lib/supabase";
 import { getUserModelSettings } from "../user/user.service";
+import { defaultModelForKeys } from "../../lib/modelSelection";
 import { failure } from "../../lib/serviceResult";
 import { statusFailure, type TabularResult } from "./tabular.shared";
 
@@ -18,17 +19,17 @@ export function formatPromptSuffix(format?: string, tags?: string[]): string {
         case "bulleted_list":
             return ' The "summary" field in your JSON response must be a markdown bulleted list only — no prose. Format: each item on its own line, prefixed with "* " (asterisk + single space), e.g.\n* First item\n* Second item\n* Third item';
         case "number":
-            return ' The "summary" field in your JSON response must be a single number only. No units or explanation.';
+            return ' The "summary" field in your JSON response must be a single number only, in ASCII digits even when the document writes it in Bangla digits (e.g. ১২,৫০০ becomes 12500). No units or explanation.';
         case "percentage":
             return ' The "summary" field in your JSON response must be a single percentage value only (e.g. 42%). No explanation.';
         case "monetary_amount":
-            return ' The "summary" field in your JSON response must be the monetary value only, including currency symbol (e.g. $1,234.56). No explanation.';
+            return ' The "summary" field in your JSON response must be the monetary value only, including the currency symbol or code (e.g. Tk 1,25,00,000 or $1,234.56). Keep the lakh/crore grouping a Bangladeshi document uses, and write Bangla digits as ASCII digits (৳ ১,২৫,০০০ becomes Tk 1,25,000). No explanation.';
         case "currency":
-            return ' The "summary" field in your JSON response must contain only the currency code(s). Wrap each code in double square brackets, e.g. [[USD]] or [[EUR]]. No other text.';
+            return ' The "summary" field in your JSON response must contain only the currency code(s). Wrap each code in double square brackets, e.g. [[BDT]], [[USD]] or [[EUR]]. Taka, Tk and ৳ are [[BDT]]. No other text.';
         case "yes_no":
             return ' The "summary" field in your JSON response must be [[Yes]] or [[No]] only. The "reasoning" field MUST include an inline citation [[document:SOURCE_DOCUMENT_ID||page:N||quote:verbatim excerpt ≤25 words]] pointing to the exact language in the document that supports the Yes/No answer.';
         case "date":
-            return ' The "summary" field in your JSON response must be the date only in DD Month YYYY format (e.g. 1 January 2024). If a range, give both dates separated by an em dash. The "reasoning" field MUST include an inline citation [[document:SOURCE_DOCUMENT_ID||page:N||quote:verbatim excerpt ≤25 words]] pointing to the exact place in the document where the date is found.';
+            return ' The "summary" field in your JSON response must be the date only in DD Month YYYY format (e.g. 1 January 2024), in English with ASCII digits even when the document writes it in Bangla (১২ নভেম্বর ২০২৬ becomes 12 November 2026); give a Bangla-calendar (বঙ্গাব্দ) date as its Gregorian date and quote the original in the reasoning. If a range, give both dates separated by an em dash. The "reasoning" field MUST include an inline citation [[document:SOURCE_DOCUMENT_ID||page:N||quote:verbatim excerpt ≤25 words]] pointing to the exact place in the document where the date is found.';
         case "tag":
             return tags?.length
                 ? ` The \"summary\" field in your JSON response must contain exactly one tag wrapped in double square brackets. Available tags: ${tags.map((t) => `[[${t}]]`).join(", ")}. No other text. The \"reasoning\" field MUST include an inline citation [[document:SOURCE_DOCUMENT_ID||page:N||quote:verbatim excerpt ≤25 words]] pointing to the exact language in the document that supports the chosen tag.`
@@ -96,10 +97,15 @@ export async function draftColumnPrompt(
         `format handling is applied separately and must not be duplicated inside the prompt text.`;
 
     try {
-        const { tabular_model: promptModel, api_keys } =
+        const { tabular_model: savedModel, api_keys } =
             // Pass the request's client through: omitting it built a second
             // Supabase client (and a second connection) per draft.
             await getUserModelSettings(userId, db);
+        // No saved tabular model: draft on the deployment default (OpenAI
+        // unless configured otherwise) rather than refusing.
+        const promptModel =
+            savedModel ??
+            (await defaultModelForKeys({ apiKeys: api_keys, userId, db }));
         if (!promptModel) {
             return statusFailure(409, {
                 code: "model_required",

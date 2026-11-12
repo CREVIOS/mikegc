@@ -28,6 +28,11 @@ export async function selectClaudeModel(page: Page) {
         timeout: process.env.REACT_STRESS === "1" ? 30_000 : 10_000,
     });
     await trigger.click();
+    // The menu opens the selected model's provider group; a deployment that
+    // starts on another provider (Spectre defaults to OpenAI) leaves the
+    // Anthropic group folded.
+    const anthropic = page.getByRole("menuitem", { name: "Anthropic", exact: true });
+    if ((await anthropic.getAttribute("aria-expanded")) !== "true") await anthropic.click();
     await page.getByRole("menuitem", { name: CLAUDE_MODEL_LABEL }).click();
     await expect(trigger).toHaveAttribute("title", `Choose model — ${CLAUDE_MODEL_LABEL}`, {
         timeout: 5_000,

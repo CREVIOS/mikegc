@@ -23,6 +23,15 @@ import type { Db } from "../../../lib/supabase";
 import { buildUserMcpTools } from "../../../lib/mcpConnectors";
 import { buildGoogleDriveTools } from "../../../lib/integrations/googleDrive";
 import { COURTLISTENER_TOOLS } from "./tools/courtlistenerTools";
+import { unverifiedCaseCitations } from "../../../lib/bangladesh/citations";
+import {
+  BD_LAW_SYSTEM_PROMPT,
+  BD_LAW_TOOLS,
+  bdLawToolsEnabled,
+  createBdLawTurnState,
+  isBdLawTool,
+  runBdLawToolCall,
+} from "./tools/bdLawTools";
 import { INTAKE_ACTION_TOOL } from "./tools/intakeActions";
 import { createProviderWebSearchTracker } from "./tools/providerWebSearch";
 import {
@@ -381,6 +390,10 @@ export async function runLLMStream(params: {
     unsafeWrite(sanitizeAssistantSseChunk(chunk));
   const isSubagent = subagentRun !== undefined;
   const researchTools = includeResearchTools ? COURTLISTENER_TOOLS : [];
+  // The Laws of Bangladesh: one fixed government host, so offered whenever
+  // the deployment is a Bangladesh one, independent of web search.
+  const bdLawTools = bdLawToolsEnabled() ? BD_LAW_TOOLS : [];
+  const bdLawTurnState = createBdLawTurnState();
   // Account-owned credentials are enabled only in Personal.
   const connectorTools =
     subagentRun?.connectorTools ??
@@ -407,6 +420,7 @@ export async function runLLMStream(params: {
   const baseTools = [
     ...conversationTools,
     ...researchTools,
+    ...bdLawTools,
     ...WORKFLOW_TOOLS,
     ...PLAYBOOK_TOOLS,
     ...(intakeRequest ? [INTAKE_ACTION_TOOL] : []),
@@ -463,6 +477,7 @@ export async function runLLMStream(params: {
             : MIKE_WEB_SEARCH_SYSTEM_PROMPT,
         ]
       : []),
+    ...(bdLawTools.length ? [BD_LAW_SYSTEM_PROMPT] : []),
     ...(subagentRuns ? [delegateSystemPrompt(subagentDefaults)] : []),
   ].join("\n\n");
   const chatMessages: LlmMessage[] = rawMsgs
@@ -484,6 +499,8 @@ export async function runLLMStream(params: {
   if (memory.message) chatMessages.unshift(memory.message);
 
   const events: AssistantEvent[] = [];
+  // The content of every tool result in this answer, for the citation check.
+  const retrievedSources: string[] = [];
   // One assistant turn produces at most one document_versions row per
   // edited doc. `runToolCalls` fires once per tool-call batch; the model
   // may emit multiple batches in a single turn, so this map persists
@@ -862,11 +879,15 @@ export async function runLLMStream(params: {
             (!isSubagent || !SUBAGENT_EXCLUDED_TOOL_NAMES.has(c.name)),
         );
         const webCalls = permittedCalls.filter((c) => webToolNames.has(c.name));
+        const bdLawCalls = bdLawTools.length
+          ? permittedCalls.filter((c) => isBdLawTool(c.name))
+          : [];
         const delegateCalls = permittedCalls.filter(
           (c) => c.name === DELEGATE_TOOL_NAME,
         );
         const handledElsewhere = (c: NormalizedToolCall) =>
           webToolNames.has(c.name) ||
+          (bdLawTools.length > 0 && isBdLawTool(c.name)) ||
           c.name === DELEGATE_TOOL_NAME ||
           !!clientTools?.owns(c.name);
         const serverCalls = permittedCalls.filter((c) => !handledElsewhere(c));
@@ -886,9 +907,21 @@ export async function runLLMStream(params: {
             }),
           ),
         );
+        const bdLawResults = await Promise.all(
+          bdLawCalls.map((call) =>
+            runBdLawToolCall(call, {
+              state: bdLawTurnState,
+              nonce,
+              signal,
+              write,
+            }),
+          ),
+        );
         throwIfAborted(signal);
-        webCalls.forEach((call, index) => {
-          const { content, event } = webResults[index];
+        [
+          ...webCalls.map((call, index) => [call, webResults[index]] as const),
+          ...bdLawCalls.map((call, index) => [call, bdLawResults[index]] as const),
+        ].forEach(([call, { content, event }]) => {
           clientResultByCallId.set(call.id, content);
           events.push(event);
           write(`data: ${JSON.stringify(event)}\n\n`);
@@ -1060,6 +1093,8 @@ export async function runLLMStream(params: {
               error: `Tool '${c.name}' is not available.`,
             }),
         }));
+        // What this answer read, for checking the authorities it cites.
+        for (const result of results) retrievedSources.push(result.content);
         // Recorded before a pause too, so a continued subagent knows what
         // already ran beside the actions awaiting approval.
         subagentRun?.onToolBatch(calls, results);
@@ -1182,6 +1217,24 @@ export async function runLLMStream(params: {
   write(
     `data: ${JSON.stringify({ type: "citations", status: "final", citations })}\n\n`,
   );
+  // Bangladeshi law-report citations the answer did not take from anything
+  // it read or the user gave it: shown to the user as not verified.
+  if (!isSubagent) {
+    const unverified = unverifiedCaseCitations(fullText, [
+      ...retrievedSources,
+      ...rawMsgs
+        .filter((m) => m.role !== "assistant")
+        .map((m) => (typeof m.content === "string" ? m.content : "")),
+    ]);
+    if (unverified.length) {
+      const check: AssistantEvent = {
+        type: "citation_check",
+        unverified: unverified.map((citation) => citation.key),
+      };
+      events.push(check);
+      write(`data: ${JSON.stringify(check)}\n\n`);
+    }
+  }
   if (!isSubagent && answerModel) {
     const details: AssistantEvent = {
       type: "response_details",

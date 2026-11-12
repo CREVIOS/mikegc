@@ -1207,6 +1207,14 @@ export async function consumeAssistantTurnStream(
           continue;
         }
 
+        if (data.type === "citation_check") {
+          const unverified = Array.isArray(data.unverified)
+            ? data.unverified.filter((c): c is string => typeof c === "string" && c.length > 0)
+            : [];
+          if (unverified.length) pushEvent({ type: "citation_check", unverified });
+          continue;
+        }
+
         if (data.type === "web_sources") {
           const sources = parseWebSources(data.sources);
           if (sources.length) pushEvent({ type: "web_sources", sources });

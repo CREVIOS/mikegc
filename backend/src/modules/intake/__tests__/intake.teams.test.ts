@@ -130,7 +130,7 @@ describe("replying in Teams", () => {
     setup(true);
     await deliver();
     expect(calls.find((c) => c.url.includes("/drives/"))!.url).toBe(
-      "https://graph.microsoft.com/v1.0/drives/drive-1/items/folder-1:/MikeGC/Review%20Acme%20NDA/nda.docx:/content?@microsoft.graph.conflictBehavior=rename",
+      "https://graph.microsoft.com/v1.0/drives/drive-1/items/folder-1:/Spectre/Review%20Acme%20NDA/nda.docx:/content?@microsoft.graph.conflictBehavior=rename",
     );
     const post = calls.find((c) => c.url.endsWith("/activities"))!;
     expect(post.url).toBe(
@@ -230,7 +230,7 @@ describe("answering in a Teams chat without a request", () => {
     text: "hi there",
     files: [],
   };
-  it("posts MikeGC's reply in the message's thread, escaped, as MikeGC", async () => {
+  it("posts Spectre's reply in the message's thread, escaped, as Spectre", async () => {
     setup(false);
     await sendChatReply(memory.db, inbound, settings(), payload as never, "Hi! What can *Legal* help with?");
     const posts = calls.filter((c) => c.url.endsWith("/activities"));
@@ -282,7 +282,7 @@ describe("reading a Teams thread for a new request", () => {
     from: { user: { displayName: "Ana Sales" } },
     body: { content: "<p>Can someone check the <b>Acme NDA</b>?</p>" },
   };
-  it("takes out only MikeGC's own mention, as Graph lists it", async () => {
+  it("takes out only Spectre's own mention, as Graph lists it", async () => {
     setup(false, (url) => {
       if (url === graph) return Response.json(root);
       if (url.startsWith(`${graph}/replies`))
@@ -292,9 +292,9 @@ describe("reading a Teams thread for a new request", () => {
               id: "3",
               createdDateTime: payload.date,
               from: { user: { displayName: "Jane Business" } },
-              body: { content: '<at id="0">MikeGC</at> please ask <at id="1">Ben Ops</at> too' },
+              body: { content: '<at id="0">Spectre</at> please ask <at id="1">Ben Ops</at> too' },
               mentions: [
-                { id: 0, mentionText: "MikeGC", mentioned: { application: { id: appId } } },
+                { id: 0, mentionText: "Spectre", mentioned: { application: { id: appId } } },
                 { id: 1, mentionText: "Ben Ops", mentioned: { user: { id: "u-ben" } } },
               ],
             },
@@ -305,7 +305,7 @@ describe("reading a Teams thread for a new request", () => {
     const message = await teamsInboundMessage(settings(), { ...payload, completed: [] } as never);
     expect(message.text).toContain("Can someone check the Acme NDA?");
     expect(message.text).toContain("please ask Ben Ops too");
-    expect(message.text).not.toContain("MikeGC");
+    expect(message.text).not.toContain("Spectre");
   });
   it("ends with the signed mention when Graph's copy of the thread stops short of it", async () => {
     setup(false, (url) => {
@@ -326,8 +326,8 @@ describe("reading Teams activities", () => {
       serviceUrl: "https://smba.trafficmanager.net/emea/",
       from: { id: "29:jane" },
       conversation: { id: "19:abc;messageid=1" },
-      text: "<at>MikeGC</at> please <b>review</b> the NDA<br>by Friday",
-      entities: [{ type: "mention", text: "<at>MikeGC</at>", mentioned: { id: `28:${appId}` } }],
+      text: "<at>Spectre</at> please <b>review</b> the NDA<br>by Friday",
+      entities: [{ type: "mention", text: "<at>Spectre</at>", mentioned: { id: `28:${appId}` } }],
     });
     expect(teamsActivityText(activity, appId)).toBe("please review the NDA\nby Friday");
   });

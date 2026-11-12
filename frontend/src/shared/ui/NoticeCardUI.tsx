@@ -1,5 +1,5 @@
 /**
- * The one card every notice in Mike is drawn with.
+ * The one card every notice in Spectre is drawn with.
  *
  * Two components show notices, and both render this card so they cannot
  * drift apart visually:

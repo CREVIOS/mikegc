@@ -341,7 +341,7 @@ export function browserSentryOptions(env: {
     tracesSampleRate?: string;
     nodeEnv?: string;
 }): Sentry.BrowserOptions {
-    // ON BY DEFAULT: the Mike project's own DSN unless NEXT_PUBLIC_SENTRY_DISABLED
+    // ON BY DEFAULT: the Spectre project's own DSN unless NEXT_PUBLIC_SENTRY_DISABLED
     // or a DSN of your own is baked in at build time (README, "Telemetry").
     const { dsn } = resolveDsn({
         disabled: env.disabled,

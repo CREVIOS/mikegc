@@ -30,7 +30,7 @@ export const WEB_SEARCH_SYSTEM_PROMPT = `WEB SEARCH:
 You can search the web. Search when the answer depends on recent information or on facts you are not sure of; answer from your own knowledge and the user's documents otherwise.
 Never put client names, matter details, personal data, or text from the user's documents into a search query. Search for the law or the public facts in general terms.
 Prefer primary and official sources: legislation, court and regulator websites, official publications.
-Cite every web page you rely on with an inline markdown link to it, for example [Companies Act 2006, s 172](https://www.legislation.gov.uk/ukpga/2006/46/section/172). Web pages never go in the <CITATIONS> block, which is only for the user's documents and cases.
+Cite every web page you rely on with an inline markdown link to it, for example [Contract Act, 1872, s 1](https://bdlaws.minlaw.gov.bd/act-26/section-160.html). Web pages never go in the <CITATIONS> block, which is only for the user's documents and cases.
 If a search fails or is unavailable, say so and answer without it. Never invent a URL.`;
 
 const WEB_TOOL_ERROR_MESSAGES: Record<WebToolErrorCode, string> = {
@@ -105,7 +105,7 @@ const READ_TOOL = {
 };
 
 /**
- * Mike's web tools for a turn. With the provider's own search, only the page
+ * Spectre's web tools for a turn. With the provider's own search, only the page
  * reader: the provider's tool is also called web_search.
  */
 export function webToolsFor(plan: WebSearchPlan | null) {
@@ -125,7 +125,7 @@ function pageKey(raw: string): string | null {
 }
 
 /**
- * What one turn has done with Mike's web tools. `readable` holds the pages
+ * What one turn has done with Spectre's web tools. `readable` holds the pages
  * read_webpage may open: without that limit, text injected into a page or a
  * document could make the model "read" a URL carrying the user's data to a
  * server of the attacker's choosing.
@@ -235,7 +235,7 @@ function failure(
 
 type WebToolContext = {
     state: WebTurnState;
-    /** Mike's search service, or null when the model searches by itself. */
+    /** Spectre's search service, or null when the model searches by itself. */
     account: WebSearchAccount | null;
     nonce?: string;
     signal?: AbortSignal;

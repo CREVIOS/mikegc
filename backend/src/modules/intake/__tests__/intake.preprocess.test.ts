@@ -171,7 +171,7 @@ describe("AI preprocessing", () => {
     expect(mocks.applyOrgTrackedEdits).toHaveBeenCalledTimes(1);
     expect(mocks.applyOrgTrackedEdits.mock.calls[0]![0]).toMatchObject({
       orgId: org,
-      author: "MikeGC",
+      author: "Spectre",
       doc: { id: nda },
       edits: [{ find: "five years", replace: "two years", reason: "Standard term." }],
     });
@@ -394,7 +394,7 @@ describe("checking what preprocessing needs first", () => {
     expect(memory.rows("intake_outbound")).toEqual([expect.objectContaining({ kind: "acknowledgement" })]);
     // No note until the answer's round.
     expect(memory.rows("intake_messages").some((m) => m.id === noteId)).toBe(false);
-    // A rerun of the same round finds MikeGC waiting on a later one.
+    // A rerun of the same round finds Spectre waiting on a later one.
     await expect(run()).resolves.toMatchObject({ skipped: "superseded" });
   });
   it("preprocesses once the answer arrives and nothing is missing, back in progress", async () => {

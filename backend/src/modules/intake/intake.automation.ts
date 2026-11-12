@@ -694,7 +694,7 @@ function graphAppFor(
 
 /**
  * Connect the organization's intake mailbox: Microsoft 365 through Graph,
- * or Google Workspace through the Gmail API. MikeGC checks it can open the
+ * or Google Workspace through the Gmail API. Spectre checks it can open the
  * mailbox, records only mail that arrives from now on, starts reading it,
  * and turns email on. The sender domains start with the address's own.
  */
@@ -768,7 +768,7 @@ export async function connectIntakeMailbox(
         graph_subscription_id: null,
         graph_subscription_expires_at: null,
         email_error:
-          "Microsoft couldn't reach MikeGC's notification URL, so MikeGC reads the mailbox every 15 minutes instead.",
+          "Microsoft couldn't reach Spectre's notification URL, so Spectre reads the mailbox every 15 minutes instead.",
       });
     }
     Object.assign(patch, {

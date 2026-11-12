@@ -328,6 +328,8 @@ interface UserProfile extends Partial<RouterProfileLists> {
   titleModel: string | null;
   tabularModel: string | null;
   lastSelectedChatModel: string | null;
+  /** The deployment's configured default chat model; absent on an older API. */
+  defaultChatModel?: string | null;
   lastSelectedReasoningLevel: ReasoningLevel;
   mfaOnLogin: boolean;
   legalResearchUs: boolean;

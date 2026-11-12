@@ -43,7 +43,7 @@ export function WorkflowModal({
         setWorkflows([]);
         setError(
           userMessage(reason, {
-            fallback: "Mike couldn't load your workflows. Try again.",
+            fallback: "Spectre couldn't load your workflows. Try again.",
           })
         );
       })

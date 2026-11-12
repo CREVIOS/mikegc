@@ -285,8 +285,8 @@ export async function markIntakeDeliverFailed(db: Db, job: DbJob): Promise<void>
   await recordDelivery(db, row, {
     status: "failed",
     error: link
-      ? `MikeGC couldn't reach ${CHANNEL_NAMES[link.source]}. Try again.`
-      : "MikeGC couldn't send this message. Try again.",
+      ? `Spectre couldn't reach ${CHANNEL_NAMES[link.source]}. Try again.`
+      : "Spectre couldn't send this message. Try again.",
   }).catch((error) =>
     console.warn("[intake-deliver] failure not recorded", safeError(error)),
   );
@@ -311,7 +311,7 @@ export async function dispatchIntakeDeliverOrFail(
         p_outbound: outboundId,
         p_status: "failed",
         p_external_id: null,
-        p_error: "MikeGC couldn't queue this message. Try again.",
+        p_error: "Spectre couldn't queue this message. Try again.",
         p_documents: null,
       });
       if (!marked.ok) throw marked.kind === "error" ? marked.error : new Error(marked.kind);

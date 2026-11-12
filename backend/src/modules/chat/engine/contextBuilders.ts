@@ -1,4 +1,5 @@
 import { responseLanguageName } from "../../../lib/responseLanguages";
+import { jurisdictionPracticePrompt } from "../../../lib/bangladesh/practicePrompt";
 import { deadlineMessage, type StreamStopReason } from "../../../lib/streamRuns";
 import crypto from "crypto";
 import type { Db } from "../../../lib/supabase";
@@ -119,7 +120,7 @@ export type UserPersonalisation = {
 const PRACTICE_SETTING_LABELS: Record<string, string> = {
   private_practice: "Private practice",
   in_house: "In-house",
-  not_practising: "Not a practising attorney",
+  not_practising: "Not a practising lawyer",
 };
 
 /**
@@ -131,12 +132,20 @@ const PRACTICE_SETTING_LABELS: Record<string, string> = {
 export function buildUserPersonalisationPrompt(
   profile: UserPersonalisation | undefined,
   nonce: string,
+  env: NodeJS.ProcessEnv = process.env,
 ): string {
-  if (!profile) return "";
   return [
-    buildUserProfileFactsPrompt(profile, nonce),
-    buildResponseStylePrompt(profile.responseStyle),
-    buildCustomInstructionsPrompt(profile.customInstructions, nonce),
+    // System-authored: the Bangladesh practice block when the user's (or
+    // the deployment's default) jurisdiction is Bangladesh, and the Bangla
+    // writing rules always.
+    jurisdictionPracticePrompt(profile?.jurisdiction, env),
+    ...(profile
+      ? [
+          buildUserProfileFactsPrompt(profile, nonce),
+          buildResponseStylePrompt(profile.responseStyle),
+          buildCustomInstructionsPrompt(profile.customInstructions, nonce),
+        ]
+      : []),
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -919,6 +928,7 @@ const COMPLETES_TEXTLESS_TURN = {
   web_search: false,
   web_read: false,
   web_sources: false,
+  citation_check: false,
   delegation: false,
   response_details: false,
   case_opinions: false,

@@ -149,7 +149,7 @@ function mcpOAuthPopupHtml(payload: {
   <body>
     <main>
       <h1>${payload.success ? "Authorization complete" : "Authorization failed"}</h1>
-      <p>${payload.success ? "You can return to Mike." : "Return to Mike and try connecting again."}</p>
+      <p>${payload.success ? "You can return to Spectre." : "Return to Spectre and try connecting again."}</p>
     </main>
     <script nonce="${nonce}">
       const message = ${message};
@@ -813,7 +813,7 @@ userRouter.post(
 
 // Google may return to a separate API origin that cannot receive the web
 // session cookie. Relay only OAuth parameters to our fixed frontend gateway;
-// completion there requires the same authenticated Mike user who started it.
+// completion there requires the same authenticated Spectre user who started it.
 for (const provider of ["google-drive", "gmail", "google-calendar"]) {
     userRouter.get(`/integrations/${provider}/oauth/callback`, (req, res) => {
         const finish = new URL(
@@ -873,7 +873,7 @@ userRouter.get(
                     mcpOAuthPopupHtml(
                         {
                             success: false,
-                            detail: "Google Drive authorization could not be completed. Return to Mike and try again.",
+                            detail: "Google Drive authorization could not be completed. Return to Spectre and try again.",
                         },
                         nonce,
                     ),
@@ -1155,7 +1155,7 @@ for (const provider of ["gmail", "google-calendar"] as const) {
                     mcpOAuthPopupHtml(
                         {
                             success: false,
-                            detail: "Google authorization could not be completed. Return to Mike and try again.",
+                            detail: "Google authorization could not be completed. Return to Spectre and try again.",
                         },
                         nonce,
                     ),
@@ -1287,9 +1287,9 @@ userRouter.post(
         );
         if (!result.ok) {
             // NOT a 401: since authentication moved to HttpOnly cookies the
-            // browser treats every 401 from this API as "your Mike session is
+            // browser treats every 401 from this API as "your Spectre session is
             // gone" and logs the user out (frontend authenticatedFetch). This
-            // is the UPSTREAM server wanting authorization, and the Mike
+            // is the UPSTREAM server wanting authorization, and the Spectre
             // session is fine — 409 says "the connector is not in a state
             // where tools can be listed"; the client keys on `code`.
             if (result.kind === "oauth_required")

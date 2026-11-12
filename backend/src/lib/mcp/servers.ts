@@ -566,7 +566,7 @@ export async function planMcpToolCall(
             type: "result",
             ...unavailableTool(
                 openaiToolName,
-                "This action is too large to review in Mike.",
+                "This action is too large to review in Spectre.",
             ),
         };
     }

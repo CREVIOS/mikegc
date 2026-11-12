@@ -59,7 +59,7 @@ import { automationByWebhook, loadAutomationRow, type AutomationRow } from "./in
 import { dispatchIntakeJob } from "./intake.shared";
 
 /**
- * MikeGC reading the organization's intake mailbox. Gmail is polled every
+ * Spectre reading the organization's intake mailbox. Gmail is polled every
  * minute from the last history ID; Outlook sends a change notification for
  * new Inbox mail, backed by a delta query every 15 minutes, and its
  * subscription is renewed every three days. Each new message is recorded
@@ -163,7 +163,7 @@ export async function recordMail(
   const authenticated = senderAuthenticated(mail.headers, mail.from.email);
   const references = referencedMessageIds(mail.headers);
 
-  // A thread MikeGC replies in: by its handle, or by a Message-ID it answers,
+  // A thread Spectre replies in: by its handle, or by a Message-ID it answers,
   // which finds a reply whose edited subject started a new conversation.
   let link: ChannelLink | null = await findThreadLink(
     db,
@@ -482,8 +482,8 @@ const graphNotification = z.object({
 /**
  * Microsoft Graph's notifications for the intake mailbox. The validation
  * handshake echoes Graph's token; a notification must carry the client
- * state MikeGC set, and only queues a read of the mailbox, since it holds no
- * content: a forged one can only make MikeGC read real mail.
+ * state Spectre set, and only queues a read of the mailbox, since it holds no
+ * content: a forged one can only make Spectre read real mail.
  */
 export async function receiveGraphNotification(
   db: Db,

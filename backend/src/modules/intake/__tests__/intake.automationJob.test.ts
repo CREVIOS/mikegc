@@ -223,7 +223,7 @@ function stubSlack(overrides: Record<string, (params: Record<string, string>) =>
             { id: "F2", name: "notes.txt", size: 4, url_private_download: "https://files.slack.com/F2/notes.txt" },
           ],
         },
-        { ts: "1793610860.000200", user: "UBOT", text: "an earlier MikeGC reply" },
+        { ts: "1793610860.000200", user: "UBOT", text: "an earlier Spectre reply" },
         { ts: "1793610900.000300", user: "U2", text: "<@UBOT> can Legal look at this?" },
       ],
     }),
@@ -291,7 +291,7 @@ async function deliverQueued(attempts = 1) {
 }
 
 describe("recording an email", () => {
-  it("records MikeGC's triaged request with the relevant documents, then forgets the message", async () => {
+  it("records Spectre's triaged request with the relevant documents, then forgets the message", async () => {
     setup({ payload: emailPayload() });
     await expect(handleIntakeAgent(memory.db, job())).resolves.toEqual({
       request_id: inboundId,
@@ -432,7 +432,7 @@ describe("recording an email", () => {
     expect(row()).toMatchObject({
       status: "pending",
       request_id: inboundId,
-      error: "MikeGC couldn't record this message. Try sending it again.",
+      error: "Spectre couldn't record this message. Try sending it again.",
     });
     const planned = (row().payload as { documents: Record<string, { document_id: string; done: boolean }> }).documents;
     expect(planned["0"]).toMatchObject({ done: false });
@@ -573,7 +573,7 @@ describe("recording a Slack thread", () => {
       // No link: the request's page is for the organization's members only.
       text: "Thanks, I've passed this to Legal. Someone from the team will pick it up soon.",
     });
-    // Marked, so a retry can find it; MikeGC's own name, not a member's.
+    // Marked, so a retry can find it; Spectre's own name, not a member's.
     expect(JSON.parse(String(slackReplies.metadata))).toEqual({
       event_type: "mikegc_intake",
       event_payload: { outbound_id: memory.rows("intake_outbound")[0]!.id },
@@ -605,8 +605,8 @@ describe("recording a Slack thread", () => {
       text: "Hi! Tell me what you need from Legal &amp; I'll pass it on.",
     });
     expect(row()).toMatchObject({ status: "done", payload: null });
-    // Remembered with what MikeGC said, so a reply there without a mention
-    // reaches MikeGC and is read with it.
+    // Remembered with what Spectre said, so a reply there without a mention
+    // reaches Spectre and is read with it.
     expect(memory.rows("intake_conversations")).toEqual([
       expect.objectContaining({
         org_id: org,
@@ -617,7 +617,7 @@ describe("recording a Slack thread", () => {
       }),
     ]);
   });
-  it("reads the next message in the thread with MikeGC's earlier answer, and records it once it's clear", async () => {
+  it("reads the next message in the thread with Spectre's earlier answer, and records it once it's clear", async () => {
     setup({ payload: slackPayload({ thread_ts: "1793610840.000100", ts: "1793610900.000300", user: "U1", text: "It's a supplier NDA" }), source: "slack" });
     memory.rows("intake_conversations").push({
       org_id: org,
@@ -628,10 +628,10 @@ describe("recording a Slack thread", () => {
     });
     await expect(handleIntakeAgent(memory.db, job())).resolves.toMatchObject({ request_id: inboundId });
     const prompt = model.requests[0]!.messages[0]!.content;
-    expect(prompt).toContain("--- MikeGC's earlier replies in this thread ---\nMikeGC, 2 Nov 2026, 09:14 UTC:\nIs Acme a customer or a supplier?");
+    expect(prompt).toContain("--- Spectre's earlier replies in this thread ---\nSpectre, 2 Nov 2026, 09:14 UTC:\nIs Acme a customer or a supplier?");
     expect(memory.rows("intake_requests")[0]).toMatchObject({ assignee_id: sam });
   });
-  it("records the message once MikeGC has answered in its thread a few times", async () => {
+  it("records the message once Spectre has answered in its thread a few times", async () => {
     setup({ payload: slackPayload({ thread_ts: null, ts: "1793610840.000100", user: "U1", text: "<@UBOT> wassup" }), source: "slack" });
     memory.rows("intake_conversations").push({ org_id: org, source: "slack", thread_key: ":C42:1793610840.000100", rounds: 3 });
     modelCalls([replyCall("Hi again!")], [recordCall({ subject: "Wassup", attachments: [] }), ruleCall(0)]);
@@ -713,7 +713,7 @@ describe("recording a Slack thread", () => {
       text,
       files: [],
     });
-    setup({ payload: teams("1700000000001", "Hi MikeGC"), source: "slack" });
+    setup({ payload: teams("1700000000001", "Hi Spectre"), source: "slack" });
     mocks.teamsDeliver.mockResolvedValue({ externalId: "1700000000009", documents: [] });
     modelCalls([replyCall("Hi! What do you need from Legal?")]);
     await expect(handleIntakeAgent(memory.db, job())).resolves.toMatchObject({ replied: true });
@@ -734,7 +734,7 @@ describe("recording a Slack thread", () => {
     modelCalls([recordCall({ attachments: [] }), ruleCall(1)]);
     await expect(handleIntakeAgent(memory.db, job())).resolves.toMatchObject({ request_id: inboundId });
     expect(model.requests[0]!.messages[0]!.content).toContain("CHANNEL: Teams");
-    expect(model.requests[0]!.messages[0]!.content).toContain("MikeGC, 2 Nov 2026, 09:14 UTC:\nHi! What do you need from Legal?");
+    expect(model.requests[0]!.messages[0]!.content).toContain("Spectre, 2 Nov 2026, 09:14 UTC:\nHi! What do you need from Legal?");
     expect(memory.rows("intake_requests")[0]).toMatchObject({ assignee_id: sam });
     expect(memory.rows("intake_channel_links")).toEqual([expect.objectContaining({ source: "teams", thread_key: key })]);
     expect(memory.rows("intake_outbound")).toEqual([expect.objectContaining({ kind: "acknowledgement" })]);
@@ -748,7 +748,7 @@ describe("recording a Slack thread", () => {
     expect(mocks.outlookDeliver.mock.calls[0]![1]).toMatchObject({ source: "outlook", address: expect.objectContaining({ reply_to_message_id: "AAMk-9" }) });
     expect(memory.rows("intake_conversations")).toEqual([expect.objectContaining({ source: "outlook", rounds: 1 })]);
   });
-  it("records an email once MikeGC has answered in its thread a few times", async () => {
+  it("records an email once Spectre has answered in its thread a few times", async () => {
     setup({ payload: gmailPayload(), source: "gmail" });
     memory.rows("intake_conversations").push({ org_id: org, source: "gmail", thread_key: "gmail:t-9", rounds: 3 });
     modelCalls([replyCall("Hi again!")]);
@@ -824,7 +824,7 @@ describe("recording a Slack thread", () => {
       clarify_stage: "rule",
       clarify_rounds: 1,
     });
-    // A question with a link is dropped; MikeGC frames the rest itself.
+    // A question with a link is dropped; Spectre frames the rest itself.
     expect(memory.rows("intake_messages")).toEqual([
       expect.objectContaining({
         kind: "question",
@@ -838,7 +838,7 @@ describe("recording a Slack thread", () => {
     expect(mocks.enqueueDbJob.mock.calls.some(([, input]) => input.kind === "intake.preprocess")).toBe(false);
     await deliverQueued();
     expect(slackReplies.text).toBe(
-      // Asking before choosing who gets it, MikeGC promises no one yet.
+      // Asking before choosing who gets it, Spectre promises no one yet.
       "Thanks, I've passed this to Legal. One quick question so it gets to the right person:\n" +
         "Is Acme a customer or a supplier?",
     );
@@ -915,13 +915,13 @@ describe("recording a Slack thread", () => {
       mocks.enqueueDbJob.mock.calls.find(([, input]) => input.kind === "intake.preprocess")?.[1].payload,
     ).toMatchObject({ round: 0, acknowledge: true, condition: "The request is about an NDA" });
   });
-  it("fails at once, with a reason an admin can act on, when MikeGC can't read the channel", async () => {
+  it("fails at once, with a reason an admin can act on, when Spectre can't read the channel", async () => {
     setup({ payload: slackPayload(), source: "slack" });
     stubSlack({ "conversations.replies": () => ({ ok: false, error: "not_in_channel" }) });
     await expect(handleIntakeAgent(memory.db, job())).rejects.toBeInstanceOf(NonRetryableJobError);
     expect(row()).toMatchObject({
       status: "pending",
-      error: "MikeGC can't read that Slack channel. Invite @MikeGC to it.",
+      error: "Spectre can't read that Slack channel. Invite @Spectre to it.",
     });
   });
 });
@@ -929,12 +929,12 @@ describe("recording a Slack thread", () => {
 describe("when a message fails for good", () => {
   it("marks it failed with its reason, drops its content and says so in Slack", async () => {
     setup({ payload: slackPayload(), source: "slack" });
-    memory.rows("intake_inbound")[0]!.error = "MikeGC can't read that Slack channel. Invite @MikeGC to it.";
+    memory.rows("intake_inbound")[0]!.error = "Spectre can't read that Slack channel. Invite @Spectre to it.";
     await markIntakeAgentFailed(memory.db, job());
     expect(row()).toMatchObject({
       status: "failed",
       payload: null,
-      error: "MikeGC can't read that Slack channel. Invite @MikeGC to it.",
+      error: "Spectre can't read that Slack channel. Invite @Spectre to it.",
     });
     expect(slackReplies).toMatchObject({
       thread_ts: "1793610840.000100",
@@ -960,7 +960,7 @@ describe("when a message fails for good", () => {
     expect(row()).toMatchObject({
       status: "failed",
       request_id: inboundId,
-      error: "The request was recorded, but MikeGC couldn't add all of its documents or reply in its thread.",
+      error: "The request was recorded, but Spectre couldn't add all of its documents or reply in its thread.",
     });
     await deliverQueued();
     expect(String(slackReplies.text)).toMatch(/^Thanks, I.ve passed this to Legal\./);
@@ -986,7 +986,7 @@ describe("when a message fails for good", () => {
     await markIntakeAgentFailed(memory.db, job());
     expect(row()).toMatchObject({
       status: "failed",
-      error: "MikeGC couldn't record this message. Try sending it again.",
+      error: "Spectre couldn't record this message. Try sending it again.",
     });
     expect(mocks.enqueueDbJob).toHaveBeenCalledWith(memory.db, expect.objectContaining({
       kind: "storage.cleanup",

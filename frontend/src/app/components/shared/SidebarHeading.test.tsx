@@ -7,7 +7,7 @@ import { SidebarHeading } from "./SidebarHeading";
 // be on one line at full size.
 const ROOM = 160;
 const FULL_SIZE_WIDTHS: Record<string, number> = {
-    Mike: 44,
+    Spectre: 44,
     "Acme LLP": 92,
     "Exactly Fits": ROOM,
     "Hargreaves Whitcombe Delacroix & Partners International LLP": 610,
@@ -49,7 +49,7 @@ const heading = () =>
     document.querySelector('[data-slot="sidebar-heading"]') as HTMLElement;
 
 describe("SidebarHeading", () => {
-    it.each(["Mike", "Acme LLP", "Exactly Fits"])(
+    it.each(["Spectre", "Acme LLP", "Exactly Fits"])(
         "sets %s at full size on one line",
         (name) => {
             render(<SidebarHeading name={name} />);
@@ -61,8 +61,8 @@ describe("SidebarHeading", () => {
         },
     );
 
-    it("gives an organization's name exactly the styling Mike has when it fits", () => {
-        const { unmount } = render(<SidebarHeading name="Mike" />);
+    it("gives an organization's name exactly the styling Spectre has when it fits", () => {
+        const { unmount } = render(<SidebarHeading name="Spectre" />);
         const mike = heading().className;
         unmount();
         render(<SidebarHeading name="Acme LLP" />);

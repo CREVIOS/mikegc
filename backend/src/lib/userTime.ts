@@ -7,6 +7,8 @@
  * assistant's questions) carries the immutable time it was sent.
  */
 
+import { BANGLADESH_TIME_ZONE, formatBangabda } from "./bangladesh/dates";
+
 export const DEFAULT_TIME_ZONE = "UTC";
 
 /** An IANA time zone the runtime understands (e.g. "Europe/London"), else null. */
@@ -79,10 +81,17 @@ function localParts(date: Date, timeZone: string) {
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
 
-/** "Thu 1 Oct 2026, 14:05" in the given zone. */
+/**
+ * "Thu 1 Oct 2026, 14:05" in the given zone. In Bangladesh's zone the
+ * Bangla-calendar date follows ("Thu 12 Nov 2026, 14:05 · ২৭ কার্তিক ১৪৩৩"),
+ * so the assistant never has to work the calendar out itself.
+ */
 export function formatMessageTime(date: Date, timeZone: string): string {
     const t = localParts(date, timeZone);
-    return `${WEEKDAYS[t.weekday].slice(0, 3)} ${t.day} ${MONTHS[t.month - 1].slice(0, 3)} ${t.year}, ${pad2(t.hour)}:${pad2(t.minute)}`;
+    const stamp = `${WEEKDAYS[t.weekday].slice(0, 3)} ${t.day} ${MONTHS[t.month - 1].slice(0, 3)} ${t.year}, ${pad2(t.hour)}:${pad2(t.minute)}`;
+    return timeZone === BANGLADESH_TIME_ZONE
+        ? `${stamp} · ${formatBangabda(t.year, t.month, t.day)}`
+        : stamp;
 }
 
 /**
@@ -93,6 +102,7 @@ export const MESSAGE_TIME_PROMPT = `MESSAGE TIMES:
 - Each user message begins with a [Sent: …] stamp: the date and time it was sent, in the user's local time zone.
 - When the user answers your questions or approves an action, your previous turn's tool activity includes an [Answered: …] stamp with when they responded.
 - The latest stamp is the current date and time. Use it to resolve "today", "tomorrow", deadlines, and other relative dates.
+- A stamp in Bangladesh's time zone also gives the Bangla-calendar (বঙ্গাব্দ) date after "·"; use it when a document or the user works in that calendar.
 - The stamps are added by the application, not typed by the user. Do not repeat or mention them.`;
 
 /** The stamp prepended to a user message. */

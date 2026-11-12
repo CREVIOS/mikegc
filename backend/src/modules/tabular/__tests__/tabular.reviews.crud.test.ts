@@ -71,6 +71,13 @@ vi.mock("../../../lib/contentAccess", async (importOriginal) => ({
 }));
 
 vi.mock("../../../lib/audit", () => ({ recordAudit: vi.fn() }));
+const getUserModelSettings = vi.hoisted(() =>
+    vi.fn(async () => ({ api_keys: {} as Record<string, string> })),
+);
+vi.mock("../../user/user.service", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("../../user/user.service")>()),
+    getUserModelSettings,
+}));
 vi.mock("../../../lib/documentVersions", () => ({
     attachActiveVersionPaths: vi.fn().mockResolvedValue(undefined),
 }));
@@ -151,8 +158,9 @@ describe("createTabularReview", () => {
         expect(calls.some(call => call.op === "insert")).toBe(false);
     });
 
-    it("rejects a missing model before touching the database", async () => {
+    it("rejects a missing model when the user can run no default", async () => {
         const { db, calls } = makeFakeDb();
+        getUserModelSettings.mockResolvedValueOnce({ api_keys: {} });
         const result = await createTabularReview(db, {
             ...WHO,
             document_ids: [],

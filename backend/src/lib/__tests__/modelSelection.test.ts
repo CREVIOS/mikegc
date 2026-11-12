@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+    defaultModelForKeys,
+    deploymentDefaultChatModel,
     hasApiKeyForModel,
     normalizeOptionalModelPreference,
     resolveEffectiveChatModel,
@@ -230,6 +232,44 @@ describe("resolveEffectiveChatModel", () => {
         });
     });
 
+    it("starts a user with nothing saved on OpenAI", async () => {
+        await expect(
+            resolveEffectiveChatModel({
+                apiKeys: { openai: "key", claude: "key", gemini: "key" },
+                userId: "user-1",
+                db,
+            }),
+        ).resolves.toMatchObject({
+            ok: true,
+            model: "gpt-6.1-sol",
+            source: "default",
+        });
+    });
+
+    it("falls through to another provider the user holds a key for", async () => {
+        await expect(
+            resolveEffectiveChatModel({
+                apiKeys: { gemini: "key" },
+                userId: "user-1",
+                db,
+            }),
+        ).resolves.toMatchObject({
+            ok: true,
+            model: "gemini-3.8-flash",
+            source: "default",
+        });
+    });
+
+    it("never defaults to a provider the user turned off", async () => {
+        await expect(
+            resolveEffectiveChatModel({
+                apiKeys: { openai: "key", disabledProviders: ["openai"] },
+                userId: "user-1",
+                db,
+            }),
+        ).resolves.toMatchObject({ ok: false, code: "model_required" });
+    });
+
     it("requires selection when neither persisted model is usable", async () => {
         await expect(
             resolveEffectiveChatModel({
@@ -241,6 +281,42 @@ describe("resolveEffectiveChatModel", () => {
             ok: false,
             code: "model_required",
         });
+    });
+});
+
+describe("deployment default model", () => {
+    const db = {} as Db;
+
+    it("reads SPECTRE_DEFAULT_MODEL, mapping a retired id", () => {
+        expect(deploymentDefaultChatModel({ SPECTRE_DEFAULT_MODEL: "gpt-6-astra" })).toBe(
+            "gpt-6-astra",
+        );
+        expect(deploymentDefaultChatModel({ SPECTRE_DEFAULT_MODEL: "gpt-5.4" })).toBe(
+            "gpt-6.1-sol",
+        );
+        expect(deploymentDefaultChatModel({ SPECTRE_DEFAULT_MODEL: " " })).toBeNull();
+        expect(deploymentDefaultChatModel({})).toBeNull();
+    });
+
+    it("puts the configured default first, while the user can run it", async () => {
+        const env = { SPECTRE_DEFAULT_MODEL: "claude-opus-5-5" };
+        await expect(
+            defaultModelForKeys({
+                apiKeys: { openai: "key", claude: "key" },
+                userId: "user-1",
+                db,
+                env,
+            }),
+        ).resolves.toBe("claude-opus-5-5");
+        await expect(
+            defaultModelForKeys({ apiKeys: { openai: "key" }, userId: "user-1", db, env }),
+        ).resolves.toBe("gpt-6.1-sol");
+    });
+
+    it("is null without any usable key", async () => {
+        await expect(
+            defaultModelForKeys({ apiKeys: {}, userId: "user-1", db, env: {} }),
+        ).resolves.toBeNull();
     });
 });
 

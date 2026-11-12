@@ -1,0 +1,52 @@
+columns:
+  - index: 0
+    name: "Parties"
+    prompt: "Who are the parties, as named in the contract, with any registration, trade licence, TIN or BIN numbers given? Note if a party's legal name or capacity is unclear."
+  - index: 1
+    name: "Governing Law"
+    prompt: "Which law governs the contract? Quote the clause. Say whether it is the law of Bangladesh, another law, or not stated."
+    format: "tag"
+    tags: ["Bangladesh", "Other", "Not stated"]
+  - index: 2
+    name: "Dispute Resolution"
+    prompt: "How are disputes resolved: courts (which), or arbitration (seat, institution such as BIAC, rules, language, number of arbitrators)? Note any foreign seat, since the award would then need enforcement in Bangladesh under section 45 of the Arbitration Act, 2001."
+  - index: 3
+    name: "Stamping and Execution"
+    prompt: "Does the contract say how it is stamped (non-judicial stamp paper, adhesive stamps) or executed (signatures, witnesses, notarisation, seals)? Quote it. Do not state a stamp duty rate."
+  - index: 4
+    name: "Registration Needed"
+    prompt: "Does the contract transfer or lease immovable property, agree to sell immovable property, or grant a power of attorney over it, so that registration under the Registration Act, 1908 or the Power of Attorney Act, 2012 may be required? Answer Yes, No or Unclear and explain."
+    format: "yes_no"
+  - index: 5
+    name: "Restraint Clauses"
+    prompt: "List any non-compete, non-solicitation, exclusivity or clauses limiting legal proceedings or time limits, and flag those at risk under sections 27 or 28 of the Contract Act, 1872."
+    format: "bulleted_list"
+  - index: 6
+    name: "Penalty and Liability"
+    prompt: "Summarise liquidated damages, penalties, liability caps, exclusions and indemnities, and flag any penalty that section 74 of the Contract Act, 1872 would reduce to reasonable compensation."
+  - index: 7
+    name: "Contract Value"
+    prompt: "What is the contract price, fee or value, with currency? Give the total or the rate as stated."
+    format: "monetary_amount"
+  - index: 8
+    name: "Currency"
+    prompt: "In which currency or currencies are payments made?"
+    format: "currency"
+  - index: 9
+    name: "Personal Data"
+    prompt: "Does the contract involve personal data? Summarise the data clauses (purpose, security, breach notice, transfer outside Bangladesh) and gaps against the Personal Data Protection Act, 2026."
+  - index: 10
+    name: "Language Precedence"
+    prompt: "Is the contract bilingual or translated? Which version prevails if they differ? Quote the clause, or say it is missing."
+  - index: 11
+    name: "Term and Termination"
+    prompt: "What is the term, renewal, and each party's right to terminate (for convenience, for breach, notice periods)?"
+  - index: 12
+    name: "Effective Date"
+    prompt: "What is the effective or commencement date?"
+    format: "date"
+  - index: 13
+    name: "Overall Risk"
+    prompt: "Rate the contract's overall legal risk for a Bangladeshi party from the points above, and give the two most important reasons."
+    format: "tag"
+    tags: ["High", "Medium", "Low"]

@@ -702,7 +702,7 @@ describe("GET /models/custom", () => {
     });
 });
 
-describe("catalog loaders separate Mike's own failures from the provider's", () => {
+describe("catalog loaders separate Spectre's own failures from the provider's", () => {
     const fetchMock = vi.fn();
     beforeEach(() => {
         vi.stubGlobal("fetch", fetchMock);

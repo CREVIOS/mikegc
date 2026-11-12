@@ -1,5 +1,5 @@
 import type { AssistantEvent as WireAssistantEvent } from "@mike/contracts";
-// Shared TypeScript types for Mike AI legal assistant
+// Shared TypeScript types for Spectre AI legal assistant
 
 import type {
   SourceDocument,
@@ -232,6 +232,7 @@ export type AssistantEvent =
   | (WireActivity<"web_search"> & { isStreaming?: boolean })
   | (WireActivity<"web_read"> & { isStreaming?: boolean })
   | WireActivity<"web_sources">
+  | WireActivity<"citation_check">
   | WireActivity<"response_details">
   | (Omit<WireDelegation, "events" | "status" | "model" | "effort"> & {
       events: AssistantEvent[];

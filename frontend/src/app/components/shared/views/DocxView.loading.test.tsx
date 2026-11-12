@@ -193,7 +193,7 @@ it("does not show old bytes while switching documents", async () => {
     expect(await screen.findByText("Document revision 2")).toBeVisible();
 });
 
-it.each(["edit", "view"] as const)("passes the initial %s mode to the native toolbar without a Mike mode toggle", async (mode) => {
+it.each(["edit", "view"] as const)("passes the initial %s mode to the native toolbar without a Spectre mode toggle", async (mode) => {
     const { rerender } = render(<DocxView documentId="modes" cacheBytes={false} defaultMode={mode} />);
     await screen.findByText("EigenPal preview");
     const surface = screen.getByTestId("renderer-scroll");

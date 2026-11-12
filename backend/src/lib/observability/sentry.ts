@@ -4,7 +4,7 @@
 // Design rules, in priority order:
 //
 //   1. ON BY DEFAULT for community installs; SENTRY_DISABLED=true opts out.
-//      An explicit DSN overrides Mike's project. Test processes stay disabled
+//      An explicit DSN overrides Spectre's project. Test processes stay disabled
 //      unless SENTRY_ALLOW_IN_TESTS=true is explicitly set.
 //   2. NEVER LEAK DOCUMENT CONTENT OR CREDENTIALS. This is a legal platform:
 //      request bodies carry privileged documents and chat transcripts, and
@@ -267,7 +267,7 @@ export function redactShaped(value: unknown, depth = 0): unknown {
 }
 
 /**
- * The Mike project's own Sentry projects. A DSN is a write-only address:
+ * The Spectre project's own Sentry projects. A DSN is a write-only address:
  * it lets an SDK post events and nothing else, so it is public by design
  * (it ships in every browser bundle). Community installs report here by
  * default so the project learns what forks run into; the opt-out and the
@@ -284,13 +284,13 @@ export const MIKE_SENTRY_DSN = {
 
 export type DsnResolution = {
   dsn: string;
-  /** Where the DSN came from; "default" means the Mike project's Sentry. */
+  /** Where the DSN came from; "default" means the Spectre project's Sentry. */
   source: "disabled" | "env" | "default";
 };
 
 /**
  * Off if the runtime's *_SENTRY_DISABLED is "true"; the runtime's own DSN
- * when one is set (a self-hoster's own Sentry); otherwise the built-in Mike
+ * when one is set (a self-hoster's own Sentry); otherwise the built-in Spectre
  * project DSN. Test processes are guarded separately by the caller.
  */
 export function resolveDsn(input: {
@@ -407,7 +407,7 @@ function mapStringLeaves(
 }
 
 /**
- * COMMUNITY INSTALLS: a fork or self-hosted Mike reporting to the Mike
+ * COMMUNITY INSTALLS: a fork or self-hosted Spectre reporting to the Spectre
  * project's Sentry sends only what our own code owns and what is too broad
  * to identify anyone. Removed: the machine name, the user id, request
  * headers and host, every breadcrumb, device / app / locale contexts, local
@@ -533,8 +533,8 @@ function parseRate(raw: string | undefined, fallback: number): number {
 
 export function sentryConfiguration(env: NodeJS.ProcessEnv = process.env) {
   // ON BY DEFAULT: without SENTRY_DISABLED or a DSN of your own, errors go
-  // to the Mike project's Sentry as a community install (see the README's
-  // Telemetry section). Only Mike's own deployment sets SENTRY_INSTALL.
+  // to the Spectre project's Sentry as a community install (see the README's
+  // Telemetry section). Only Spectre's own deployment sets SENTRY_INSTALL.
   const resolved = resolveDsn({
     disabled: env.SENTRY_DISABLED,
     dsn: env.SENTRY_DSN,
@@ -864,7 +864,7 @@ export function initSentry(
   initialized = true;
   if (config.dsnSource === "default") {
     console.log(
-      `[sentry] enabled for ${role} → Mike project Sentry (${config.install} install). ` +
+      `[sentry] enabled for ${role} → Spectre project Sentry (${config.install} install). ` +
         "Opt out with SENTRY_DISABLED=true or point SENTRY_DSN at your own project.",
     );
   } else {

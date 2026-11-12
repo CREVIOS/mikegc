@@ -11,13 +11,13 @@ import { intakeRpc } from "./intake.shared";
 import { formatSent } from "./intake.triage";
 
 /**
- * Writing MikeGC's own messages for the requester to the outbox: its
+ * Writing Spectre's own messages for the requester to the outbox: its
  * clarifying questions and its acknowledgement. Each is written in the same
  * transaction as what it carries, then handed to intake.deliver.
  */
 
 /**
- * MikeGC asks in a request's thread. The question and its outbox row are
+ * Spectre asks in a request's thread. The question and its outbox row are
  * named from `seed`, so asking again adds nothing. False when it may no
  * longer ask: a lawyer has taken over, the rounds are used up, or the
  * request is closed or has no thread.
@@ -55,7 +55,7 @@ export async function askRequester(
 }
 
 /**
- * MikeGC answers in a request's thread without asking: the request doesn't
+ * Spectre answers in a request's thread without asking: the request doesn't
  * wait. Named from `seed`, so answering again adds nothing. False when the
  * request is closed or has no thread.
  */
@@ -82,7 +82,7 @@ export async function answerRequester(
   return answered.data;
 }
 
-/** MikeGC's acknowledgement in a request's thread, once. */
+/** Spectre's acknowledgement in a request's thread, once. */
 export async function acknowledgeRequest(
   db: Db,
   orgId: string,
@@ -101,7 +101,7 @@ export async function acknowledgeRequest(
 }
 
 /**
- * The stage MikeGC was waiting on is settled: the request returns to New or
+ * The stage Spectre was waiting on is settled: the request returns to New or
  * In progress, assigned to the rule's member when the rule stage settles.
  * False when the request no longer waits on that stage.
  */
@@ -130,7 +130,7 @@ export async function settleClarify(
 }
 
 /**
- * The thread after a request, oldest first: what MikeGC and members sent the
+ * The thread after a request, oldest first: what Spectre and members sent the
  * requester and the requester's replies, as the stages read it; the 50
  * newest when there are more.
  */
@@ -162,7 +162,7 @@ export async function loadThreadEntries(
       m.kind === "reply"
         ? `${m.external_author?.name?.trim() || "The requester"} (requester)`
         : m.automated
-          ? "MikeGC"
+          ? "Spectre"
           : "Legal",
     at: formatSent(new Date(m.created_at)),
     text: m.body,

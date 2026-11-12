@@ -44,7 +44,7 @@ function fakeDb() {
 async function generatedXml(options: {
   sections: unknown[];
   numberSections?: boolean;
-}): Promise<{ documentXml: string; numberingXml: string }> {
+}): Promise<{ documentXml: string; numberingXml: string; stylesXml: string }> {
   let bytes: ArrayBuffer | undefined;
   uploadFileMock.mockImplementationOnce(
     async (_key: string, uploaded: ArrayBuffer) => {
@@ -67,7 +67,8 @@ async function generatedXml(options: {
   const archive = await JSZip.loadAsync(bytes!);
   const documentXml = await archive.file("word/document.xml")!.async("string");
   const numberingXml = await archive.file("word/numbering.xml")!.async("string");
-  return { documentXml, numberingXml };
+  const stylesXml = (await archive.file("word/styles.xml")?.async("string")) ?? "";
+  return { documentXml, numberingXml, stylesXml };
 }
 
 function paragraphContaining(xml: string, text: string): string {
@@ -80,6 +81,22 @@ function paragraphContaining(xml: string, text: string): string {
 
 beforeEach(() => {
   uploadFileMock.mockReset();
+});
+
+describe("generateDocx Bangla", () => {
+  it("keeps Bangla text intact and gives it a Unicode Bangla font and language", async () => {
+    const bangla = "এই চুক্তি বাংলাদেশের আইন অনুযায়ী পরিচালিত হবে।";
+    const { documentXml, stylesXml } = await generatedXml({
+      sections: [{ heading: "পরিচালনাকারী আইন", content: bangla }],
+    });
+    expect(documentXml).toContain(bangla);
+    // Every run names the complex-script font Word draws Bangla with.
+    expect(documentXml).toContain('w:cs="Nirmala UI"');
+    expect(documentXml).not.toMatch(/w:cs="[^"]*MJ"/);
+    // The document defaults tag Bangla runs bn-BD and size them like Latin text.
+    expect(stylesXml).toContain('w:bidi="bn-BD"');
+    expect(stylesXml).toMatch(/<w:szCs w:val="22"\/>/);
+  });
 });
 
 describe("generateDocx numbering", () => {

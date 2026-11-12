@@ -12,6 +12,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
     MODELS,
+    DEFAULT_CHAT_MODEL_PREFERENCE,
     ROUTER_SLUGS,
     LEGACY_MODEL_IDS,
     noModelsReason,
@@ -30,6 +31,7 @@ import {
     OPENAI_MAIN_MODELS,
     MISTRAL_MAIN_MODELS,
     LEGACY_MODEL_IDS as BACKEND_LEGACY_MODEL_IDS,
+    DEFAULT_CHAT_MODEL_PREFERENCE as BACKEND_DEFAULT_CHAT_MODEL_PREFERENCE,
     reasoningLevelsForModel as backendReasoningLevels,
 } from "../../../backend/src/lib/llm/models";
 import { reasoningLevelsForModel } from "../shared/ui/ModelToggleUI";
@@ -74,6 +76,11 @@ describe("word add-in model catalog", () => {
             ...MISTRAL_MAIN_MODELS,
         ]);
         expect(LEGACY_MODEL_IDS).toEqual(BACKEND_LEGACY_MODEL_IDS);
+        // A composer and the API start a user with nothing saved on the
+        // same model, OpenAI first.
+        expect(DEFAULT_CHAT_MODEL_PREFERENCE).toEqual([
+            ...BACKEND_DEFAULT_CHAT_MODEL_PREFERENCE,
+        ]);
         for (const { id } of MODELS) {
             expect(reasoningLevelsForModel(id)).toEqual(backendReasoningLevels(id));
         }

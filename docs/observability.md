@@ -1,6 +1,6 @@
 # Error tracking with Sentry
 
-Every Mike runtime can report unexpected failures to [Sentry](https://sentry.io)
+Every Spectre runtime can report unexpected failures to [Sentry](https://sentry.io)
 (or any Sentry-compatible endpoint, including a self-hosted instance):
 
 | Runtime | SDK | Enabled by |
@@ -11,7 +11,7 @@ Every Mike runtime can report unexpected failures to [Sentry](https://sentry.io)
 | Web app, Next.js server (the `/api` gateway) | `@sentry/nextjs` | `SENTRY_DSN` in the frontend's runtime environment |
 | Word add-in (task pane, ribbon commands, OAuth dialog) | `@sentry/react` | `REACT_APP_SENTRY_DSN` at **build** time |
 
-**On by default.** Error reports are sent to the Mike project's own Sentry by default, so the
+**On by default.** Error reports are sent to the Spectre project's own Sentry by default, so the
 maintainers can fix failures encountered by forks and self-hosted installs.
 Before network transmission, every runtime rebuilds reports from an explicit
 allowlist: code locations and line numbers, controlled operation labels,
@@ -32,21 +32,21 @@ records the final transport boundary that closes them. Internal source-code
 filenames identify the failing code; client document filenames are excluded.
 
 Resolution order, per runtime: `*_SENTRY_DISABLED=true` → off;
-`*_SENTRY_DSN` set → that DSN; otherwise the built-in Mike project DSN. Backend test
+`*_SENTRY_DSN` set → that DSN; otherwise the built-in Spectre project DSN. Backend test
 processes (vitest, `NODE_ENV=test`) never report unless
 `SENTRY_ALLOW_IN_TESTS=true`. Browser tests disable reporting or use intercepted
 transports. Every event carries `install=community` unless
 the deployment sets `SENTRY_INSTALL=official` (env, all three runtimes), and
 `environment` defaults to `self-hosted`, so the official deployment and the
 community are separable in Sentry. The boot log says which applies:
-`[sentry] enabled for api → Mike project Sentry (community install). Opt out
+`[sentry] enabled for api → Spectre project Sentry (community install). Opt out
 with SENTRY_DISABLED=true or point SENTRY_DSN at your own project.`
 
 ### Public DSNs and default-on reporting
 
 **Public DSN does not mean public error reports.** A DSN lets an SDK submit
 events; it does not grant access to read stored events or administer the
-Sentry organization. Mike's default reports go to the maintainers' `open-legal-products`
+Sentry organization. Spectre's default reports go to the maintainers' `open-legal-products`
 organization. The source-map upload token (`SENTRY_AUTH_TOKEN`) is a separate,
 privileged secret and must never appear in source or browser bundles. See
 [Sentry's explanation of public DSNs](https://www.sentry.help/en/articles/13964341-my-dsn-key-is-publicly-visible-is-this-a-security-vulnerability).
@@ -58,10 +58,10 @@ installing their underlying libraries automatically reports to their authors:
 | Project | What its own source or documentation establishes |
 | --- | --- |
 | [Zulip Desktop](https://github.com/zulip/zulip-desktop/blob/1cc112def5cd4b0b3ffe15c0857258c527b4421a/app/main/sentry.ts) (Apache-2.0) | Publishes a Sentry DSN. Packaged builds report unless the user disables `errorReporting`; development builds are excluded. |
-| [Element Web](https://github.com/element-hq/element-web/blob/5fc4f4090cea4357bf101e051e9864cde7610145/apps/web/element.io/develop/config.json) (AGPL/GPL options) | Publishes a Sentry DSN in its develop deployment configuration. Its [integration](https://github.com/element-hq/element-web/blob/5fc4f4090cea4357bf101e051e9864cde7610145/apps/web/src/sentry.ts) explicitly submits bug reports; this is not evidence of Mike's same automatic reporting policy. |
+| [Element Web](https://github.com/element-hq/element-web/blob/5fc4f4090cea4357bf101e051e9864cde7610145/apps/web/element.io/develop/config.json) (AGPL/GPL options) | Publishes a Sentry DSN in its develop deployment configuration. Its [integration](https://github.com/element-hq/element-web/blob/5fc4f4090cea4357bf101e051e9864cde7610145/apps/web/src/sentry.ts) explicitly submits bug reports; this is not evidence of Spectre's same automatic reporting policy. |
 | [GitLab Service Ping](https://docs.gitlab.com/development/internal_analytics/service_ping/) | Documents default-on telemetry sending a weekly usage payload to GitLab. This is a precedent for default-on usage reporting, not proof of default-on Sentry crash reporting from self-managed instances. GitLab's [Sentry setup](https://docs.gitlab.com/omnibus/settings/configuration/#error-reporting-and-logging-with-sentry) asks administrators to enable it and supply their own DSNs. |
 
-Mike's policy remains explicit: automatic error reporting is on by default,
+Spectre's policy remains explicit: automatic error reporting is on by default,
 with the exclusions above, an opt-out, and an alternative destination under
 the operator's control. Other projects' choices do not imply identical data
 collection, privacy guarantees, or consent policies.
@@ -105,7 +105,7 @@ For stronger protection, maintainers should:
    when the allowance is consumed. No plan upgrade was made for this audit.
 4. Review accepted, filtered, and dropped events in Stats & Usage. Keep noise
    filters narrow; specifically review whether dropping hydration and chunk
-   loading failures is appropriate for Mike's supported browsers and deploys.
+   loading failures is appropriate for Spectre's supported browsers and deploys.
 5. During abuse, disable the affected key, investigate, then rotate and ship
    the replacement. Older installs using the revoked key will stop reporting.
    A replacement public key is discoverable again. Allowed-origin filters can
@@ -270,8 +270,8 @@ Backend (`backend/.env`, read at process start):
 
 ```
 SENTRY_DISABLED=false                  # true = send nothing
-SENTRY_DSN=                            # your own Sentry; empty = Mike project Sentry
-SENTRY_INSTALL=                        # "official" only on Mike's own deployment
+SENTRY_DSN=                            # your own Sentry; empty = Spectre project Sentry
+SENTRY_INSTALL=                        # "official" only on Spectre's own deployment
 SENTRY_ENVIRONMENT=production          # defaults to self-hosted
 SENTRY_RELEASE=mike@1.4.0              # optional; defaults to mike@<git sha>
 SENTRY_TRACES_SAMPLE_RATE=0            # optional, 0..1
@@ -294,7 +294,7 @@ SENTRY_RELEASE=mike@1.4.0
 
 # or, building the frontend directly
 NEXT_PUBLIC_SENTRY_DISABLED=true       # browser opt-out (build time)
-NEXT_PUBLIC_SENTRY_INSTALL=official    # only on Mike's own deployment
+NEXT_PUBLIC_SENTRY_INSTALL=official    # only on Spectre's own deployment
 NEXT_PUBLIC_SENTRY_DSN=...             # browser (build time)
 NEXT_PUBLIC_SENTRY_ENVIRONMENT=...     # optional
 NEXT_PUBLIC_SENTRY_RELEASE=...         # optional
@@ -321,7 +321,7 @@ Word add-in (build time, `word-addin/.env` or the Docker build arguments):
 
 ```
 REACT_APP_SENTRY_DISABLED=true         # opt-out
-REACT_APP_SENTRY_DSN=...               # your own Sentry; empty = Mike project Sentry
+REACT_APP_SENTRY_DSN=...               # your own Sentry; empty = Spectre project Sentry
 REACT_APP_SENTRY_ENVIRONMENT=...       # optional
 REACT_APP_SENTRY_RELEASE=...           # optional
 ```
@@ -349,7 +349,7 @@ and `NODE_OPTIONS` in the Dockerfile), so backend frames already read
 
 1. Set a local or deployment-owned DSN and restart. The backend logs
    `[sentry] enabled for api (environment ...)` for an explicit DSN. An unset
-   DSN uses Mike's project and logs that destination; only
+   DSN uses Spectre's project and logs that destination; only
    `SENTRY_DISABLED=true` (or the test-process guard) disables reporting.
    Rebuild browser bundles after changing their `*_SENTRY_*` variables.
 2. Backend: set `SENTRY_ENABLE_TEST_ROUTE=true`, restart, and run

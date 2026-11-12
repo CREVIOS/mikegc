@@ -215,7 +215,7 @@ describe("sending a message to the requester", () => {
     await expect(handleIntakeDeliver(memory.db, job())).rejects.toBeInstanceOf(NonRetryableJobError);
     expect(outbox()).toMatchObject({
       status: "failed",
-      error: "Couldn't send: MikeGC was removed from #legal-requests.",
+      error: "Couldn't send: Spectre was removed from #legal-requests.",
     });
     // Not pending any more: a duplicate job does nothing.
     await expect(handleIntakeDeliver(memory.db, job())).resolves.toEqual({ skipped: "failed" });
@@ -226,14 +226,14 @@ describe("sending a message to the requester", () => {
     await expect(handleIntakeDeliver(memory.db, job())).rejects.not.toBeInstanceOf(NonRetryableJobError);
     expect(outbox()).toMatchObject({ status: "pending" });
     await markIntakeDeliverFailed(memory.db, job(5));
-    expect(outbox()).toMatchObject({ status: "failed", error: "MikeGC couldn't reach Slack. Try again." });
+    expect(outbox()).toMatchObject({ status: "failed", error: "Spectre couldn't reach Slack. Try again." });
   });
   it("marks a message it couldn't queue as failed, so the request offers Retry", async () => {
     setup();
     process.env.DB_JOBS_ENABLED = "true";
     mocks.enqueueDbJob.mockRejectedValueOnce(new Error("connection reset"));
     await expect(dispatchIntakeDeliverOrFail(memory.db, org, outboundId)).rejects.toThrow("connection reset");
-    expect(outbox()).toMatchObject({ status: "failed", error: "MikeGC couldn't queue this message. Try again." });
+    expect(outbox()).toMatchObject({ status: "failed", error: "Spectre couldn't queue this message. Try again." });
     // Queued, it is left as it is.
     mocks.enqueueDbJob.mockResolvedValueOnce({ id: "job-2", deduped: false });
     memory.rows("intake_outbound")[0]!.status = "pending";
@@ -317,7 +317,7 @@ describe("sending a message to the requester", () => {
     expect(slackCalls.some((c) => c.method === "chat.postMessage")).toBe(false);
     expect(outbox()).toMatchObject({
       status: "failed",
-      error: expect.stringContaining("MikeGC couldn't tell whether this reached the Slack thread."),
+      error: expect.stringContaining("Spectre couldn't tell whether this reached the Slack thread."),
     });
   });
   it("sends nothing once Slack is switched off", async () => {

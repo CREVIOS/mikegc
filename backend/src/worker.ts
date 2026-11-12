@@ -30,7 +30,7 @@ import { flushSentry, reportError } from "./lib/observability/sentry";
 async function main(): Promise<void> {
   await enforceDocumentLifecycleMigration();
   startAllWorkers();
-  console.log("Mike worker process running");
+  console.log("Spectre worker process running");
 }
 
 void main();

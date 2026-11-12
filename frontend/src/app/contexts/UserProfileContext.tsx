@@ -75,6 +75,8 @@ interface UserProfile extends RouterProfileLists {
     subagentModel: string | null;
     subagentReasoning: NonNullable<Message["reasoning"]> | null;
     lastSelectedChatModel: string | null;
+    /** The deployment's configured default chat model, if it set one. */
+    defaultChatModel: string | null;
     lastSelectedReasoningLevel: NonNullable<Message["reasoning"]>;
     mfaOnLogin: boolean;
     legalResearchUs: boolean;
@@ -196,6 +198,7 @@ function toProfile(data: ApiUserProfile): UserProfile {
         subagentModel: profile.subagentModel ?? null,
         subagentReasoning: profile.subagentReasoning ?? null,
         lastSelectedChatModel: profile.lastSelectedChatModel ?? null,
+        defaultChatModel: profile.defaultChatModel ?? null,
         lastSelectedReasoningLevel:
             profile.lastSelectedReasoningLevel ?? "high",
         mfaOnLogin: profile.mfaOnLogin === true,
@@ -296,6 +299,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 subagentModel: null,
                 subagentReasoning: null,
                 lastSelectedChatModel: null,
+                defaultChatModel: null,
                 lastSelectedReasoningLevel: "high",
                 mfaOnLogin: false,
                 legalResearchUs: true,

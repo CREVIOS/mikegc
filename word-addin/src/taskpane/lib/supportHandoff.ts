@@ -48,7 +48,7 @@ export function buildSupportDiagnostics(
   context: SupportContext = {},
 ): string {
   const lines: string[] = [
-    "Mike support details",
+    "Spectre support details",
     `What happened: ${error.title}`,
     `Message shown: ${error.message}`,
   ];

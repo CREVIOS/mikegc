@@ -7,7 +7,7 @@ export interface DocxSaveState {
     error: string | null;
 }
 
-/** The `w:id`s of one Mike edit's insertion and deletion halves. */
+/** The `w:id`s of one Spectre edit's insertion and deletion halves. */
 export interface DocxRevisionIds {
     ins?: string | null;
     del?: string | null;

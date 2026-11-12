@@ -367,7 +367,7 @@ export function AskInputPopup({
         const onlyApprovals = response.responses.every(
             (item) => item.kind === "approval",
         );
-        return `${onlyApprovals ? "Decisions on Mike's requested actions" : "Responses to Mike's questions"}:\n${lines.join("\n\n")}`;
+        return `${onlyApprovals ? "Decisions on Spectre's requested actions" : "Responses to Spectre's questions"}:\n${lines.join("\n\n")}`;
     };
 
     // Called straight from the handler that resolves the last outstanding
@@ -492,7 +492,7 @@ export function AskInputPopup({
                                             <DocumentPrompt />
                                         ) : activeItem.kind === "approval" ? (
                                             <p className="text-sm text-gray-800">
-                                                Mike wants to run this action.
+                                                Spectre wants to run this action.
                                                 Approve it to run it now.
                                             </p>
                                         ) : (

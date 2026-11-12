@@ -16,6 +16,7 @@ import {
     normalizeVertexLocation,
 } from "../../lib/llm/cloudProviders";
 import { WEB_SEARCH_BACKENDS, type WebSearchBackend } from "../../lib/webSearch";
+import { environmentKey } from "../../lib/envKey";
 
 export type ApiKeyProvider =
     | "claude"
@@ -148,26 +149,26 @@ function envApiKey(provider: ApiKeyProvider): string | null {
     switch (provider) {
         case "claude":
             return (
-                process.env.ANTHROPIC_API_KEY?.trim() ||
-                process.env.CLAUDE_API_KEY?.trim() ||
+                environmentKey("ANTHROPIC_API_KEY") ||
+                environmentKey("CLAUDE_API_KEY") ||
                 null
             );
         case "gemini":
-            return process.env.GEMINI_API_KEY?.trim() || null;
+            return environmentKey("GEMINI_API_KEY") || null;
         case "mistral":
-            return process.env.MISTRAL_API_KEY?.trim() || null;
+            return environmentKey("MISTRAL_API_KEY") || null;
         case "openai":
-            return process.env.OPENAI_API_KEY?.trim() || null;
+            return environmentKey("OPENAI_API_KEY") || null;
         case "openrouter":
-            return process.env.OPENROUTER_API_KEY?.trim() || null;
+            return environmentKey("OPENROUTER_API_KEY") || null;
         case "vercel":
             return (
-                process.env.AI_GATEWAY_API_KEY?.trim() ||
-                process.env.VERCEL_AI_GATEWAY_API_KEY?.trim() ||
+                environmentKey("AI_GATEWAY_API_KEY") ||
+                environmentKey("VERCEL_AI_GATEWAY_API_KEY") ||
                 null
             );
         case "opencode-go":
-            return process.env.OPENCODE_API_KEY?.trim() || null;
+            return environmentKey("OPENCODE_API_KEY") || null;
         // A cloud key without its region/endpoint cannot be used, so the
         // environment only counts as configured when both halves are set.
         case "bedrock":
@@ -179,19 +180,19 @@ function envApiKey(provider: ApiKeyProvider): string | null {
         case "vertex":
             return envVertexCredentials() ? envVertexServiceAccountKey() : null;
         case "xai":
-            return process.env.XAI_API_KEY?.trim() || null;
+            return environmentKey("XAI_API_KEY") || null;
         // A custom endpoint is always the user's own; deployments declare
         // shared endpoints in MIKE_MODEL_CONFIG_JSON.
         case "custom":
             return null;
         case "courtlistener":
-            return process.env.COURTLISTENER_API_TOKEN?.trim() || null;
+            return environmentKey("COURTLISTENER_API_TOKEN") || null;
         case "brave":
-            return process.env.BRAVE_SEARCH_API_KEY?.trim() || null;
+            return environmentKey("BRAVE_SEARCH_API_KEY") || null;
         case "tavily":
-            return process.env.TAVILY_API_KEY?.trim() || null;
+            return environmentKey("TAVILY_API_KEY") || null;
         case "deepseek":
-            return process.env.DEEPSEEK_SEARCH_API_KEY?.trim() || null;
+            return environmentKey("DEEPSEEK_SEARCH_API_KEY") || null;
         default:
             return null;
     }

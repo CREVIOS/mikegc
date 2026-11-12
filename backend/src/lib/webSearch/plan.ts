@@ -11,7 +11,7 @@ export type WebSearchPlan = "provider" | WebSearchBackend;
 export type WebSearchKeys = Partial<Record<WebSearchBackend, string | null>>;
 
 // Gemini has a search tool too, but Google requires its search suggestions to
-// be shown wherever results are used, so Mike does not offer it.
+// be shown wherever results are used, so Spectre does not offer it.
 function familyOf(model: string): WebSearchFamily {
     try {
         const provider = providerForModel(model);
@@ -34,7 +34,7 @@ export function webSearchPlanFor(
     return keys?.[choice] ? choice : null;
 }
 
-/** Mike's search service for a plan, or null when the model searches by itself. */
+/** Spectre's search service for a plan, or null when the model searches by itself. */
 export function webSearchAccountFor(
     plan: WebSearchPlan | null,
     keys: WebSearchKeys | null | undefined,

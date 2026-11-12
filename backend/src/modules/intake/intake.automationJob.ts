@@ -80,29 +80,29 @@ import {
  * the thread, or record a request, with its rule or with questions to choose
  * one. The plan is saved on the message before any of it is done; then the
  * request is recorded, its documents added, its thread linked and answered:
- * with MikeGC's questions, or with an acknowledgement (which waits for the
+ * with Spectre's questions, or with an acknowledgement (which waits for the
  * readiness check when the rule's preprocessing may ask too). Every step can
  * run again: each document's ids and each step done are saved on the
  * message as they happen, and recording the request is keyed by the message.
  */
 
-const GENERIC_FAILURE = "MikeGC couldn't record this message. Try sending it again.";
+const GENERIC_FAILURE = "Spectre couldn't record this message. Try sending it again.";
 
 /** The sentence an admin sees for why a message failed. */
 function adminMessage(error: unknown): string {
   if (error instanceof IntakeAutomationError) return error.message;
   if (error instanceof SlackApiError) {
     if (SLACK_TOKEN_ERRORS.has(error.code))
-      return "Slack rejected MikeGC's bot token. Save a new one in Intake settings.";
+      return "Slack rejected Spectre's bot token. Save a new one in Intake settings.";
     if (error.code === "missing_scope" || error.code === "no_permission")
       return "The Slack app is missing a permission. Reinstall it from the manifest in the setup guide.";
     if (error.code === "not_in_channel" || error.code === "channel_not_found")
-      return "MikeGC can't read that Slack channel. Invite @MikeGC to it.";
+      return "Spectre can't read that Slack channel. Invite @Spectre to it.";
     if (error.code === "thread_not_found" || error.code === "message_not_found")
-      return "The Slack message was deleted before MikeGC could read it.";
+      return "The Slack message was deleted before Spectre could read it.";
     if (error.code === "file_not_authorized" || error.code === "invalid_file_url")
-      return "MikeGC couldn't download a file from Slack. Check that the Slack app has the files:read permission.";
-    return "MikeGC couldn't reach Slack.";
+      return "Spectre couldn't download a file from Slack. Check that the Slack app has the files:read permission.";
+    return "Spectre couldn't reach Slack.";
   }
   if (error instanceof TeamsApiError) return error.sentence;
   return GENERIC_FAILURE;
@@ -448,7 +448,7 @@ async function noteRelated(
     p_note: stableId(`intake.related:${row.id}`),
     p_body:
       `A message in this request's email thread came from ${sender ?? "someone"}, who isn't on the thread, ` +
-      `so MikeGC recorded it as a new request: ${link}`,
+      `so Spectre recorded it as a new request: ${link}`,
   });
   if (!note.ok && note.kind !== "not_found")
     throw note.kind === "error" ? note.error : new Error(note.detail);
@@ -456,7 +456,7 @@ async function noteRelated(
 
 /**
  * The thread a Slack, Teams or email message belongs to, as links key it,
- * where MikeGC can answer instead of recording. Mail in another request's
+ * where Spectre can answer instead of recording. Mail in another request's
  * thread is that request's to answer.
  */
 function conversationThread(
@@ -477,7 +477,7 @@ function conversationThread(
 }
 
 /**
- * MikeGC's own answer in the chat or email thread a message came from, the
+ * Spectre's own answer in the chat or email thread a message came from, the
  * agent's `reply` when it found no request to record. Nothing is recorded,
  * so it goes out without a request or a link: an email replies to the
  * message itself.
@@ -593,7 +593,7 @@ async function processInbound(db: Db, row: InboundRow): Promise<Record<string, u
   const payload = parsed.data;
   const save = () => saveInboundPayload(db, row.id, payload);
   const settings = await loadAutomationRow(db, row.org_id);
-  // MikeGC asks only where it can be answered: in a thread of the request's
+  // Spectre asks only where it can be answered: in a thread of the request's
   // own. Mail in another request's thread is recorded apart, and the thread
   // stays that request's.
   const canAsk = !(payload.kind === "mail" && payload.related_request_id);
@@ -603,7 +603,7 @@ async function processInbound(db: Db, row: InboundRow): Promise<Record<string, u
     await save();
   }
   const plan = payload.agent;
-  // Nothing to record: MikeGC answers in the thread, and no request is made.
+  // Nothing to record: Spectre answers in the thread, and no request is made.
   if (!plan.record && plan.reply && !row.request_id && !payload.recorded) {
     // Saved straight after the send, and the round counted apart, so a
     // retry neither answers twice nor counts the answer twice.
@@ -613,7 +613,7 @@ async function processInbound(db: Db, row: InboundRow): Promise<Record<string, u
       await save();
     }
     if (!payload.remembered) {
-      // So the next message in the thread reaches MikeGC, without a
+      // So the next message in the thread reaches Spectre, without a
       // mention, and is read with this answer.
       const thread = conversationThread(settings, payload);
       if (thread)

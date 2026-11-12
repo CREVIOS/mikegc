@@ -27,7 +27,7 @@ export function useGoogleDrivePicker() {
       );
       setMessage(
         picked.length
-          ? `Added ${picked.length} ${picked.length === 1 ? "file" : "files"}. Mike can now search and read them.`
+          ? `Added ${picked.length} ${picked.length === 1 ? "file" : "files"}. Spectre can now search and read them.`
           : "No files added.",
       );
     } catch (error) {

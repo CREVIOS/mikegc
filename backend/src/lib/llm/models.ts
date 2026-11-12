@@ -43,6 +43,21 @@ export const GEMINI_LOW_MODELS = ["gemini-3.5-flash-lite"] as const;
 export const OPENAI_LOW_MODELS = ["gpt-6-luna"] as const;
 export const MISTRAL_LOW_MODELS = ["mistral-small-2603"] as const;
 
+/**
+ * The chat models a turn runs on when neither the request, the chat nor the
+ * profile names one, most preferred first. Spectre runs on OpenAI by default;
+ * a user without an OpenAI key falls through to the next direct provider they
+ * hold a key for. `SPECTRE_DEFAULT_MODEL` puts a deployment's own choice in
+ * front. Mirrored by frontend/src/shared/lib/modelCatalog.ts
+ * DEFAULT_CHAT_MODEL_PREFERENCE (catalogParity.test.ts pins the two).
+ */
+export const DEFAULT_CHAT_MODEL_PREFERENCE = [
+    OPENAI_MID_MODELS[0],
+    CLAUDE_MID_MODELS[0],
+    GEMINI_MID_MODELS[0],
+    MISTRAL_MID_MODELS[0],
+] as const;
+
 const STANDARD_REASONING_LEVELS: readonly ReasoningLevel[] =
     REASONING_LEVELS.filter((level) => level !== "max");
 const ALWAYS_REASONING_LEVELS: readonly ReasoningLevel[] =
@@ -112,7 +127,7 @@ export function normalizeReasoningLevelForModel(
 // OpenAI Responses, Anthropic Messages, and OpenAI Chat Completions. The live
 // /models payload does not identify a model's protocol, so keep these lists
 // fail-closed and in sync with https://opencode.ai/docs/go/#endpoints. A new
-// catalog entry is not offered until Mike can actually speak its protocol.
+// catalog entry is not offered until Spectre can actually speak its protocol.
 export const OPENCODE_GO_CHAT_COMPLETIONS_MODEL_IDS: ReadonlySet<string> =
     new Set([
         "glm-5",
@@ -215,7 +230,7 @@ export const LEGACY_MODEL_IDS: Record<string, string> = {
 // ---------------------------------------------------------------------------
 /**
  * Providers whose model ids are account-specific (no published catalog), so
- * Mike accepts whatever id the user typed — subject to the grammar below.
+ * Spectre accepts whatever id the user typed — subject to the grammar below.
  */
 export const ACCOUNT_MODEL_PREFIXES = [
     "bedrock",
@@ -359,7 +374,7 @@ export function azureDeploymentName(model: string): string {
 }
 
 // Vertex AI and Azure AI Foundry serve several wire protocols, and neither
-// tells an API key which one a model speaks. Mike infers it from the name,
+// tells an API key which one a model speaks. Spectre infers it from the name,
 // and a saved id can state it outright for names the inference gets wrong:
 // "anthropic:prod-sonnet", "openai:mistral-large-2411", "gemini:my-tuned-model".
 const EXPLICIT_PROTOCOL_RE = /^(anthropic|openai|gemini):/;

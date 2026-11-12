@@ -1,6 +1,6 @@
 # Tamper-evident exports
 
-Mike hashes a document version's bytes with SHA-256 whenever it writes them.
+Spectre hashes a document version's bytes with SHA-256 whenever it writes them.
 `GET /projects/:projectId/export` returns a manifest containing those hashes and
 the accept/reject trail.
 

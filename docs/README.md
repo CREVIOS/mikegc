@@ -1,6 +1,6 @@
 # Documentation
 
-## Run and deploy Mike
+## Run and deploy Spectre
 
 - [Local development](local-development.md) — Docker Compose, local services,
   registration, Ollama, and first-run setup
@@ -11,6 +11,10 @@
   documents, and secret handling
 
 ## Features and clients
+
+- [Spectre for Bangladesh](bangladesh.md): OpenAI by default, Bangladeshi
+  law and citations, the Laws of Bangladesh lookup, Bangla text in answers,
+  documents and search, and the Bangladesh workflow pack
 
 - [Intake](intake.md): intake setup, access, retention and verification
 - [Automated intake](intake-automation.md): recording requests from email, Slack and Teams, with the intake agent
@@ -58,7 +62,7 @@
 ## Open-source acknowledgments
 
 - [Open-source credits](../CREDITS.md) — the libraries, tools, and
-  infrastructure behind Mike
+  infrastructure behind Spectre
 
 ## Historical design and investigation notes
 

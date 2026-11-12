@@ -56,7 +56,7 @@ const CLOCK_SKEW_SECONDS = 5 * 60;
 /** Files at most this size go up in one PUT; larger ones in an upload session. */
 const SIMPLE_UPLOAD_BYTES = 4 * 1024 * 1024;
 
-/** The activity fields MikeGC reads, leniently: an odd field is dropped. */
+/** The activity fields Spectre reads, leniently: an odd field is dropped. */
 const maybe = <T extends z.ZodTypeAny>(schema: T) => schema.optional().catch(undefined);
 export const teamsActivity = z.object({
   type: z.string().max(100),
@@ -151,7 +151,7 @@ export function teamsActivityFiles(activity: TeamsActivity): TeamsFileRef[] {
     }));
 }
 
-/** Bot Connector hosts MikeGC sends its bot token to. */
+/** Bot Connector hosts Spectre sends its bot token to. */
 export function isBotServiceUrl(value: string): boolean {
   try {
     const url = new URL(value);
@@ -258,7 +258,7 @@ const botToken = async (settings: AutomationRow) =>
 const graphToken = async (settings: AutomationRow) =>
   (await microsoftToken({ ...credentials(settings), scope: GRAPH_SCOPE }, { sentence: CREDENTIALS_REFUSED })).token;
 
-/** Graph application roles that let MikeGC read and post channel files. */
+/** Graph application roles that let Spectre read and post channel files. */
 const FILE_ROLES = new Set(["Sites.Selected", "Files.ReadWrite.All", "Sites.ReadWrite.All"]);
 
 /**
@@ -304,7 +304,7 @@ async function graphThread(
   const token = await graphToken(settings);
   const base = `${GRAPH_API}/teams/${encodeURIComponent(thread.groupId)}/channels/${encodeURIComponent(thread.channelId)}/messages/${encodeURIComponent(thread.rootId)}`;
   const refused =
-    "MikeGC can't read that Teams channel. A team owner can add the MikeGC app to the team.";
+    "Spectre can't read that Teams channel. A team owner can add the Spectre app to the team.";
   const root = await microsoftFetch<GraphChatMessage>(base, { token, refused });
   const replies: GraphChatMessage[] = [];
   let next: string | null = `${base}/replies?$top=50`;
@@ -459,7 +459,7 @@ export function teamsThread(payload: TeamsInboundPayload) {
 function teamsAddress(link: ChannelLink): TeamsAddress {
   const a = link.address as Partial<TeamsAddress>;
   if (typeof a.service_url !== "string" || typeof a.conversation_id !== "string")
-    throw new ChannelDeliveryError("MikeGC lost track of this request's Teams thread.", true);
+    throw new ChannelDeliveryError("Spectre lost track of this request's Teams thread.", true);
   return a as TeamsAddress;
 }
 
@@ -483,7 +483,7 @@ export async function teamsDownloadFile(
     {
       token,
       long: true,
-      refused: "MikeGC can't open files in that Teams channel.",
+      refused: "Spectre can't open files in that Teams channel.",
     },
   );
   return readLimited(response, maxBytes);
@@ -560,17 +560,17 @@ async function uploadToChannel(
   bytes: ArrayBuffer,
 ): Promise<string> {
   if (!address.aad_group_id || !address.channel_id)
-    throw new MicrosoftApiError({ status: 404, code: "no_channel", permanent: true, sentence: "MikeGC can't find the Teams channel's files." });
+    throw new MicrosoftApiError({ status: 404, code: "no_channel", permanent: true, sentence: "Spectre can't find the Teams channel's files." });
   const token = await graphToken(settings);
-  const refused = "MikeGC can't add files to that Teams channel. An admin can grant document access in Intake settings.";
+  const refused = "Spectre can't add files to that Teams channel. An admin can grant document access in Intake settings.";
   const folder = await microsoftFetch<{ id?: string; parentReference?: { driveId?: string } }>(
     `${GRAPH_API}/teams/${encodeURIComponent(address.aad_group_id)}/channels/${encodeURIComponent(address.channel_id)}/filesFolder`,
     { token, refused },
   );
   const driveId = folder?.parentReference?.driveId;
   if (!folder?.id || !driveId)
-    throw new MicrosoftApiError({ status: 404, code: "no_folder", permanent: true, sentence: "MikeGC can't find the Teams channel's files." });
-  const path = ["MikeGC", folderName(subject), doc.name.replace(/[/\\]/g, " ")]
+    throw new MicrosoftApiError({ status: 404, code: "no_folder", permanent: true, sentence: "Spectre can't find the Teams channel's files." });
+  const path = ["Spectre", folderName(subject), doc.name.replace(/[/\\]/g, " ")]
     .map(encodeURIComponent)
     .join("/");
   const item = `${GRAPH_API}/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(folder.id)}:/${path}:`;
@@ -608,8 +608,8 @@ function teamsDeliveryError(error: unknown, channelName: string | null): Error {
   if (error.code === "MessageWritesBlocked" || error.code === "BotNotInConversationRoster" || error.status === 403)
     return new ChannelDeliveryError(
       channelName
-        ? `Couldn't send: MikeGC was removed from ${channelName}.`
-        : "Couldn't send: MikeGC can't post in that Teams channel.",
+        ? `Couldn't send: Spectre was removed from ${channelName}.`
+        : "Couldn't send: Spectre can't post in that Teams channel.",
       true,
     );
   if (error.status === 404)
@@ -629,10 +629,10 @@ export const teamsAdapter: ChannelAdapter = {
   source: "teams",
   async deliver(ctx, link, message, delivered) {
     if (!ctx.settings.teams_enabled)
-      throw new ChannelDeliveryError("Teams is turned off in Intake settings, so MikeGC can't post in the thread.", true);
+      throw new ChannelDeliveryError("Teams is turned off in Intake settings, so Spectre can't post in the thread.", true);
     const address = teamsAddress(link);
     if (!isBotServiceUrl(address.service_url))
-      throw new ChannelDeliveryError("MikeGC lost track of this request's Teams thread.", true);
+      throw new ChannelDeliveryError("Spectre lost track of this request's Teams thread.", true);
     const channelName = address.channel_name ? `${address.channel_name}` : null;
     try {
       const documents = message.documents.map((d) => ({ ...d }));
@@ -675,7 +675,7 @@ export const teamsAdapter: ChannelAdapter = {
       );
       const id = typeof posted?.id === "string" ? posted.id.slice(0, 200) : null;
       if (!id)
-        throw new MicrosoftApiError({ status: 0, code: "invalid_response", permanent: false, sentence: "Microsoft sent an answer MikeGC couldn't read." });
+        throw new MicrosoftApiError({ status: 0, code: "invalid_response", permanent: false, sentence: "Microsoft sent an answer Spectre couldn't read." });
       return { externalId: id, documents };
     } catch (error) {
       throw teamsDeliveryError(error, channelName);

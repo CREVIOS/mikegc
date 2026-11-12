@@ -1,10 +1,10 @@
 @reference "../../../globals.css";
 
 /* EigenPal 2.21.1 has no title-row or frame-border option. Scope these
-   overrides to its packaged chrome; Mike owns the filename and file actions. */
+   overrides to its packaged chrome; Spectre owns the filename and file actions. */
 .host {
     --mike-docx-comment-width: 240px;
-    /* Capture Mike's semantic tokens before EigenPal shadows them with HSL. */
+    /* Capture Spectre's semantic tokens before EigenPal shadows them with HSL. */
     --mike-docx-focus-color: var(--ring);
     --mike-docx-foreground: var(--foreground);
     --mike-docx-muted-foreground: var(--muted-foreground);
@@ -35,7 +35,7 @@
 }
 
 .host :global(.docx-toolbar) {
-    /* Reuse Mike's text utilities and the same material/state tokens as
+    /* Reuse Spectre's text utilities and the same material/state tokens as
        TextButtonUI, Dropdown and the flat dropdown inputs. */
     --foreground: var(--mike-docx-foreground);
     --muted-foreground: var(--mike-docx-muted-foreground);
@@ -136,7 +136,7 @@
     box-shadow: var(--liquid-glass-shadow-float);
 }
 
-/* Match Mike's dropdown rows, preserving font/style previews and swatch colors. */
+/* Match Spectre's dropdown rows, preserving font/style previews and swatch colors. */
 .host :global(.docx-toolbar) :global(.docx-toolbar__font-search) {
     border-radius: 0.75rem;
 }

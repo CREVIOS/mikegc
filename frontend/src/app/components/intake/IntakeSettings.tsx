@@ -19,7 +19,7 @@ const SECTION_STACK_CLASS = "space-y-8";
 type Loaded = { settings: IntakeAutomationSettings };
 
 /**
- * How MikeGC records requests by itself, as the Intake section of the
+ * How Spectre records requests by itself, as the Intake section of the
  * workspace's settings. The channels it records from (Outlook, Gmail, Slack
  * and Teams) are tiles, each switched on or off in place and set up or
  * managed in its own modal, which saves with its own button. Triage rules

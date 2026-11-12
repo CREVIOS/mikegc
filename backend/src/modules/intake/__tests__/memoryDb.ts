@@ -353,7 +353,7 @@ const event = (memory: MemoryDb, row: Row) => memory.rows("intake_events").push(
 
 /**
  * The requester loop's SQL functions as the migration defines them, enough
- * for unit tests: links, MikeGC's questions and acknowledgement, replies,
+ * for unit tests: links, Spectre's questions and acknowledgement, replies,
  * settling a stage and recording deliveries.
  */
 export function requesterLoopRpc(): Record<string, RpcHandler> {

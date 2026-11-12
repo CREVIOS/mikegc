@@ -1,7 +1,46 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildUserPersonalisationPrompt } from "../contextBuilders";
 
 describe("buildUserPersonalisationPrompt", () => {
+  // These cases pin the personalisation sections themselves, so they run on
+  // a deployment with no default jurisdiction. The Bangladesh block is
+  // covered below and in lib/bangladesh/__tests__/practicePrompt.test.ts.
+  const previous = process.env.SPECTRE_DEFAULT_JURISDICTION;
+  beforeAll(() => {
+    process.env.SPECTRE_DEFAULT_JURISDICTION = "none";
+  });
+  afterAll(() => {
+    if (previous === undefined) delete process.env.SPECTRE_DEFAULT_JURISDICTION;
+    else process.env.SPECTRE_DEFAULT_JURISDICTION = previous;
+  });
+
+  it("adds Bangladeshi practice for a user in Bangladesh, before their own details", () => {
+    const prompt = buildUserPersonalisationPrompt(
+      { ...blankProfile(), jurisdiction: "Bangladesh", displayName: "Rahima" },
+      "nonce-bd",
+    );
+    expect(prompt).toContain("BANGLADESH LEGAL PRACTICE:");
+    expect(prompt).toContain("BANGLA (BENGALI) WRITING:");
+    expect(prompt.indexOf("BANGLADESH LEGAL PRACTICE:")).toBeLessThan(
+      prompt.indexOf("USER PERSONALISATION"),
+    );
+  });
+
+  it("follows the deployment default when the profile names no jurisdiction", () => {
+    const prompt = buildUserPersonalisationPrompt(blankProfile(), "n", {});
+    expect(prompt).toContain("BANGLADESH LEGAL PRACTICE:");
+    expect(
+      buildUserPersonalisationPrompt(undefined, "n", {}),
+    ).toContain("BANGLADESH LEGAL PRACTICE:");
+    expect(
+      buildUserPersonalisationPrompt(
+        { ...blankProfile(), jurisdiction: "Singapore" },
+        "n",
+        {},
+      ),
+    ).not.toContain("BANGLADESH LEGAL PRACTICE:");
+  });
+
   it("includes all saved professional details as fenced data", () => {
     const prompt = buildUserPersonalisationPrompt(
       {
@@ -263,3 +302,14 @@ describe("buildUserPersonalisationPrompt", () => {
     );
   });
 });
+
+function blankProfile() {
+  return {
+    displayName: null,
+    organisation: null,
+    jurisdiction: null,
+    practiceSetting: null,
+    professionalTitle: null,
+    practiceAreas: [],
+  };
+}

@@ -97,7 +97,7 @@ export async function applyTrackedEditsToDocument(params: {
 
   return writeTrackedEdits({
     documentId,
-    // An intake document MikeGC recorded belongs to the organization, and
+    // An intake document Spectre recorded belongs to the organization, and
     // its versions stay where the organization's intake files are kept.
     storageOwner:
       doc.library_kind === "intake_attachment" && !doc.user_id && doc.org_id
@@ -109,7 +109,7 @@ export async function applyTrackedEditsToDocument(params: {
         .select("display_name, email")
         .eq("user_id", userId)
         .maybeSingle();
-      return profileAttributionName(authorProfile, "Mike");
+      return profileAttributionName(authorProfile, "Spectre");
     },
     edits,
     db,

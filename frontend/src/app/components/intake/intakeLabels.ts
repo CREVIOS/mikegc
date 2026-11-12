@@ -38,14 +38,14 @@ export const INTAKE_MESSAGE_LABELS: Record<IntakeMessage["kind"], string> = {
 
 /**
  * A status as the queue and sidebar show it. Waiting on requester says so
- * when MikeGC asked, rather than a member.
+ * when Spectre asked, rather than a member.
  */
 export function intakeStateLabel(
   state: IntakeState,
   clarifyStage?: IntakeClarifyStage | null,
 ) {
   return state === "needs_information" && clarifyStage
-    ? `${INTAKE_STATE_LABELS[state]} (MikeGC asked)`
+    ? `${INTAKE_STATE_LABELS[state]} (Spectre asked)`
     : INTAKE_STATE_LABELS[state];
 }
 

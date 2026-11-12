@@ -10,7 +10,7 @@ import { diagnosticErrorTags } from "./sentryPrivacy";
  *
  * Two jobs:
  *
- *  1. SCRUB. Mike handles privileged legal documents. An event may carry a
+ *  1. SCRUB. Spectre handles privileged legal documents. An event may carry a
  *     user id and a route; it must never carry a request body, a cookie, an
  *     auth header, or anything under a key that looks like a secret.
  *  2. DEDUPE. Every remaining `console.error` is bridged into Sentry so no
@@ -252,7 +252,7 @@ export function redactShaped(value: unknown, depth = 0): unknown {
 }
 
 /**
-  * The Mike project's own Sentry projects. A DSN is a write-only address:
+  * The Spectre project's own Sentry projects. A DSN is a write-only address:
   * it lets an SDK post events and nothing else, so it is public by design
   * (it ships in every browser bundle). Community installs report here by
   * default so the project learns what forks run into; the opt-out and the
@@ -269,13 +269,13 @@ export const MIKE_SENTRY_DSN = {
 
 export type DsnResolution = {
     dsn: string;
-    /** Where the DSN came from; "default" means the Mike project's Sentry. */
+    /** Where the DSN came from; "default" means the Spectre project's Sentry. */
     source: "disabled" | "env" | "default";
 };
 
 /**
   * Off if the runtime's *_SENTRY_DISABLED is "true"; the runtime's own DSN
-  * when one is set (a self-hoster's own Sentry); otherwise the built-in Mike
+  * when one is set (a self-hoster's own Sentry); otherwise the built-in Spectre
   * project DSN. Test processes are guarded separately by the caller.
   */
 export function resolveDsn(input: {
@@ -392,7 +392,7 @@ function mapStringLeaves(
 }
 
 /**
-  * COMMUNITY INSTALLS: a fork or self-hosted Mike reporting to the Mike
+  * COMMUNITY INSTALLS: a fork or self-hosted Spectre reporting to the Spectre
   * project's Sentry sends only what our own code owns and what is too broad
   * to identify anyone. Removed: the machine name, the user id, request
   * headers and host, every breadcrumb, device / app / locale contexts, local
@@ -548,12 +548,12 @@ function findNested(
 }
 
 /**
- * Code the `next dev` toolchain runs, never Mike's: Next's own dist (the dev
+ * Code the `next dev` toolchain runs, never Spectre's: Next's own dist (the dev
  * server, hot reloader, dev overlay, console interceptor), React and the
  * scheduler it drives, and the Turbopack dev runtime. On the server these are
  * `node_modules/<pkg>/…` paths; in the browser Turbopack serves the same
  * modules as chunks named after their path (`node_modules_next_dist_<hash>._.js`).
- * Mike's own code is `src/…` on the server and `[project]`/`src_…` chunks in
+ * Spectre's own code is `src/…` on the server and `[project]`/`src_…` chunks in
  * the browser, so it never matches.
  */
 const DEV_TOOLCHAIN_FRAME =
@@ -568,9 +568,9 @@ const STACK_LINE_LOCATION = /\(?([^\s()]+):\d+:\d+\)?\s*$/;
  * next-dev-server `findPageComponents` → base-server rendering `/_error`),
  * forwarded to the browser's dev overlay and caught as unhandled there.
  * MIKE-FRONTEND-K: the dev overlay logging it through console.error. Neither
- * is a defect in Mike and both went to the project's shared community
+ * is a defect in Spectre and both went to the project's shared community
  * Sentry. An explicit report, a production build, or any event with a
- * frame in Mike's own code (including the stack of an Error nested in the
+ * frame in Spectre's own code (including the stack of an Error nested in the
  * console arguments) is kept.
  */
 function isDevToolchainNoise(event: ScrubbableEvent, automatic: boolean): boolean {

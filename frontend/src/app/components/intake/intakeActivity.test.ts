@@ -65,24 +65,24 @@ describe("describeIntakeEvent", () => {
   });
 });
 
-describe("what MikeGC recorded", () => {
-  it("reads as MikeGC creating and assigning the request", () => {
-    // MikeGC is not an account: the entry has no actor ID, only its name.
+describe("what Spectre recorded", () => {
+  it("reads as Spectre creating and assigning the request", () => {
+    // Spectre is not an account: the entry has no actor ID, only its name.
     expect(
       describeIntakeEvent(
         event({
           actor_id: null,
-          actor_name: "MikeGC",
+          actor_name: "Spectre",
           assignee_name: "Lawyer B",
         }),
       ),
     ).toEqual({
-      actor: "MikeGC",
+      actor: "Spectre",
       action: "created this and assigned it to Lawyer B",
     });
     expect(
-      describeIntakeEvent(event({ actor_id: null, actor_name: "MikeGC" })),
-    ).toEqual({ actor: "MikeGC", action: "created this" });
+      describeIntakeEvent(event({ actor_id: null, actor_name: "Spectre" })),
+    ).toEqual({ actor: "Spectre", action: "created this" });
   });
 });
 
@@ -107,11 +107,11 @@ describe("describeIntakeMessage", () => {
     );
   });
 
-  it("names MikeGC's preprocessing, and leaves its other notes as comments", () => {
-    const mikegc = { automated: true, author_id: null, author_name: "MikeGC" };
+  it("names Spectre's preprocessing, and leaves its other notes as comments", () => {
+    const mikegc = { automated: true, author_id: null, author_name: "Spectre" };
     expect(
       describeIntakeMessage(message({ ...mikegc, purpose: "preprocessing" })),
-    ).toEqual({ actor: "MikeGC", action: "preprocessed this request" });
+    ).toEqual({ actor: "Spectre", action: "preprocessed this request" });
     expect(describeIntakeMessage(message(mikegc)).action).toBe("commented");
   });
 
@@ -136,32 +136,32 @@ describe("describeIntakeMessage", () => {
     ).toBe("replied");
   });
 
-  it("reads MikeGC's questions as MikeGC's", () => {
+  it("reads Spectre's questions as Spectre's", () => {
     expect(
       describeIntakeMessage(
         message({
           kind: "question",
           automated: true,
           author_id: null,
-          author_name: "MikeGC",
+          author_name: "Spectre",
         }),
       ),
-    ).toEqual({ actor: "MikeGC", action: "asked the requester" });
+    ).toEqual({ actor: "Spectre", action: "asked the requester" });
   });
 });
 
 describe("the requester loop's changes", () => {
-  it("reads stopping MikeGC asking, and MikeGC's own waits", () => {
+  it("reads stopping Spectre asking, and Spectre's own waits", () => {
     expect(describeIntakeEvent(event({ kind: "stop_asking" }))).toEqual({
       actor: "Sam Colleague",
-      action: "stopped MikeGC asking the requester",
+      action: "stopped Spectre asking the requester",
     });
     expect(
       describeIntakeEvent(
-        event({ kind: "wait", actor_id: null, actor_name: "MikeGC" }),
+        event({ kind: "wait", actor_id: null, actor_name: "Spectre" }),
       ),
     ).toEqual({
-      actor: "MikeGC",
+      actor: "Spectre",
       action: "marked this waiting on the requester",
     });
   });

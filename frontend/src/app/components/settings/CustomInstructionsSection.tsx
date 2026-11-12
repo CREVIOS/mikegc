@@ -98,7 +98,7 @@ export function CustomInstructionsSection() {
         ) : null}
       </div>
       <SettingsDescription>
-        Tell Mike how you would like it to respond in chats.
+        Tell Spectre how you would like it to respond in chats.
       </SettingsDescription>
 
       {loading ? (

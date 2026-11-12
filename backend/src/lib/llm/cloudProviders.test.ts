@@ -179,7 +179,7 @@ describe("parseVertexServiceAccount", () => {
     universe_domain: "attacker.example",
   };
 
-  it("reads only the fields Mike uses", () => {
+  it("reads only the fields Spectre uses", () => {
     expect(parseVertexServiceAccount(JSON.stringify(file))).toEqual({
       clientEmail: "mike@legal-prod.iam.gserviceaccount.com",
       privateKey: file.private_key,

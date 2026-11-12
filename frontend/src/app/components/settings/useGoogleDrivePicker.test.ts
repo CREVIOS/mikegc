@@ -43,7 +43,7 @@ describe("useGoogleDrivePicker", () => {
       { id: "3", name: "c.pdf", mimeType: "application/pdf" },
     ]);
     expect(await addFiles()).toBe(
-      "Added 3 files. Mike can now search and read them.",
+      "Added 3 files. Spectre can now search and read them.",
     );
     expect(mocks.open).toHaveBeenCalledWith(session);
   });

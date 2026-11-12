@@ -4,7 +4,7 @@ import { MikeIcon } from "../../../../shared/chat/mike-icon";
 export type StatusState = "active" | "error" | null;
 
 /**
- * Mirrors the web assistant's response marker: Mike spins while the response
+ * Mirrors the web assistant's response marker: Spectre spins while the response
  * is active, flashes green when it finishes, and turns red on an error.
  */
 export function ResponseStatus({

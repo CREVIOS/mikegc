@@ -1,5 +1,5 @@
 // Documents an organization owns rather than a member, such as the
-// attachments MikeGC records for intake: no uploader, so no user's access
+// attachments Spectre records for intake: no uploader, so no user's access
 // applies. Their callers are trusted jobs acting for the organization, which
 // name it, and these helpers only reach documents it owns that way.
 

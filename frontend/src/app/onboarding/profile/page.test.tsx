@@ -36,7 +36,7 @@ vi.mock("@/app/contexts/UserProfileContext", () => ({
 
 vi.mock("@/app/lib/mikeApi", () => ({ updateUserProfile, listMyOrgInvitations, acceptOrgInvitation }));
 vi.mock("@/app/components/site-logo", () => ({
-    SiteLogo: () => <div>Mike</div>,
+    SiteLogo: () => <div>Spectre</div>,
 }));
 
 describe("OnboardingProfilePage", () => {

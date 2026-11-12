@@ -5,7 +5,7 @@ import type { Db } from "../supabase";
 // What belongs to a team organization is shared inside it only. A chat or
 // review started on its own in an organization's workspace can be given to
 // other members of that organization, and to nobody else; a personal one can
-// still be given to any Mike user.
+// still be given to any Spectre user.
 
 type Row = Record<string, unknown>;
 
@@ -80,7 +80,7 @@ describe("sharing a chat or review that belongs to an organization", () => {
         ]);
     });
 
-    it("refuses a Mike user who is not in the organization, and writes nothing", async () => {
+    it("refuses a Spectre user who is not in the organization, and writes nothing", async () => {
         const fake = makeDb(TABLES);
         await expect(grant(fake.db, "erin@example.com", "org-a")).resolves.toEqual(
             {
@@ -103,7 +103,7 @@ describe("sharing a chat or review that belongs to an organization", () => {
 
 describe("sharing a personal chat or review", () => {
     it.each([null, undefined])(
-        "gives it to any Mike user, without asking about organizations (orgId %j)",
+        "gives it to any Spectre user, without asking about organizations (orgId %j)",
         async (orgId) => {
             const fake = makeDb(TABLES);
             await expect(

@@ -11701,7 +11701,7 @@ begin
         -- IDs let the page show each person's photo from its member list.
         case when e.kind in ('assignee_left', 'reviewer_removed') then null else e.actor_id end as actor_id,
         case when e.kind in ('assignee_left', 'reviewer_removed') then null
-          when e.automated then 'MikeGC'
+          when e.automated then 'Spectre'
           else coalesce(u.display_name, u.email, 'Former member') end as actor_name,
         case when e.assignee_id is null then null else coalesce(a.display_name, a.email, 'Former member') end as assignee_name,
         (select public.intake_delivery(o) from public.intake_outbound o where o.id = e.outbound_id) as delivery
@@ -11713,7 +11713,7 @@ begin
   end if;
   return (select coalesce(jsonb_agg(to_jsonb(x) order by x.created_at, x.id), '[]') from (
     select m.id, m.kind, m.body, m.created_at, m.author_id, m.automated, m.purpose,
-      case when m.automated then 'MikeGC'
+      case when m.automated then 'Spectre'
         when m.kind = 'reply' and m.author_id is null then coalesce(nullif(btrim(m.external_author->>'name'), ''),
           nullif(btrim(m.external_author->>'email'), ''), 'The requester')
         else coalesce(u.display_name, u.email, 'Former member') end as author_name,
@@ -11895,7 +11895,7 @@ begin
   return (select coalesce(jsonb_agg(jsonb_build_object(
       'document_id', d.id, 'filename', coalesce(v.filename, 'Untitled document'),
       'file_type', v.file_type, 'size_bytes', v.size_bytes, 'status', d.status,
-      'added_by_name', case when l.automated then 'MikeGC'
+      'added_by_name', case when l.automated then 'Spectre'
         else coalesce(u.display_name, u.email, 'Former member') end, 'created_at', l.created_at,
       'message_id', l.message_id,
       'revised', d.current_version_id is not null and d.current_version_id is distinct from
@@ -12539,7 +12539,7 @@ begin
   end if;
   update public.intake_outbound set status = p_status,
     external_id = coalesce(p_external_id, external_id),
-    error = case when p_status = 'failed' then coalesce(p_error, 'MikeGC couldn''t send this message.') else null end,
+    error = case when p_status = 'failed' then coalesce(p_error, 'Spectre couldn''t send this message.') else null end,
     documents = coalesce(p_documents, documents),
     attempted_at = coalesce(attempted_at, now()),
     sent_at = case when p_status = 'sent' then coalesce(sent_at, now()) else sent_at end
@@ -12608,7 +12608,7 @@ returns jsonb language sql stable set search_path = public, pg_temp as $$
     'assignee_id', r.assignee_id,
     'assignee_name', case when r.assignee_id is null then null else coalesce(a.display_name, a.email, 'Former member') end,
     'created_by', r.created_by,
-    'created_by_name', case when r.created_by is null and r.source <> 'manual' then 'MikeGC'
+    'created_by_name', case when r.created_by is null and r.source <> 'manual' then 'Spectre'
       else coalesce(c.display_name, c.email, 'Former member') end,
     'source', r.source,
     'created_at', r.created_at, 'updated_at', r.updated_at,
@@ -13041,5 +13041,6 @@ insert into public.schema_migrations (filename) values
   ('20261111_01_intake_agent.sql'),
   ('20261111_02_intake_edit_preserves_unread.sql'),
   ('20261111_03_intake_retire_postmark.sql'),
-  ('20261111_04_intake_answer_automated.sql')
+  ('20261111_04_intake_answer_automated.sql'),
+  ('20261112_01_spectre_intake_actor_name.sql')
 on conflict (filename) do nothing;

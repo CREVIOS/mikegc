@@ -66,7 +66,7 @@ findings and its earlier tool results, so it does not read everything again.
 Each continuation is a new delegation with its own limits, and counts toward
 the subagents per answer.
 
-To make that possible, Mike keeps each subagent's task, findings, question
+To make that possible, Spectre keeps each subagent's task, findings, question
 and tool results (document text, case text, web pages) in the
 `chat_subagent_runs` table for 30 days. Only the backend reads it, and only
 for the user who started the subagent, in the chat it ran in: other members

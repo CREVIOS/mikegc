@@ -1,6 +1,7 @@
 import {
   aiSdkFetch,
   completeAiSdkText,
+  completeAiSdkVision,
   streamAiSdk,
   type AiSdkAdapterConfig,
 } from "./aiSdk";
@@ -54,6 +55,7 @@ import type {
 import { REASONING_LEVELS } from "./types";
 import { vertexAuthClient } from "./vertexAuth";
 import { UserFacingError } from "../userFacingError";
+import { environmentKey } from "../envKey";
 
 const OPENROUTER_BASE_URL =
   process.env.OPENROUTER_BASE_URL?.trim().replace(/\/+$/, "") ||
@@ -106,9 +108,9 @@ function requiredKey(
 ): string {
   const key =
     override?.trim() ||
-    process.env[environmentVariable]?.trim() ||
+    environmentKey(environmentVariable) ||
     (ENVIRONMENT_KEY_ALIASES[environmentVariable] ?? [])
-      .map((alias) => process.env[alias]?.trim())
+      .map((alias) => environmentKey(alias))
       .find((value) => !!value) ||
     "";
   if (!key) {
@@ -122,12 +124,13 @@ function requiredKey(
 function routerEnvironmentKey(provider: RouterProvider): string | undefined {
   if (provider === "vercel") {
     return (
-      process.env.AI_GATEWAY_API_KEY?.trim() ||
-      process.env.VERCEL_AI_GATEWAY_API_KEY?.trim()
+      environmentKey("AI_GATEWAY_API_KEY") ??
+      environmentKey("VERCEL_AI_GATEWAY_API_KEY") ??
+      undefined
     );
   }
-  if (provider === "opencode-go") return process.env.OPENCODE_API_KEY?.trim();
-  return process.env.OPENROUTER_API_KEY?.trim();
+  if (provider === "opencode-go") return environmentKey("OPENCODE_API_KEY") ?? undefined;
+  return environmentKey("OPENROUTER_API_KEY") ?? undefined;
 }
 
 function routerUserKey(
@@ -197,7 +200,7 @@ async function createRouterAdapter(
       apiKey: key,
       baseURL: OPENROUTER_BASE_URL,
       compatibility: "strict",
-      appName: "Mike",
+      appName: "Spectre",
       appUrl: process.env.FRONTEND_URL,
       fetch: aiSdkFetch,
     });
@@ -534,7 +537,7 @@ async function createConfiguredAdapter(
 
 function unsupportedOpenCodeGoModel(model: string): Error {
   return new Error(
-    `OpenCode Go model ${openCodeGoModelId(model)} requires a protocol Mike does not support yet. Select a model listed under Model Selections for OpenCode Go in Settings → Bring Your Own Keys.`,
+    `OpenCode Go model ${openCodeGoModelId(model)} requires a protocol Spectre does not support yet. Select a model listed under Model Selections for OpenCode Go in Settings → Bring Your Own Keys.`,
   );
 }
 
@@ -807,6 +810,22 @@ export function fallbackReasoningLevelFromProviderError(
     );
     return candidateDistance <= nearestDistance ? candidate : nearest;
   });
+}
+
+/** A completion over images, through the same provider adapters as chat. */
+export async function completeVisionWithProvider(params: {
+  model: string;
+  systemPrompt?: string;
+  prompt: string;
+  images: { data: Uint8Array; mediaType: string }[];
+  maxTokens?: number;
+  abortSignal?: AbortSignal;
+  apiKeys?: UserApiKeys;
+}): Promise<string> {
+  return completeAiSdkVision(
+    params,
+    await createProviderAdapter(params.model, params.apiKeys),
+  );
 }
 
 export async function completeWithProvider(

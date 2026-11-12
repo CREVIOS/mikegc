@@ -37,6 +37,34 @@ describe("useSelectedModel", () => {
         expect(result.current[0]).toBe("");
     });
 
+    it("starts on OpenAI once the keys are known and nothing was saved", () => {
+        const { result } = renderHook(() => useSelectedModel({ apiKeys: keys }));
+        expect(result.current[0]).toBe("gpt-6.1-sol");
+    });
+
+    it("starts on the deployment default when the user can run it", () => {
+        const { result } = renderHook(() =>
+            useSelectedModel({
+                apiKeys: keys,
+                deploymentDefaultModel: "claude-opus-5-5",
+            }),
+        );
+        expect(result.current[0]).toBe("claude-opus-5-5");
+    });
+
+    it("skips a default the user has no key for", () => {
+        const { result } = renderHook(() =>
+            useSelectedModel({
+                apiKeys: {
+                    ...keys,
+                    openai: { configured: false, source: null },
+                },
+                deploymentDefaultModel: "gemini-3.8-flash",
+            }),
+        );
+        expect(result.current[0]).toBe("claude-sonnet-5-5");
+    });
+
     it("uses the saved chat model before the shared last-selected model", () => {
         const { result } = renderHook(() =>
             useSelectedModel({

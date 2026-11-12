@@ -148,7 +148,7 @@ export function WorkflowDetailsModal({
     } catch (reason) {
       setError(
         userMessage(reason, {
-          fallback: "Mike couldn't save this workflow. Try again.",
+          fallback: "Spectre couldn't save this workflow. Try again.",
         }),
       );
     } finally {
@@ -168,7 +168,7 @@ export function WorkflowDetailsModal({
     } catch (reason) {
       setDeleteError(
         userMessage(reason, {
-          fallback: "Mike couldn't delete this workflow. Try again.",
+          fallback: "Spectre couldn't delete this workflow. Try again.",
         }),
       );
     } finally {

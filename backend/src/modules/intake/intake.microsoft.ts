@@ -108,7 +108,7 @@ export async function microsoftToken(
       status: 0,
       code: "network_error",
       permanent: false,
-      sentence: "MikeGC couldn't reach Microsoft.",
+      sentence: "Spectre couldn't reach Microsoft.",
     });
   }
   let json: Record<string, unknown> = {};
@@ -123,7 +123,7 @@ export async function microsoftToken(
       status: response.status,
       code: safeCode(json.error),
       permanent,
-      sentence: permanent ? options.sentence : "MikeGC couldn't reach Microsoft.",
+      sentence: permanent ? options.sentence : "Spectre couldn't reach Microsoft.",
     });
   }
   const expiresIn = Number(json.expires_in);
@@ -181,7 +181,7 @@ export async function microsoftFetch<T>(url: string, call: MicrosoftCall): Promi
       status: response.status,
       code: "invalid_response",
       permanent: false,
-      sentence: "Microsoft sent an answer MikeGC couldn't read.",
+      sentence: "Microsoft sent an answer Spectre couldn't read.",
     });
   }
 }
@@ -205,7 +205,7 @@ export async function microsoftResponse(url: string, call: MicrosoftCall): Promi
       status: 0,
       code: "network_error",
       permanent: false,
-      sentence: "MikeGC couldn't reach Microsoft.",
+      sentence: "Spectre couldn't reach Microsoft.",
     });
   }
   if (response.ok) return response;
@@ -222,7 +222,7 @@ export async function microsoftResponse(url: string, call: MicrosoftCall): Promi
       status,
       code,
       permanent: false,
-      sentence: "Microsoft is busy. MikeGC will try again.",
+      sentence: "Microsoft is busy. Spectre will try again.",
       retryAfterMs: retryAfter(response),
     });
   if (status === 401 || status === 403)
@@ -230,14 +230,14 @@ export async function microsoftResponse(url: string, call: MicrosoftCall): Promi
       status,
       code,
       permanent: true,
-      sentence: call.refused ?? "Microsoft refused MikeGC. An admin can check the app's permissions in Intake settings.",
+      sentence: call.refused ?? "Microsoft refused Spectre. An admin can check the app's permissions in Intake settings.",
     });
   if (status === 404)
     throw new MicrosoftApiError({
       status,
       code,
       permanent: true,
-      sentence: call.missing ?? "Microsoft couldn't find what MikeGC asked for.",
+      sentence: call.missing ?? "Microsoft couldn't find what Spectre asked for.",
     });
   throw new MicrosoftApiError({
     status,
@@ -306,7 +306,7 @@ export async function uploadInSession(
         status: 0,
         code: "network_error",
         permanent: false,
-        sentence: "MikeGC couldn't reach Microsoft.",
+        sentence: "Spectre couldn't reach Microsoft.",
       });
     }
     if (!response.ok)

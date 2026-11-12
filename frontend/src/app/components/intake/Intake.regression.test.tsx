@@ -1663,14 +1663,14 @@ describe("request detail", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("reads MikeGC's preprocessing report as Markdown and people's notes as typed", async () => {
+  it("reads Spectre's preprocessing report as Markdown and people's notes as typed", async () => {
     mocks.messages.mockResolvedValue([
       message({
         id: "m-report",
         purpose: "preprocessing",
         automated: true,
         author_id: null,
-        author_name: "MikeGC",
+        author_name: "Spectre",
         body: "AI preprocessing\n\n**Cannot be signed** as is.\n\nMarked up with tracked changes:\n- Supplier NDA.docx: 2 changes",
       }),
       message({ id: "m-note", body: "Keep **this** literal." }),
@@ -1795,31 +1795,31 @@ describe("request detail", () => {
     expect(details).toHaveTextContent("Jane Business");
   });
 
-  it("shows MikeGC's preprocessing note with its mark, not a person's", async () => {
+  it("shows Spectre's preprocessing note with its mark, not a person's", async () => {
     mocks.messages.mockResolvedValue([
       message({
         id: "note-mikegc",
         author_id: null,
-        author_name: "MikeGC",
+        author_name: "Spectre",
         automated: true,
         body: "AI preprocessing\n\nThe NDA runs five years.",
       }),
     ]);
     render(detail());
     const activity = await screen.findByRole("region", { name: "Activity" });
-    await waitFor(() => expect(activity).toHaveTextContent("MikeGC commented"));
+    await waitFor(() => expect(activity).toHaveTextContent("Spectre commented"));
     expect(activity).toHaveTextContent("The NDA runs five years.");
     expect(activity.querySelector('[data-actor="mikegc"]')).not.toBeNull();
   });
 
-  it("names MikeGC as the creator of a request it recorded, with where it came from", async () => {
+  it("names Spectre as the creator of a request it recorded, with where it came from", async () => {
     mocks.request.mockResolvedValue(
-      request({ created_by: null, created_by_name: "MikeGC", source: "gmail" }),
+      request({ created_by: null, created_by_name: "Spectre", source: "gmail" }),
     );
     mocks.events.mockResolvedValue([
       event({
         actor_id: null,
-        actor_name: "MikeGC",
+        actor_name: "Spectre",
         assignee_name: "Lawyer B",
       }),
       event({ id: 2, kind: "assign", assignee_name: "Lawyer A" }),
@@ -1827,30 +1827,30 @@ describe("request detail", () => {
     const { unmount } = render(detail());
     const activity = await screen.findByRole("region", { name: "Activity" });
     expect(activity).toHaveTextContent(
-      "MikeGC created this and assigned it to Lawyer B ·",
+      "Spectre created this and assigned it to Lawyer B ·",
     );
-    // MikeGC's entry has its mark; a member's has their avatar.
+    // Spectre's entry has its mark; a member's has their avatar.
     const marks = activity.querySelectorAll("[data-actor]");
     expect(marks[0]).toHaveAttribute("data-actor", "mikegc");
     expect(marks[1]).toHaveAttribute("data-actor", "person");
     const details = screen.getByRole("complementary", { name: "Details" });
-    // Plain text after the name, beside MikeGC's mark.
-    expect(details).toHaveTextContent("Created byMikeGC from Gmail");
+    // Plain text after the name, beside Spectre's mark.
+    expect(details).toHaveTextContent("Created bySpectre from Gmail");
     expect(details.querySelector('[data-actor="mikegc"]')).not.toBeNull();
     expect(
-      within(details).queryByRole("img", { name: "MikeGC" }),
+      within(details).queryByRole("img", { name: "Spectre" }),
     ).not.toBeInTheDocument();
     unmount();
 
     mocks.request.mockResolvedValue(
-      request({ created_by: null, created_by_name: "MikeGC", source: "slack" }),
+      request({ created_by: null, created_by_name: "Spectre", source: "slack" }),
     );
     render(detail());
     const fromSlack = await screen.findByRole("complementary", {
       name: "Details",
     });
     await waitFor(() =>
-      expect(fromSlack).toHaveTextContent("Created byMikeGC from Slack"),
+      expect(fromSlack).toHaveTextContent("Created bySpectre from Slack"),
     );
   });
 
@@ -2869,7 +2869,7 @@ describe("requester loop", () => {
     file_type: "docx",
     size_bytes: size,
     status: "ready",
-    added_by_name: "MikeGC",
+    added_by_name: "Spectre",
     created_at: "2026-10-26T10:00:00Z",
     message_id: null,
     revised: false,
@@ -3116,8 +3116,8 @@ describe("requester loop", () => {
         kind: "question",
         automated: true,
         author_id: null,
-        author_name: "MikeGC",
-        body: "Before Legal starts, MikeGC needs:\n1. Which entity signs?",
+        author_name: "Spectre",
+        body: "Before Legal starts, Spectre needs:\n1. Which entity signs?",
         created_at: "2026-10-27T10:00:00Z",
         delivery: delivery(),
       }),
@@ -3129,7 +3129,7 @@ describe("requester loop", () => {
         delivery: delivery({
           outbound_id: "out-2",
           status: "failed",
-          error: "MikeGC was removed from #legal-requests.",
+          error: "Spectre was removed from #legal-requests.",
         }),
       }),
       message({
@@ -3182,7 +3182,7 @@ describe("requester loop", () => {
     render(detail());
     const activity = await screen.findByRole("region", { name: "Activity" });
     await waitFor(() =>
-      expect(activity).toHaveTextContent("stopped MikeGC asking the requester"),
+      expect(activity).toHaveTextContent("stopped Spectre asking the requester"),
     );
     // Activity is the work in the app; the conversation reads in Messages.
     expect(activity).not.toHaveTextContent("asked the requester");
@@ -3209,7 +3209,7 @@ describe("requester loop", () => {
       false,
       true,
     ]);
-    expect(bubbles[0]).toHaveTextContent("MikeGC");
+    expect(bubbles[0]).toHaveTextContent("Spectre");
     expect(bubbles[1]).toHaveTextContent("Is Acme a customer?");
     expect(bubbles[2]).toHaveTextContent("Ana Ruiz · Slack");
     expect(bubbles[2]).toHaveTextContent("Signed NDA.pdf");
@@ -3220,7 +3220,7 @@ describe("requester loop", () => {
     expect(bubbles[3]).toHaveTextContent("Sent with NDA.docx");
     expect(bubbles[3]).toHaveTextContent("Not sent: Big.pdf");
     expect(bubbles[1]).toHaveTextContent(
-      "Couldn't send: MikeGC was removed from #legal-requests.",
+      "Couldn't send: Spectre was removed from #legal-requests.",
     );
     // Only the failed one offers Retry and Copy text, naming what they act on.
     expect(
@@ -3261,7 +3261,7 @@ describe("requester loop", () => {
           outbound_id: "out-3",
           kind: "answer",
           status: "failed",
-          error: "MikeGC was removed from #legal-requests.",
+          error: "Spectre was removed from #legal-requests.",
           message_id: null,
           sent_at: null,
           documents: [{ document_id: "d1", filename: "NDA.docx", left_out: false }],
@@ -3279,14 +3279,14 @@ describe("requester loop", () => {
       ),
     );
     expect(activity).toHaveTextContent(
-      "Reply to the requesterDocuments only.Couldn't send: MikeGC was removed from #legal-requests.",
+      "Reply to the requesterDocuments only.Couldn't send: Spectre was removed from #legal-requests.",
     );
     const toggle = screen.getByRole("button", { name: /^Messages/ });
     expect(toggle).toHaveTextContent("1 not sent");
     await user.click(toggle);
     const log = screen.getByRole("list", { name: "Messages with the requester" });
     expect(log).toHaveTextContent("Resolution");
-    expect(log).toHaveTextContent("Couldn't send: MikeGC was removed from #legal-requests.");
+    expect(log).toHaveTextContent("Couldn't send: Spectre was removed from #legal-requests.");
     // The requester never saw the comment.
     expect(log).not.toHaveTextContent("Internal only");
     // No text was sent, so there is none to copy.
@@ -3362,7 +3362,7 @@ describe("requester loop", () => {
     }
   });
 
-  it("says MikeGC is waiting on the requester, links the thread, and stops asking", async () => {
+  it("says Spectre is waiting on the requester, links the thread, and stops asking", async () => {
     mocks.request.mockResolvedValue(
       threaded({
         state: "needs_information",
@@ -3384,9 +3384,9 @@ describe("requester loop", () => {
     });
     expect(
       within(details).getByRole("button", { name: /^Status:/ }),
-    ).toHaveAccessibleName("Status: Waiting on requester (MikeGC asked)");
+    ).toHaveAccessibleName("Status: Waiting on requester (Spectre asked)");
     expect(details).toHaveTextContent(
-      "MikeGC is waiting for the requester's answer (round 1 of 2).",
+      "Spectre is waiting for the requester's answer (round 1 of 2).",
     );
     const thread = within(details).getByRole("link", {
       name: /Slack thread in #legal-requests/,
@@ -3443,21 +3443,21 @@ describe("requester loop", () => {
     expect(mocks.replySeen).not.toHaveBeenCalled();
   });
 
-  it("names where MikeGC recorded a request from Outlook, Gmail or Teams", async () => {
+  it("names where Spectre recorded a request from Outlook, Gmail or Teams", async () => {
     for (const [source, label] of [
       ["outlook", "Outlook"],
       ["gmail", "Gmail"],
       ["teams", "Teams"],
     ] as const) {
       mocks.request.mockResolvedValue(
-        request({ created_by: null, created_by_name: "MikeGC", source }),
+        request({ created_by: null, created_by_name: "Spectre", source }),
       );
       const { unmount } = render(detail());
       const details = await screen.findByRole("complementary", {
         name: "Details",
       });
       await waitFor(() =>
-        expect(details).toHaveTextContent(`Created byMikeGC from ${label}`),
+        expect(details).toHaveTextContent(`Created bySpectre from ${label}`),
       );
       unmount();
     }

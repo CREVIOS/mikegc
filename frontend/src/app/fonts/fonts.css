@@ -179,6 +179,14 @@
 
 /* The variables the app and the Word add-in tokens read (globals.css). */
 :root {
-    --font-inter: "Inter", "Inter Fallback", ui-sans-serif, system-ui, sans-serif;
-    --font-eb-garamond: "EB Garamond", "EB Garamond Fallback", Georgia, serif;
+    /* Inter and EB Garamond have no Bangla glyphs, so Bangla falls through to
+       the first installed Unicode Bangla font: Noto (Linux, Android, many
+       Bangladeshi installs), Nirmala UI (Windows), Kohinoor/Bangla Sangam
+       (macOS, iOS), then the popular Bangladeshi Unicode fonts. */
+    --font-inter: "Inter", "Inter Fallback", "Noto Sans Bengali", "Nirmala UI",
+        "Kohinoor Bangla", "Bangla Sangam MN", "Kalpurush", "SolaimanLipi",
+        "Nikosh", ui-sans-serif, system-ui, sans-serif;
+    --font-eb-garamond: "EB Garamond", "EB Garamond Fallback",
+        "Noto Serif Bengali", "Nirmala UI", "Bangla MN", "Kalpurush",
+        "Nikosh", Georgia, serif;
 }

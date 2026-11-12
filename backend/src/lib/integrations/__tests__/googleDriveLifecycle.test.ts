@@ -133,7 +133,7 @@ describe("Google Drive OAuth lifecycle", () => {
         expect(status.connected).toBe(true);
         expect(status.accountEmail).toBeUndefined();
     });
-    it("rejects another Mike user's authorization URL before token exchange", async () => {
+    it("rejects another Spectre user's authorization URL before token exchange", async () => {
         const store = driveDb();
         const state = await begin(store, "attacker");
         const fetchMock = vi.fn();

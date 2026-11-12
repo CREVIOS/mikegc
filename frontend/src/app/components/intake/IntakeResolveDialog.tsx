@@ -24,7 +24,7 @@ export function sendableIntakeDocuments(documents: IntakeDocument[]) {
 
 /**
  * What the resolution reply sends unless changed: documents revised since
- * they arrived, such as MikeGC's redline once its changes were accepted.
+ * they arrived, such as Spectre's redline once its changes were accepted.
  */
 export function defaultIntakeReplyDocuments(documents: IntakeDocument[]) {
   return sendableIntakeDocuments(documents)

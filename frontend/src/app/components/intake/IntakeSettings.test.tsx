@@ -362,10 +362,10 @@ describe("IntakeSettings", () => {
       within(dialog).getByRole("button", { name: "Copy Events Request URL" }),
     ).toBeInTheDocument();
     expect(dialog).toHaveTextContent("Acme Legal");
-    expect(dialog).toHaveTextContent("MikeGC bot user U0BOT");
+    expect(dialog).toHaveTextContent("Spectre bot user U0BOT");
     // What the channel does and how to set it up are on the help screen.
     expect(dialog).not.toHaveTextContent("How to set it up");
-    expect(dialog).not.toHaveTextContent("People write @MikeGC");
+    expect(dialog).not.toHaveTextContent("People write @Spectre");
     // Nothing changed: there is nothing to save.
     expect(within(dialog).getByRole("button", { name: "Save" })).toBeDisabled();
     await user.click(within(dialog).getByRole("button", { name: "Close" }));
@@ -382,7 +382,7 @@ describe("IntakeSettings", () => {
     await loaded();
     const dialog = await openModal(user, "Manage Slack", "Slack");
     expect(dialog).toHaveTextContent(
-      "MikeGC hasn't received a thread message yet. Subscribe the app to the message.channels and message.groups bot events",
+      "Spectre hasn't received a thread message yet. Subscribe the app to the message.channels and message.groups bot events",
     );
   });
 
@@ -405,7 +405,7 @@ describe("IntakeSettings", () => {
     // An introduction under its own heading, then the steps and settings.
     expect(
       within(screenHelp).getByRole("region", { name: "What it does" }),
-    ).toHaveTextContent("People write @MikeGC in Slack");
+    ).toHaveTextContent("People write @Spectre in Slack");
     const steps = within(screenHelp).getByRole("region", {
       name: "How to set it up",
     });
@@ -619,7 +619,7 @@ describe("IntakeSettings", () => {
     expect(secret).toHaveAttribute("type", "password");
     expect(secret).toHaveValue(SAVED_KEY_MASK);
     expect(dialog).toHaveTextContent(
-      "MikeGC copies the client secret from Outlook. Changing it in Outlook later doesn't change it here.",
+      "Spectre copies the client secret from Outlook. Changing it in Outlook later doesn't change it here.",
     );
     await user.click(within(dialog).getByRole("button", { name: "Save" }));
     await waitFor(() =>
@@ -797,7 +797,7 @@ describe("IntakeSettings", () => {
     expect(screen.getByRole("switch", { name: "Gmail channel" })).toBeInTheDocument();
     const dialog = await openModal(user, "Set up Outlook", "Outlook");
     expect(dialog).toHaveTextContent(
-      "intake@example.com is connected through Gmail. MikeGC reads one intake mailbox, so connecting Outlook replaces it.",
+      "intake@example.com is connected through Gmail. Spectre reads one intake mailbox, so connecting Outlook replaces it.",
     );
     // Its own connection starts empty.
     expect(within(dialog).getByLabelText("Intake address")).toHaveValue("");

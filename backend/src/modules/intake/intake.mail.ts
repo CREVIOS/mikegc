@@ -257,7 +257,7 @@ export type MailAttachmentSource = {
 };
 
 /**
- * Stage the attachments MikeGC will add: PDF, Word, Excel and PowerPoint,
+ * Stage the attachments Spectre will add: PDF, Word, Excel and PowerPoint,
  * up to 10 of 25 MB each. They wait in storage under the message's row until
  * it is handled, since the job runs later. The rest are listed as skipped,
  * except images embedded in the body, such as signature logos.
@@ -342,7 +342,7 @@ export type MailAddress = {
   max_attachment_bytes: number;
   /**
    * Message-IDs to reply to when the thread has none recorded, as when
-   * MikeGC answers a message without recording a request.
+   * Spectre answers a message without recording a request.
    */
   references?: string[];
 };
@@ -466,7 +466,7 @@ const HTML_ESCAPES: Record<string, string> = {
 /**
  * The HTML version of an email's plain text, sent beside it: paragraphs at
  * blank lines and line breaks kept, so every mail app reflows the text to
- * its window. Some show plain text at a fixed width, which breaks MikeGC's
+ * its window. Some show plain text at a fixed width, which breaks Spectre's
  * sentences mid-line. Everything is escaped: it is text, never markup.
  */
 export function mailHtml(text: string): string {
@@ -484,7 +484,7 @@ export function mailHtml(text: string): string {
   return `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;font-size:14px;line-height:1.5">${paragraphs.join("")}</div>`;
 }
 
-/** The line every email from MikeGC ends with. */
+/** The line every email from Spectre ends with. */
 export const MAIL_FOOTER = "Just reply to this email and Legal will see your answer.";
 
 /**

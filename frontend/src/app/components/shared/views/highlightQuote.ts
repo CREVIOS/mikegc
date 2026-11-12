@@ -13,13 +13,12 @@ export async function getPdfJs() {
 export const STANDARD_FONT_DATA_URL =
     "https://unpkg.com/pdfjs-dist@4.10.38/standard_fonts/";
 
+// Letters, marks and digits in any script (Bangla included) for robust matching.
+import { onlyLetters, strippedPosToOriginal } from "./quoteLetters";
+
 const HIGHLIGHT_CLASS = "pdf-text-highlight";
 const ORIGINAL_TEXT_ATTR = "data-original-text";
 
-// Strip everything except alphanumerics (a-z A-Z 0-9) for robust matching
-function onlyLetters(s: string): string {
-    return s.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
-}
 
 function escapeHtml(str: string): string {
     return str
@@ -28,18 +27,6 @@ function escapeHtml(str: string): string {
         .replace(/>/g, "&gt;");
 }
 
-// Given a position in the stripped (letters-only) version of `original`,
-// return the corresponding index in `original`.
-function strippedPosToOriginal(original: string, strippedPos: number): number {
-    let count = 0;
-    for (let i = 0; i < original.length; i++) {
-        if (/[a-zA-Z0-9]/.test(original[i])) {
-            if (count === strippedPos) return i;
-            count++;
-        }
-    }
-    return original.length;
-}
 
 export function clearHighlights(textDivs: HTMLElement[]) {
     for (const div of textDivs) {

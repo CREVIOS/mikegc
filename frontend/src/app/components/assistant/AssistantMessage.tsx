@@ -1,5 +1,6 @@
 "use client";
 
+import { CitationCheckNotice } from "./message/CitationCheckNotice";
 import { TextCardUI } from "@/shared/ui/TextCardUI";
 import { IntakeActionCard } from "./IntakeActionCard";
 import { useRef, useState, type ReactNode } from "react";
@@ -73,7 +74,7 @@ interface Props {
      */
     latestIntakeCardId?: string | null;
     isError?: boolean;
-    /** Human-readable error text rendered alongside the red Mike icon. */
+    /** Human-readable error text rendered alongside the red Spectre icon. */
     errorMessage?: string;
     citations?: Citation[];
     citationStatus?: "started" | "partial" | "final";
@@ -293,6 +294,8 @@ export function AssistantMessage({
         !!onOpenCitationSource ||
         (citation.kind !== "case" && !!onOpenDocument);
     const eventsWithDelegated = withDelegationEvents(events ?? []);
+    const unverifiedCitations =
+        (events ?? []).findLast((e) => e.type === "citation_check")?.unverified ?? [];
     // The pages an answer cites follow the answer, not the steps before it.
     // Several provider steps can cite the same page, so list each URL once.
     const webSourcesByUrl = new Map<string, WebSource>();
@@ -342,7 +345,7 @@ export function AssistantMessage({
             notifyError(err, {
                 action: "copy this answer",
                 fallback:
-                    "Mike couldn't write to the clipboard. Check your browser's clipboard permission, then try again.",
+                    "Spectre couldn't write to the clipboard. Check your browser's clipboard permission, then try again.",
                 support: false,
             });
         }
@@ -908,8 +911,8 @@ export function AssistantMessage({
         return null;
     };
 
-    // Mike's steps in a pre-answer group. Consecutive delegations are
-    // subagents Mike ran in parallel; they render as one group.
+    // Spectre's steps in a pre-answer group. Consecutive delegations are
+    // subagents Spectre ran in parallel; they render as one group.
     const tints = subagentTints(events ?? []);
     // Settings > Features > Response details: the model, effort and tokens
     // under the answer and in each subagent's details. Off without a profile.
@@ -1274,6 +1277,12 @@ export function AssistantMessage({
                 {webSources.length > 0 && (
                     <div className="mt-2 mb-3">
                         <WebSourcesBlock sources={webSources} />
+                    </div>
+                )}
+
+                {!isStreaming && unverifiedCitations.length > 0 && (
+                    <div className="mt-2 mb-3">
+                        <CitationCheckNotice unverified={unverifiedCitations} />
                     </div>
                 )}
 

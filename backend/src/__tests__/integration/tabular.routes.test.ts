@@ -441,7 +441,31 @@ describe("tabular.routes", () => {
 
     // ── POST /tabular-review (create) ─────────────────────────────────────
     describe("POST /tabular-review", () => {
-        it("rejects creation without an explicit model", async () => {
+        it("starts a review without a model on the default the user can run", async () => {
+            supabaseState.tables.tabular_reviews = {
+                data: { id: "r-default", title: null, document_ids: [] },
+                error: null,
+            };
+            supabaseState.tables.tabular_review_rows = { data: [], error: null };
+            const res = await request(app)
+                .post("/tabular-review")
+                .set(...AUTH)
+                .send({ document_ids: [], columns_config: [] });
+
+            // This user holds only an Anthropic key, so the OpenAI default
+            // falls through to Claude.
+            expect(res.status).toBe(201);
+            expect(
+                supabaseState.inserts.find((insert) => insert.table === "tabular_reviews"),
+            ).toMatchObject({ payload: expect.objectContaining({ model: "claude-sonnet-5-5" }) });
+        });
+
+        it("rejects creation without a model when the user can run no default", async () => {
+            getUserModelSettings.mockResolvedValue({
+                title_model: null,
+                tabular_model: null,
+                api_keys: {},
+            });
             const res = await request(app)
                 .post("/tabular-review")
                 .set(...AUTH)

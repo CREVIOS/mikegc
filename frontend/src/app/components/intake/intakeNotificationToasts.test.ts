@@ -36,12 +36,12 @@ describe("intake notification wording", () => {
       intakeNotificationLine(
         notification({ kind: "new_request", change: "submitted", actor_name: null, automated: true }),
       ),
-    ).toBe("MikeGC recorded it and assigned it to you");
+    ).toBe("Spectre recorded it and assigned it to you");
     expect(
       intakeNotificationLine(notification({ kind: "new_request", change: "submitted" })),
     ).toBe("Sam Colleague created it and assigned it to you");
   });
-  it("says what changed, naming the requester's channel and MikeGC", () => {
+  it("says what changed, naming the requester's channel and Spectre", () => {
     const line = (extra: Partial<IntakeNotification>) =>
       intakeNotificationLine(notification(extra));
     expect(line({ change: "reply", actor_name: "Jane Business", channel: "slack" })).toBe(
@@ -51,10 +51,10 @@ describe("intake notification wording", () => {
     expect(line({ change: "note" })).toBe("Sam Colleague commented");
     expect(line({ change: "resolve" })).toBe("Sam Colleague resolved it");
     expect(line({ change: "wait", actor_name: null, automated: true })).toBe(
-      "MikeGC asked the requester for details",
+      "Spectre asked the requester for details",
     );
     expect(line({ change: "preprocessing", actor_name: null, automated: true })).toBe(
-      "MikeGC preprocessed it",
+      "Spectre preprocessed it",
     );
     expect(line({ change: "edited", actor_name: null })).toBe("A former member edited the details");
   });

@@ -2,7 +2,7 @@ import type { EditorModule } from "@docx-editor.dev/core/contracts/modules";
 import { collectReviewItems, revisionItemsOf } from "@docx-editor.dev/core/store";
 
 /**
- * Mike's review integration, composed exclusively from the public Apache-2.0
+ * Spectre's review integration, composed exclusively from the public Apache-2.0
  * core API. No commercial module or copied implementation is used here.
  * Keep mutations, history, protection checks and OOXML serialization in core
  * so review decisions participate in the same autosave pipeline as typing.

@@ -914,7 +914,7 @@ export function Detail({
                 // The resolve dialog takes focus itself.
                 onStatusMenuClosed={conversation ? undefined : focusNote}
                 onStopAsking={() =>
-                  command("stop_asking", "stop MikeGC asking the requester")
+                  command("stop_asking", "stop Spectre asking the requester")
                 }
                 onStatus={(action) => {
                   // Resolving is written as a note: open the note form and
@@ -1064,7 +1064,7 @@ export function Detail({
                             const text = entry.message;
                             return (
                               <>
-                                {/* MikeGC writes its report in Markdown;
+                                {/* Spectre writes its report in Markdown;
                                     people's notes read as typed. */}
                                 {text.purpose === "preprocessing" ? (
                                   <IntakeMarkdown text={text.body} />

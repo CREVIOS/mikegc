@@ -2,7 +2,7 @@ export function workflowSlashCommandFromTitle(title: string): string | null {
     const titleSlug = title
         .trim()
         .toLowerCase()
-        .replace(/[^\p{L}\p{N}\s-]/gu, "")
+        .replace(/[^\p{L}\p{M}\p{N}\s-]/gu, "")
         .trim()
         .replace(/[\s-]+/g, "-")
         .replace(/^-+|-+$/g, "");

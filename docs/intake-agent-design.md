@@ -43,7 +43,7 @@ Out of scope for the first version:
 - Preprocessing and its readiness check. These depend on the workflow or
   playbook of the chosen rule and stay as they are; the agent only queues
   them, as `processInbound` does today.
-- Lawyers' messages and MikeGC's own messages, which never run the agent.
+- Lawyers' messages and Spectre's own messages, which never run the agent.
 
 ## The loop
 
@@ -53,7 +53,7 @@ One job, `intake.agent`, replaces `intake.inbound` and the rule-stage part of
 ```
 context = {
   thread:      everything people wrote in the thread, oldest first,
-               plus MikeGC's own earlier replies (marked as such)
+               plus Spectre's own earlier replies (marked as such)
   request:     the linked request's subject, summary, due date, state,
                and which fields a member has edited, or none
   rules:       numbered conditions, as triage gets them today
@@ -79,7 +79,7 @@ read ("recorded", "refused: …"). Refusals never throw.
 
 ### `reply(text)`
 
-Posts in the thread the message came from, under MikeGC's name.
+Posts in the thread the message came from, under Spectre's name.
 
 Code limits:
 - At most 600 characters. No links, email addresses or mentions (today's
@@ -107,11 +107,11 @@ Changes a linked request's details from what the requester said.
 
 Code limits:
 - Only on a request that is open (not resolved or cancelled).
-- Never a field a member has edited since MikeGC set it. The request records
-  which fields MikeGC last wrote; any later member edit locks that field
+- Never a field a member has edited since Spectre set it. The request records
+  which fields Spectre last wrote; any later member edit locks that field
   against the agent.
 - Never the requester, the assignee or the state.
-- Each change adds an activity entry ("MikeGC updated the due date to
+- Each change adds an activity entry ("Spectre updated the due date to
   14 Nov from the requester's answer").
 
 ### `choose_rule(rule_number | null)`
@@ -129,7 +129,7 @@ Code limits:
 The prompt shrinks to judgement. The limits now live in the tools.
 
 - If the message isn't a request (a greeting, thanks, small talk, a question
-  about MikeGC or how to reach Legal), `reply` and stop.
+  about Spectre or how to reach Legal), `reply` and stop.
 - If it is a request:
   - If you can tell which rule fits, call `record_request`, then
     `choose_rule`.
@@ -200,7 +200,7 @@ ported to the agent, so the same fixtures check the same decisions.
 ## Open questions
 
 - **Field-edit tracking.** `update_request` needs to know whether a member
-  edited a field since MikeGC set it. Is the activity history enough, or
+  edited a field since Spectre set it. Is the activity history enough, or
   does `intake_requests` need a per-field "last set by" column?
 - **Step limit.** Is 4 right? A greeting needs 1, and record, then choose,
   then reply needs 2 or 3.
@@ -217,7 +217,7 @@ Decisions on the open questions:
   edit changed, so `intake_requests` has a `member_edited_fields` column.
   `intake_edit_request` adds each detail a member's edit changes (subject,
   description, due date), and `intake_update_automated` skips those. A
-  request MikeGC recorded starts with none.
+  request Spectre recorded starts with none.
 - **Step limit.** Four.
 - **Readiness.** Unchanged: answers to its questions still go to the
   readiness check, and the agent doesn't run on them.
@@ -244,11 +244,11 @@ Where the build differs from the proposal:
 - **What `reply` does on a request follows the request.** While its rule waits
   on the requester and isn't chosen in the run, the reply's lines are
   questions, checked as questions always were (at most 3, one line each, no
-  links, addresses, mentions or markup) and posted with MikeGC's own opening
-  line. Otherwise it is MikeGC's answer to the requester
+  links, addresses, mentions or markup) and posted with Spectre's own opening
+  line. Otherwise it is Spectre's answer to the requester
   (`intake_answer_automated`): it acknowledges their message and says what
   the agent added, and the request doesn't wait. A request recorded from the
-  message itself is told by MikeGC's acknowledgement, so `reply` there only
+  message itself is told by Spectre's acknowledgement, so `reply` there only
   asks.
 - **A message with attachments is recorded before it is answered.** Email
   attachments aren't kept with a thread that has no request, so `reply` with
@@ -256,11 +256,11 @@ Where the build differs from the proposal:
 - **Replies run the agent on any open request**, not only one waiting on rule
   answers, so a requester's later "we need it by the 14th" updates the due
   date. Once the rule is decided, the agent updates and answers.
-- **MikeGC's earlier answers are stored.** For a thread with no request,
-  `intake_conversations.replies` keeps MikeGC's own answers (never the
+- **Spectre's earlier answers are stored.** For a thread with no request,
+  `intake_conversations.replies` keeps Spectre's own answers (never the
   requester's words), so every channel, email included, shows the agent what
   it already said.
-- **An update's activity entry is a note** by MikeGC naming each change, such
+- **An update's activity entry is a note** by Spectre naming each change, such
   as "Updated the due date to 14 Nov 2026 from the requester's reply." It
   notifies the assignee as any note does.
 - **Chat answers are sent as before.** With no request there is no outbox

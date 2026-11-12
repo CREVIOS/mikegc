@@ -176,12 +176,12 @@ describe("describeError", () => {
         // by the generic line below.
         const described = describeError(
             new UserVisibleError(
-                "Mike couldn't reach the server at http://localhost:3001.",
+                "Spectre couldn't reach the server at http://localhost:3001.",
                 { kind: "network", retryable: true },
             ),
         );
         expect(described.message).toBe(
-            "Mike couldn't reach the server at http://localhost:3001.",
+            "Spectre couldn't reach the server at http://localhost:3001.",
         );
         expect(described.kind).toBe("network");
         expect(described.retryable).toBe(true);
@@ -257,7 +257,7 @@ describe("buildSupportMailto", () => {
         const url = new URL(href);
         const params = new URLSearchParams(url.search);
         expect(params.get("subject")).toBe(
-            "Mike support: Couldn't save the document",
+            "Spectre support: Couldn't save the document",
         );
         const body = params.get("body") ?? "";
         expect(body).toContain("Request ID: req-42");

@@ -101,7 +101,7 @@ function persistedEditStatus(
   if (edit.applyStatus === "applied") return "restoring";
   if (edit.applyStatus === "unmanaged") return "unmanaged";
   // Checked before the generic "error" fallback below: a reopened pane must
-  // not turn "Mike couldn't confirm this" into "couldn't apply this".
+  // not turn "Spectre couldn't confirm this" into "couldn't apply this".
   if (edit.errorCode === "unverified") return "unverified";
   if (edit.errorCode === "ambiguous") return "ambiguous";
   if (edit.errorCode === "unsearchable") return "unsearchable";

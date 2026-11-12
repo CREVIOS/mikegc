@@ -1,5 +1,5 @@
 /**
- * Object storage facade for Mike document management.
+ * Object storage facade for Spectre document management.
  *
  * The transport lives behind the StorageAdapter interface
  * (./storage/adapter.ts); the default is the S3-protocol adapter

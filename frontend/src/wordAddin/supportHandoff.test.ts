@@ -45,7 +45,7 @@ describe("buildSupportDiagnostics", () => {
             }),
         ).toBe(
             [
-                "Mike support details",
+                "Spectre support details",
                 "What happened: Couldn't save the document",
                 "Message shown: Something went wrong on our side. Try again.",
                 "Details: Applying a tracked change.",
@@ -65,7 +65,7 @@ describe("buildSupportDiagnostics", () => {
         const block = buildSupportDiagnostics(
             {
                 title: "Connection problem",
-                message: "Mike couldn't reach the server.",
+                message: "Spectre couldn't reach the server.",
                 kind: "network",
                 status: null,
                 code: null,
@@ -75,9 +75,9 @@ describe("buildSupportDiagnostics", () => {
         );
         expect(block).toBe(
             [
-                "Mike support details",
+                "Spectre support details",
                 "What happened: Connection problem",
-                "Message shown: Mike couldn't reach the server.",
+                "Message shown: Spectre couldn't reach the server.",
                 "Category: network",
                 "Time: 2026-09-17T10:20:30.000Z",
             ].join("\n"),
@@ -94,7 +94,7 @@ describe("buildSupportDiagnostics", () => {
 });
 
 describe("supportHandoffResult", () => {
-    const details = "Mike support details\nRequest ID: req-abc123";
+    const details = "Spectre support details\nRequest ID: req-abc123";
 
     it("confirms both when the draft opened and the block was copied", () => {
         expect(

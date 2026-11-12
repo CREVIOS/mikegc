@@ -90,7 +90,7 @@ const components: React.ComponentProps<typeof ReactMarkdown>["components"] = {
 };
 
 /**
- * Markdown in the request's Activity, such as MikeGC's preprocessing report.
+ * Markdown in the request's Activity, such as Spectre's preprocessing report.
  * Raw HTML is never rendered, and unsafe link schemes are dropped.
  */
 export function IntakeMarkdown({ text }: { text: string }) {

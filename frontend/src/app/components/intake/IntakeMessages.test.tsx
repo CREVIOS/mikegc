@@ -38,7 +38,7 @@ const question: IntakeMessage = {
   automated: true,
   body: "Is this tied to a specific employee?",
   author_id: null,
-  author_name: "MikeGC",
+  author_name: "Spectre",
   created_at: "2026-11-03T19:17:23Z",
 };
 
